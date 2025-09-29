@@ -22,6 +22,7 @@ func init() {
 
 const (
 	executorHeartbeatKey      = "heartbeat"
+	executorAggregatedLoadKey = "aggregated_load"
 	executorStatusKey         = "status"
 	executorReportedShardsKey = "reported_shards"
 	executorAssignedStateKey  = "assigned_state"
@@ -87,6 +88,7 @@ func NewStore(p StoreParams) (store.Store, error) {
 
 func (s *Store) RecordHeartbeat(ctx context.Context, namespace, executorID string, request store.HeartbeatState) error {
 	heartbeatETCDKey := s.buildExecutorKey(namespace, executorID, executorHeartbeatKey)
+	aggregatedLoadKey := s.buildExecutorKey(namespace, executorID, executorAggregatedLoadKey)
 	stateETCDKey := s.buildExecutorKey(namespace, executorID, executorStatusKey)
 	reportedShardsETCDKey := s.buildExecutorKey(namespace, executorID, executorReportedShardsKey)
 
@@ -103,6 +105,7 @@ func (s *Store) RecordHeartbeat(ctx context.Context, namespace, executorID strin
 	// Atomically update both the timestamp and the state.
 	_, err = s.client.Txn(ctx).Then(
 		clientv3.OpPut(heartbeatETCDKey, strconv.FormatInt(request.LastHeartbeat, 10)),
+		clientv3.OpPut(aggregatedLoadKey, strconv.FormatFloat(request.AggregatedLoad, 'f', 3, 64)),
 		clientv3.OpPut(stateETCDKey, string(jsonState)),
 		clientv3.OpPut(reportedShardsETCDKey, string(reportedShardsData)),
 	).Commit()
@@ -212,7 +215,11 @@ func (s *Store) GetState(ctx context.Context, namespace string) (*store.Namespac
 			if err != nil {
 				return nil, fmt.Errorf("unmarshal assigned shards: %w, %s", err, value)
 			}
+		case executorAggregatedLoadKey:
+			load, _ := strconv.ParseFloat(value, 64)
+			heartbeat.AggregatedLoad = load
 		}
+
 		heartbeatStates[executorID] = heartbeat
 		assignedStates[executorID] = assigned
 	}

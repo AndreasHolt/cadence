@@ -123,14 +123,21 @@ func (h *handlerImpl) assignEphemeralShard(ctx context.Context, namespace string
 	}
 
 	var executor string
-	minAssignedShards := math.MaxInt
+	// minAssignedShards := math.MaxInt
 
-	for assignedExecutor, assignment := range state.ShardAssignments {
-		if len(assignment.AssignedShards) < minAssignedShards {
-			minAssignedShards = len(assignment.AssignedShards)
-			executor = assignedExecutor
+	minLoad := math.MaxFloat64
+	for heartbeatExecutor, heartbeat := range state.Executors {
+		if heartbeat.AggregatedLoad < minLoad {
+			minLoad = heartbeat.AggregatedLoad
+			executor = heartbeatExecutor
 		}
 	}
+	// for assignedExecutor, assignment := range state.ShardAssignments {
+	// 	if len(assignment.AssignedShards) < minAssignedShards {
+	// 		minAssignedShards = len(assignment.AssignedShards)
+	// 		executor = assignedExecutor
+	// 	}
+	// }
 
 	// Assign the shard to the executor with the least assigned shards
 	err = h.storage.AssignShard(ctx, namespace, shardID, executor)
