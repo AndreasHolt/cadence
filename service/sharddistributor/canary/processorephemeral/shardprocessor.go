@@ -2,6 +2,7 @@ package processorephemeral
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -25,6 +26,26 @@ const (
 	shardProcessorDoneChance = 60
 )
 
+// EWMA
+type SmoothLoad struct {
+	initial bool
+	alpha   float64
+	prev    float64
+}
+
+func (e *SmoothLoad) Append(val float64) {
+	if e.initial {
+		e.prev = val
+		e.initial = false
+	} else {
+		e.prev = e.alpha*val + (1-e.alpha)*e.prev
+	}
+}
+
+func (e *SmoothLoad) GetCurrent() float64 {
+	return e.prev
+}
+
 // NewShardProcessor creates a new ShardProcessor.
 func NewShardProcessor(shardID string, timeSource clock.TimeSource, logger *zap.Logger) *ShardProcessor {
 	return &ShardProcessor{
@@ -33,6 +54,7 @@ func NewShardProcessor(shardID string, timeSource clock.TimeSource, logger *zap.
 		logger:     logger,
 		stopChan:   make(chan struct{}),
 		status:     types.ShardStatusREADY,
+		smoothLoad: SmoothLoad{initial: true, alpha: 0.1, prev: 0},
 	}
 }
 
@@ -45,7 +67,8 @@ type ShardProcessor struct {
 	goRoutineWg  sync.WaitGroup
 	processSteps int
 
-	status types.ShardStatus
+	status     types.ShardStatus
+	smoothLoad SmoothLoad
 }
 
 var _ executorclient.ShardProcessor = (*ShardProcessor)(nil)
@@ -53,8 +76,9 @@ var _ executorclient.ShardProcessor = (*ShardProcessor)(nil)
 // GetShardReport implements executorclient.ShardProcessor.
 func (p *ShardProcessor) GetShardReport() executorclient.ShardReport {
 	return executorclient.ShardReport{
-		ShardLoad: 1.0,      // We return 1.0 for all shards for now.
-		Status:    p.status, // Report the status of the shard
+		ShardLoad:       1.0, // We return 1.0 for all shards for now.
+		SmoothShardLoad: p.smoothLoad.GetCurrent(),
+		Status:          p.status, // Report the status of the shard
 	}
 }
 
@@ -88,6 +112,8 @@ func (p *ShardProcessor) process(ctx context.Context) {
 			p.logger.Info("Stopping shard processor", zap.String("shardID", p.shardID), zap.Int("steps", p.processSteps), zap.String("status", p.status.String()))
 			return
 		case <-ticker.Chan():
+			p.smoothLoad.Append(rand.Float64())
+			p.logger.Info(fmt.Sprintf("Current smooth load: %f", p.smoothLoad.GetCurrent()))
 			p.logger.Info("Processing shard", zap.String("shardID", p.shardID), zap.Int("steps", p.processSteps), zap.String("status", p.status.String()))
 		case <-stopTicker.Chan():
 			p.processSteps++

@@ -153,8 +153,10 @@ func (e *executorImpl[SP]) heartbeat(ctx context.Context) (shardAssignments map[
 		ExecutorID:         e.executorID,
 		Status:             types.ExecutorStatusACTIVE,
 		ShardStatusReports: shardStatusReports,
-		SmoothLoad:         aggregatedLoad,
+		AggregatedLoad:     aggregatedLoad,
 	}
+
+	e.logger.Info(fmt.Sprintf("Namespace: %s, Heartbeat request set, with aggregatedload of %f", e.namespace, aggregatedLoad))
 
 	// Send the request
 	response, err := e.shardDistributorClient.Heartbeat(ctx, request)
