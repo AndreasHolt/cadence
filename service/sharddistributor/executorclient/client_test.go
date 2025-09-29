@@ -19,6 +19,7 @@ import (
 )
 
 func TestModule(t *testing.T) {
+
 	// Create mocks
 	ctrl := gomock.NewController(t)
 	uberCtrl := uber_gomock.NewController(t)

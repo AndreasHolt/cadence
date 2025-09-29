@@ -22,8 +22,9 @@ import (
 //go:generate mockgen -package $GOPACKAGE -source $GOFILE -destination interface_mock.go . ShardProcessorFactory,ShardProcessor,Executor
 
 type ShardReport struct {
-	ShardLoad float64
-	Status    types.ShardStatus
+	ShardLoad       float64
+	SmoothShardLoad float64
+	Status          types.ShardStatus
 }
 
 type ShardProcessor interface {
