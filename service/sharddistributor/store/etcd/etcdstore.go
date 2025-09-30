@@ -272,7 +272,7 @@ func (s *Store) Subscribe(ctx context.Context, namespace string) (<-chan int64, 
 				if err != nil {
 					continue
 				}
-				if keyType != executorHeartbeatKey && keyType != executorAssignedStateKey {
+				if keyType != executorHeartbeatKey && keyType != executorAssignedStateKey && keyType != executorAggregatedLoadKey {
 					isSignificantChange = true
 					break
 				}
