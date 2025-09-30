@@ -2,9 +2,10 @@ package processorephemeral
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
 	"sync"
 	"time"
-	"fmt"
 
 	"github.com/google/uuid"
 	"go.uber.org/fx"
@@ -15,8 +16,9 @@ import (
 	"github.com/uber/cadence/common/types"
 )
 
-const (
-	shardCreationInterval = 10 * time.Second // Changed ot one new shard per 10 seconds
+var (
+	// shardCreationInterval = 10 * time.Second // Changed ot one new shard per 10 seconds
+	shardCreationInterval = time.Duration(rand.Intn(4)+7) * time.Second // 7..10 seconds
 )
 
 // ShardCreator creates shards at regular intervals for ephemeral canary testing
