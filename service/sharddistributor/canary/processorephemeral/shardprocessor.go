@@ -131,7 +131,7 @@ func (p *ShardProcessor) process(ctx context.Context) {
 			p.logger.Info("Stopping shard processor", zap.String("shardID", p.shardID), zap.Int("steps", p.processSteps), zap.String("status", p.status.String()))
 			return
 		case <-ticker.Chan():
-			load := computeEphemeralLoad(p.shardID, p.weight, p.timeSource.Now())
+			load := computeEphemeralLoad(p.shardID, p.weight, p.timeSource.Now()) // compute the ephemeral load just once per cycle
 			p.currentLoad = load
 			p.smoothLoad.Append(load)
 			p.logger.Info(fmt.Sprintf("Current smooth load: %f", p.smoothLoad.GetCurrent()))

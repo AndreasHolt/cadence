@@ -43,6 +43,7 @@ PY
     export SD_EXEC_LOAD_SCALE="$scale"
     exec $CMD >"/tmp/hot-canary-$i.log" 2>&1 &
   )
+  sleep 1
 done
 
 echo "Done. Tail logs with: tail -f /tmp/hot-canary-*.log"
