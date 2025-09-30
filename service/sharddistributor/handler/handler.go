@@ -94,7 +94,7 @@ func (h *handlerImpl) GetShardOwner(ctx context.Context, request *types.GetShard
 	executorID, err := h.storage.GetShardOwner(ctx, request.Namespace, request.ShardKey)
 	if errors.Is(err, store.ErrShardNotFound) {
 		if h.shardDistributionCfg.Namespaces[namespaceIdx].Type == config.NamespaceTypeEphemeral {
-			return h.assignEphemeralShard(ctx, request.Namespace, request.ShardKey)
+			return h.assignEphemeralShard(ctx, request.Namespace, request.ShardKey, findExecutorWithLeastLoad)
 		}
 
 		return nil, &types.ShardNotFoundError{
@@ -114,17 +114,23 @@ func (h *handlerImpl) GetShardOwner(ctx context.Context, request *types.GetShard
 	return resp, nil
 }
 
-func (h *handlerImpl) assignEphemeralShard(ctx context.Context, namespace string, shardID string) (*types.GetShardOwnerResponse, error) {
+type FindExecutor func(state *store.NamespaceState) string
 
-	// Get the current state of the namespace and find the executor with the least assigned shards
-	state, err := h.storage.GetState(ctx, namespace)
-	if err != nil {
-		return nil, fmt.Errorf("get state: %w", err)
-	}
-
+func findExecutorWithLeastShards(state *store.NamespaceState) string {
 	var executor string
-	// minAssignedShards := math.MaxInt
+	minAssignedShards := math.MaxInt
 
+	for assignedExecutor, assignment := range state.ShardAssignments {
+		if len(assignment.AssignedShards) < minAssignedShards {
+			minAssignedShards = len(assignment.AssignedShards)
+			executor = assignedExecutor
+		}
+	}
+	return executor
+}
+
+func findExecutorWithLeastLoad(state *store.NamespaceState) string {
+	var executor string
 	minLoad := math.MaxFloat64
 	for heartbeatExecutor, heartbeat := range state.Executors {
 		if heartbeat.AggregatedLoad < minLoad {
@@ -132,12 +138,18 @@ func (h *handlerImpl) assignEphemeralShard(ctx context.Context, namespace string
 			executor = heartbeatExecutor
 		}
 	}
-	// for assignedExecutor, assignment := range state.ShardAssignments {
-	// 	if len(assignment.AssignedShards) < minAssignedShards {
-	// 		minAssignedShards = len(assignment.AssignedShards)
-	// 		executor = assignedExecutor
-	// 	}
-	// }
+	return executor
+}
+
+func (h *handlerImpl) assignEphemeralShard(ctx context.Context, namespace string, shardID string, findExecutor FindExecutor) (*types.GetShardOwnerResponse, error) {
+
+	// Get the current state of the namespace and find the executor with the least assigned shards
+	state, err := h.storage.GetState(ctx, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("get state: %w", err)
+	}
+
+	executor := findExecutor(state)
 
 	// Assign the shard to the executor with the least assigned shards
 	err = h.storage.AssignShard(ctx, namespace, shardID, executor)
