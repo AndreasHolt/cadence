@@ -62,14 +62,16 @@ func NewShardProcessor(shardID string, timeSource clock.TimeSource, logger *zap.
 			weight = ephHeavyMultiplier
 		}
 	}
+	initialLoad := computeEphemeralLoad(shardID, weight, timeSource.Now())
 	return &ShardProcessor{
-		shardID:    shardID,
-		timeSource: timeSource,
-		logger:     logger,
-		stopChan:   make(chan struct{}),
-		status:     types.ShardStatusREADY,
-		smoothLoad: SmoothLoad{initial: true, alpha: 0.1, prev: 0},
-		weight:     weight,
+		shardID:     shardID,
+		timeSource:  timeSource,
+		logger:      logger,
+		stopChan:    make(chan struct{}),
+		status:      types.ShardStatusREADY,
+		smoothLoad:  SmoothLoad{initial: false, alpha: 0.1, prev: initialLoad},
+		weight:      weight,
+		currentLoad: initialLoad,
 	}
 }
 
@@ -82,9 +84,10 @@ type ShardProcessor struct {
 	goRoutineWg  sync.WaitGroup
 	processSteps int
 
-	status     types.ShardStatus
-	smoothLoad SmoothLoad
-	weight     float64 // synthetic load weight per shard lifetime
+	status      types.ShardStatus
+	smoothLoad  SmoothLoad
+	weight      float64 // synthetic load weight per shard lifetime
+	currentLoad float64
 }
 
 var _ executorclient.ShardProcessor = (*ShardProcessor)(nil)
@@ -93,7 +96,7 @@ var _ executorclient.ShardProcessor = (*ShardProcessor)(nil)
 func (p *ShardProcessor) GetShardReport() executorclient.ShardReport {
 	return executorclient.ShardReport{
 		SmoothShardLoad: p.smoothLoad.GetCurrent(),
-		ShardLoad:       computeEphemeralLoad(p.shardID, p.weight, p.timeSource.Now()),
+		ShardLoad:       p.currentLoad,
 		Status:          p.status,
 	}
 }
@@ -128,7 +131,9 @@ func (p *ShardProcessor) process(ctx context.Context) {
 			p.logger.Info("Stopping shard processor", zap.String("shardID", p.shardID), zap.Int("steps", p.processSteps), zap.String("status", p.status.String()))
 			return
 		case <-ticker.Chan():
-			p.smoothLoad.Append(rand.Float64())
+			load := computeEphemeralLoad(p.shardID, p.weight, p.timeSource.Now())
+			p.currentLoad = load
+			p.smoothLoad.Append(load)
 			p.logger.Info(fmt.Sprintf("Current smooth load: %f", p.smoothLoad.GetCurrent()))
 			p.logger.Info("Processing shard", zap.String("shardID", p.shardID), zap.Int("steps", p.processSteps), zap.String("status", p.status.String()))
 		case <-stopTicker.Chan():
