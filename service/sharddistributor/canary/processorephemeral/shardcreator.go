@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"time"
+	"fmt"
 
 	"github.com/google/uuid"
 	"go.uber.org/fx"
@@ -15,7 +16,7 @@ import (
 )
 
 const (
-	shardCreationInterval = 1 * time.Second
+	shardCreationInterval = 10 * time.Second // Changed ot one new shard per 10 seconds
 )
 
 // ShardCreator creates shards at regular intervals for ephemeral canary testing
@@ -89,7 +90,7 @@ func (s *ShardCreator) process(ctx context.Context) {
 			return
 		case <-ticker.Chan():
 			shardKey := uuid.New().String()
-			s.logger.Info("Creating shard", zap.String("shardKey", shardKey))
+			s.logger.Info(fmt.Sprintf("Creating shard on interval %s", shardCreationInterval), zap.String("shardKey", shardKey))
 			response, err := s.shardDistributor.GetShardOwner(ctx, &types.GetShardOwnerRequest{
 				ShardKey:  shardKey,
 				Namespace: s.namespace,
