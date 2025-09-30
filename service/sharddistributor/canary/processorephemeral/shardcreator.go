@@ -16,11 +16,6 @@ import (
 	"github.com/uber/cadence/common/types"
 )
 
-var (
-	// shardCreationInterval = 10 * time.Second // Changed ot one new shard per 10 seconds
-	shardCreationInterval = time.Duration(rand.Intn(4)+7) * time.Second // 7..10 seconds
-)
-
 // ShardCreator creates shards at regular intervals for ephemeral canary testing
 type ShardCreator struct {
 	logger           *zap.Logger
@@ -81,18 +76,22 @@ func ShardCreatorModule(namespace string) fx.Option {
 func (s *ShardCreator) process(ctx context.Context) {
 	defer s.goRoutineWg.Done()
 
-	ticker := s.timeSource.NewTicker(shardCreationInterval)
-	defer ticker.Stop()
+	var r = rand.New(rand.NewSource(time.Now().UnixNano()))
+	//ticker := s.timeSource.NewTicker(shardCreationInterval)
+	//defer ticker.Stop()
 
 	for {
+		nextInterval := time.Duration(r.Intn(20)+5) * time.Second
+		s.logger.Info("Waiting to create next shard...", zap.Duration("waitInterval", nextInterval))
+
 		select {
 		case <-ctx.Done():
 			return
 		case <-s.stopChan:
 			return
-		case <-ticker.Chan():
+		case <-time.After(nextInterval):
 			shardKey := uuid.New().String()
-			s.logger.Info(fmt.Sprintf("Creating shard on interval %s", shardCreationInterval), zap.String("shardKey", shardKey))
+			s.logger.Info(fmt.Sprintf("Creating shard on interval %s", nextInterval), zap.String("shardKey", shardKey))
 			response, err := s.shardDistributor.GetShardOwner(ctx, &types.GetShardOwnerRequest{
 				ShardKey:  shardKey,
 				Namespace: s.namespace,
