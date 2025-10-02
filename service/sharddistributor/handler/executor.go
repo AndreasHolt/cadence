@@ -13,6 +13,7 @@ import (
 
 const (
 	_heartbeatRefreshRate = 2 * time.Second
+	_smoothLoadAlpha      = 0.1
 )
 
 type executor struct {
@@ -47,11 +48,20 @@ func (h *executor) Heartbeat(ctx context.Context, request *types.ExecutorHeartbe
 		}
 	}
 
+	// get the previous reports so we can update the smoothed load
+	var previousReports map[string]*types.ShardStatusReport
+	if previousHeartbeat != nil {
+		previousReports = previousHeartbeat.ReportedShards
+	}
+
+	// update the smoothed load (weighted average) now that we have the latest reports
+	smoothedReports, aggregatedLoad := smoothShardLoads(previousReports, request.ShardStatusReports)
+
 	newHeartbeat := store.HeartbeatState{
 		LastHeartbeat:  now.Unix(),
 		Status:         request.Status,
-		ReportedShards: request.ShardStatusReports,
-		AggregatedLoad: request.AggregatedLoad,
+		ReportedShards: smoothedReports,
+		AggregatedLoad: aggregatedLoad,
 	}
 
 	err = h.storage.RecordHeartbeat(ctx, request.Namespace, request.ExecutorID, newHeartbeat)
@@ -69,4 +79,39 @@ func _convertResponse(shards *store.AssignedState) *types.ExecutorHeartbeatRespo
 	}
 	res.ShardAssignments = shards.AssignedShards
 	return res
+}
+
+func smoothShardLoads(
+	previous map[string]*types.ShardStatusReport,
+	current map[string]*types.ShardStatusReport,
+) (map[string]*types.ShardStatusReport, float64) {
+	if len(current) == 0 {
+		return nil, 0
+	}
+
+	result := make(map[string]*types.ShardStatusReport, len(current))
+	var aggregated float64
+
+	for shardID, report := range current {
+		if report == nil {
+			continue
+		}
+
+		smoothedLoad := report.ShardLoad
+		if prevReport, ok := previous[shardID]; ok && prevReport != nil {
+			smoothedLoad = _smoothLoadAlpha*report.ShardLoad + (1-_smoothLoadAlpha)*prevReport.ShardLoad
+		}
+
+		result[shardID] = &types.ShardStatusReport{
+			Status:    report.Status,
+			ShardLoad: smoothedLoad,
+		}
+		aggregated += smoothedLoad
+	}
+
+	if len(result) == 0 {
+		return nil, 0
+	}
+
+	return result, aggregated
 }
