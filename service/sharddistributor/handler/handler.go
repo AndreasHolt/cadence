@@ -130,6 +130,10 @@ func findExecutorWithLeastShards(state *store.NamespaceState) string {
 }
 
 func findExecutorWithLeastLoad(state *store.NamespaceState) string {
+	if len(state.Executors) == 0 {
+		return findExecutorWithLeastShards(state)
+	}
+
 	var executor string
 	minLoad := math.MaxFloat64
 	for heartbeatExecutor, heartbeat := range state.Executors {
