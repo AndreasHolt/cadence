@@ -2,7 +2,6 @@ package processorephemeral
 
 import (
 	"context"
-	"fmt"
 	"hash/fnv"
 	"math"
 	"math/rand"
@@ -30,26 +29,6 @@ const (
 	shardProcessorDoneChance = 60
 )
 
-// EWMA
-type SmoothLoad struct {
-	initial bool
-	alpha   float64
-	prev    float64
-}
-
-func (e *SmoothLoad) Append(val float64) {
-	if e.initial {
-		e.prev = val
-		e.initial = false
-	} else {
-		e.prev = e.alpha*val + (1-e.alpha)*e.prev
-	}
-}
-
-func (e *SmoothLoad) GetCurrent() float64 {
-	return e.prev
-}
-
 // NewShardProcessor creates a new ShardProcessor.
 func NewShardProcessor(shardID string, timeSource clock.TimeSource, logger *zap.Logger) *ShardProcessor {
 	// Decide shard lifetime weight (heavy or light) deterministically
@@ -69,7 +48,6 @@ func NewShardProcessor(shardID string, timeSource clock.TimeSource, logger *zap.
 		logger:      logger,
 		stopChan:    make(chan struct{}),
 		status:      types.ShardStatusREADY,
-		smoothLoad:  SmoothLoad{initial: false, alpha: 0.1, prev: initialLoad},
 		weight:      weight,
 		currentLoad: initialLoad,
 	}
@@ -85,7 +63,6 @@ type ShardProcessor struct {
 	processSteps int
 
 	status      types.ShardStatus
-	smoothLoad  SmoothLoad
 	weight      float64 // synthetic load weight per shard lifetime
 	currentLoad float64
 }
@@ -95,9 +72,8 @@ var _ executorclient.ShardProcessor = (*ShardProcessor)(nil)
 // GetShardReport implements executorclient.ShardProcessor.
 func (p *ShardProcessor) GetShardReport() executorclient.ShardReport {
 	return executorclient.ShardReport{
-		SmoothShardLoad: p.smoothLoad.GetCurrent(),
-		ShardLoad:       p.currentLoad,
-		Status:          p.status,
+		ShardLoad: p.currentLoad,
+		Status:    p.status,
 	}
 }
 
@@ -133,8 +109,6 @@ func (p *ShardProcessor) process(ctx context.Context) {
 		case <-ticker.Chan():
 			load := computeEphemeralLoad(p.shardID, p.weight, p.timeSource.Now()) // compute the ephemeral load just once per cycle
 			p.currentLoad = load
-			p.smoothLoad.Append(load)
-			p.logger.Info(fmt.Sprintf("Current smooth load: %f", p.smoothLoad.GetCurrent()))
 			p.logger.Info("Processing shard", zap.String("shardID", p.shardID), zap.Int("steps", p.processSteps), zap.String("status", p.status.String()))
 		case <-stopTicker.Chan():
 			p.processSteps++
