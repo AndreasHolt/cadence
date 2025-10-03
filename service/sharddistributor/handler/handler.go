@@ -141,17 +141,18 @@ func findExecutorWithLeastLoad(state *store.NamespaceState) string {
 	return executor
 }
 
-func (h *handlerImpl) assignEphemeralShard(ctx context.Context, namespace string, shardID string, findExecutor FindExecutor) (*types.GetShardOwnerResponse, error) {
+func (h *handlerImpl) assignEphemeralShard(ctx context.Context, namespace string, shardID string, findExecutorImplementation FindExecutor) (*types.GetShardOwnerResponse, error) {
 
-	// Get the current state of the namespace and find the executor with the least assigned shards
+	// Get the current state of the namespace and find the executor to assign the ephemeral shard to
 	state, err := h.storage.GetState(ctx, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("get state: %w", err)
 	}
 
-	executor := findExecutor(state)
+	// Use one of the available implementations to find an executor to assign the ephemeral shard to
+	executor := findExecutorImplementation(state)
 
-	// Assign the shard to the executor with the least assigned shards
+	// Assign the shard to the selected executor
 	err = h.storage.AssignShard(ctx, namespace, shardID, executor)
 	if err != nil {
 		return nil, fmt.Errorf("assign ephemeral shard: %w", err)

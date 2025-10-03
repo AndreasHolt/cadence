@@ -171,5 +171,5 @@ shardDistribution:
       dialTimeout: 1s
       prefix: "store"
   process:
-    period: 1s
+    period: 30s
     heartbeatTTL: 2s
