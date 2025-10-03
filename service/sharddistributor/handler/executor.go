@@ -51,7 +51,6 @@ func (h *executor) Heartbeat(ctx context.Context, request *types.ExecutorHeartbe
 		LastHeartbeat:  now.Unix(),
 		Status:         request.Status,
 		ReportedShards: request.ShardStatusReports,
-		AggregatedLoad: request.AggregatedLoad,
 	}
 
 	err = h.storage.RecordHeartbeat(ctx, request.Namespace, request.ExecutorID, newHeartbeat)

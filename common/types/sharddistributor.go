@@ -92,7 +92,6 @@ type ExecutorHeartbeatRequest struct {
 	ExecutorID         string
 	Status             ExecutorStatus
 	ShardStatusReports map[string]*ShardStatusReport
-	AggregatedLoad     float64
 }
 
 func (v *ExecutorHeartbeatRequest) GetNamespace() (o string) {

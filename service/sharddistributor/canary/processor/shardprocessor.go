@@ -73,7 +73,7 @@ var (
 	// Adds a small jitter to the reported load to not have it be perfectly flat (e.g., 0.1 = +-10% multiplicative noise )
 	// ... this is mainly for the shards that are not marked as 'hot', to have them vary a little bit
 	envNoisePct = parseEnvFloat("SD_LOAD_NOISE_PCT", 0)
-	// A per-process scale factor to emulate different host capacities/compute 
+	// A per-process scale factor to emulate different host capacities/compute
 	// ... and in the future look into gRPC ORCA, to not having to emulate it
 	envExecLoadScale = parseEnvFloat("SD_EXEC_LOAD_SCALE", 1.0)
 )
@@ -87,12 +87,12 @@ func computeSyntheticLoad(shardID string, now time.Time) float64 {
 	// Hash shardID+bucket to decide hot membership deterministically for the bucket
 	// ... a bucket is the time window / grouping unit (every envRotateSeconds)
 	// ... and only shards inside those hot buckets can be multiplied with the envHotMultiplier
-	h := fnv.New32a() 
+	h := fnv.New32a()
 	_, _ = h.Write([]byte(shardID)) // Add shard ID to hash
 	_, _ = h.Write([]byte(":"))
 	_, _ = h.Write([]byte(strconv.FormatInt(bucket, 10))) // Convert integer bucket into string form and add to hash
-	v := float64(h.Sum32()) / float64(math.MaxUint32) // Return uint32 from from hash state, and divide by max uint32 to get num in range [0, 1)
-	hot := v < envHotFraction // Determine if we are marked as 'hot' 
+	v := float64(h.Sum32()) / float64(math.MaxUint32)     // Return uint32 from from hash state, and divide by max uint32 to get num in range [0, 1)
+	hot := v < envHotFraction                             // Determine if we are marked as 'hot'
 	base := 1.0
 	if hot {
 		base = envHotMultiplier

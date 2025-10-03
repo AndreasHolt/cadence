@@ -128,14 +128,11 @@ func (e *executorImpl[SP]) heartbeatloop(ctx context.Context) {
 }
 
 func (e *executorImpl[SP]) heartbeat(ctx context.Context) (shardAssignments map[string]*types.ShardAssignment, err error) {
-	var aggregatedLoad float64
 	// Fill in the shard status reports
 	shardStatusReports := make(map[string]*types.ShardStatusReport)
 	e.managedProcessors.Range(func(shardID string, managedProcessor *managedProcessor[SP]) bool {
 		if managedProcessor.getState() == processorStateStarted {
 			shardStatus := managedProcessor.processor.GetShardReport()
-
-			aggregatedLoad += shardStatus.SmoothShardLoad
 
 			shardStatusReports[shardID] = &types.ShardStatusReport{
 				ShardLoad: shardStatus.ShardLoad,
@@ -153,10 +150,7 @@ func (e *executorImpl[SP]) heartbeat(ctx context.Context) (shardAssignments map[
 		ExecutorID:         e.executorID,
 		Status:             types.ExecutorStatusACTIVE,
 		ShardStatusReports: shardStatusReports,
-		AggregatedLoad:     aggregatedLoad,
 	}
-
-	e.logger.Info(fmt.Sprintf("Namespace: %s, Heartbeat request set, with aggregatedload of %f", e.namespace, aggregatedLoad))
 
 	// Send the request
 	response, err := e.shardDistributorClient.Heartbeat(ctx, request)

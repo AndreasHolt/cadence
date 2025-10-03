@@ -8,7 +8,6 @@ type HeartbeatState struct {
 	LastHeartbeat  int64                               `json:"last_heartbeat"`
 	Status         types.ExecutorStatus                `json:"status"`
 	ReportedShards map[string]*types.ShardStatusReport `json:"reported_shards"`
-	AggregatedLoad float64                             `json:"aggregated_load"`
 }
 
 type AssignedState struct {
