@@ -136,6 +136,7 @@ const (
 
 type ShardStatusReport struct {
 	Status    ShardStatus
+	// ShardLoad contains the exponentially smoothed load used for future EWMA updates.
 	ShardLoad float64
 }
 

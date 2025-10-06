@@ -81,6 +81,7 @@ func _convertResponse(shards *store.AssignedState) *types.ExecutorHeartbeatRespo
 	return res
 }
 
+// smoothShardLoads applies EWMA smoothing and persists the output so the next call uses the previous smoothed value.
 func smoothShardLoads(
 	previous map[string]*types.ShardStatusReport,
 	current map[string]*types.ShardStatusReport,
