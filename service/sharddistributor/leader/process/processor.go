@@ -299,7 +299,9 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 
 	// If there are deleted shards, we have removed them from the shard assignments, so the distribution has changed.
 	distributionChanged := len(deletedShards) > 0
-	distributionChanged = distributionChanged || assignShardsToEmptyExecutors(currentAssignments)
+	// When new empty executors appear, assign shards to them using a load-aware
+	// selection to avoid counteracting initial load-aware placement.
+	distributionChanged = distributionChanged || assignShardsToEmptyExecutorsLoadAware(namespaceState, currentAssignments)
 	distributionChanged = distributionChanged || p.updateAssignments(shardsToReassign, activeExecutors, currentAssignments)
 
 	if !distributionChanged {
@@ -420,6 +422,142 @@ func (*namespaceProcessor) getActiveExecutors(namespaceState *store.NamespaceSta
 	return activeExecutors
 }
 
+// assignShardsToEmptyExecutors moves shards from loaded executors to empty ones using
+// a simple load-aware heuristic: choose the current most-loaded and move its
+// highest-load shard. This reduces churn while avoiding counteracting initial
+// load-aware placement.
+func assignShardsToEmptyExecutorsLoadAware(
+	namespaceState *store.NamespaceState,
+	currentAssignments map[string][]string,
+) bool {
+	emptyExecutors := make([]string, 0)
+	executorsWithShards := make([]string, 0)
+	minShardsCurrentlyAssigned := 0
+
+	// Deterministic iteration of executors.
+	executors := make([]string, 0, len(currentAssignments))
+	for executorID := range currentAssignments {
+		executors = append(executors, executorID)
+	}
+	slices.Sort(executors)
+
+	for _, executorID := range executors {
+		if len(currentAssignments[executorID]) == 0 {
+			emptyExecutors = append(emptyExecutors, executorID)
+		} else {
+			executorsWithShards = append(executorsWithShards, executorID)
+			if minShardsCurrentlyAssigned == 0 || len(currentAssignments[executorID]) < minShardsCurrentlyAssigned {
+				minShardsCurrentlyAssigned = len(currentAssignments[executorID])
+			}
+		}
+	}
+
+	if len(emptyExecutors) == 0 || len(executorsWithShards) == 0 {
+		return false
+	}
+
+	// Compute how many shards to move per empty executor, re-using the prior
+	// count-based formula to keep behavior predictable and bounded.
+	numShardsToAssignEmptyExecutors := minShardsCurrentlyAssigned * len(executorsWithShards) / len(currentAssignments)
+	if numShardsToAssignEmptyExecutors == 0 {
+		return false
+	}
+
+	// Build a per-executor current load map. Prefer AggregatedLoad and adjust
+	// as we plan moves, fall back to summing shard loads if AggregatedLoad is 0.
+	currentLoad := make(map[string]float64, len(executorsWithShards)+len(emptyExecutors))
+	for _, execID := range executorsWithShards {
+		hb := namespaceState.Executors[execID]
+		load := hb.AggregatedLoad
+		if load == 0 {
+			// Sum loads of assigned shards if aggregated is missing.
+			for _, shardID := range currentAssignments[execID] {
+				if r := hb.ReportedShards[shardID]; r != nil {
+					load += r.ShardLoad
+				} else {
+					load += 1.0 // default fallback
+				}
+			}
+		}
+		currentLoad[execID] = load
+	}
+	for _, execID := range emptyExecutors {
+		currentLoad[execID] = 0
+	}
+
+	// Helper: choose "donor" (executor to take from) as the executor with max current load that still has shards.
+	pickDonor := func() (string, bool) {
+		var donor string
+		var maxLoad float64
+		have := false
+		// Deterministic by traversing sorted list
+		for _, id := range executorsWithShards {
+			if len(currentAssignments[id]) == 0 {
+				continue
+			}
+			l := currentLoad[id]
+			if !have || l > maxLoad { // If no donor found yet, or if load of current shard is greater than current max
+				have = true // Suitable donor has been found
+				maxLoad = l
+				donor = id
+			}
+		}
+		return donor, have
+	}
+
+	// Helper: pick the heaviest shard from a donor.
+	pickHeaviestShard := func(donor string) (string, bool) {
+		shards := currentAssignments[donor]
+		if len(shards) == 0 {
+			return "", false
+		}
+		hb := namespaceState.Executors[donor]
+		bestIdx := -1
+		var bestLoad float64
+		for i, s := range shards {
+			l := 1.0
+			if r := hb.ReportedShards[s]; r != nil {
+				l = r.ShardLoad
+			}
+			if bestIdx == -1 || l > bestLoad {
+				bestIdx = i
+				bestLoad = l
+			}
+		}
+		// Remove selected shard
+		chosen := shards[bestIdx]
+		currentAssignments[donor] = append(shards[:bestIdx], shards[bestIdx+1:]...)
+		currentLoad[donor] -= bestLoad
+		return chosen, true
+	}
+
+	// Distribute shards to empties. Iterate in deterministic empty ID order.
+	for i := 0; i < numShardsToAssignEmptyExecutors; i++ {
+		for _, emptyID := range emptyExecutors {
+			donor, ok := pickDonor()
+			if !ok {
+				return true // nothing more to move
+			}
+			shardID, ok := pickHeaviestShard(donor)
+			if !ok {
+				return true
+			}
+			// Assign to empty executor
+			currentAssignments[emptyID] = append(currentAssignments[emptyID], shardID)
+			// Update load on receiver
+			recvLoad := 1.0
+			if r := namespaceState.Executors[donor].ReportedShards[shardID]; r != nil {
+				recvLoad = r.ShardLoad
+			}
+			currentLoad[emptyID] += recvLoad
+		}
+	}
+
+	return true
+}
+
+// assignShardsToEmptyExecutors preserves the previous count-based behavior.
+// It is kept for tests that assert specific shard moves by index and order.
 func assignShardsToEmptyExecutors(currentAssignments map[string][]string) bool {
 	emptyExecutors := make([]string, 0)
 	executorsWithShards := make([]string, 0)
@@ -448,12 +586,7 @@ func assignShardsToEmptyExecutors(currentAssignments map[string][]string) bool {
 		return false
 	}
 
-	// We calculate the number of shards to assign each of the empty executors. The idea is to assume all current executors have
-	// the same number of shards `minShardsCurrentlyAssigned`. We use the minimum so when steeling we don't have to worry about
-	// steeling more shards that the executors have.
-	// We then calculate the total number of assumed shards `minShardsCurrentlyAssigned * len(executorsWithShards)` and divide it by the
-	// number of current executors. This gives us the number of shards per executor, thus the number of shards to assign to each of the
-	// empty executors.
+	// Calculate shards to assign to each empty executor based on counts.
 	numShardsToAssignEmptyExecutors := minShardsCurrentlyAssigned * len(executorsWithShards) / len(currentAssignments)
 
 	stealRound := 0
