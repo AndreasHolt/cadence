@@ -281,14 +281,16 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		return fmt.Errorf("get state: %w", err)
 	}
 
+	// Skip only if this revision has already been successfully applied (or evaluated with no changes).
 	if namespaceState.GlobalRevision <= p.lastAppliedRevision {
 		return nil
 	}
-	p.lastAppliedRevision = namespaceState.GlobalRevision
 
 	activeExecutors := p.getActiveExecutors(namespaceState)
 	if len(activeExecutors) == 0 {
 		p.logger.Warn("No active executors found. Cannot assign shards.")
+		// Do not advance lastAppliedRevision here. We want to retry
+		// this same revision when executors become available again.
 		return nil
 	}
 
@@ -303,6 +305,8 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	distributionChanged = distributionChanged || p.updateAssignments(shardsToReassign, activeExecutors, currentAssignments)
 
 	if !distributionChanged {
+		// No changes to apply, mark revision handled.
+		p.lastAppliedRevision = namespaceState.GlobalRevision
 		return nil
 	}
 
@@ -318,6 +322,8 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		return fmt.Errorf("assign shards: %w", err)
 	}
 
+	// Write succeeded; record last successful revision.
+	p.lastAppliedRevision = namespaceState.GlobalRevision
 	return nil
 }
 
