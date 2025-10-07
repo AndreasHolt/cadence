@@ -3,7 +3,6 @@ package process
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"slices"
 	"sort"
 	"strconv"
@@ -299,9 +298,31 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 
 	// If there are deleted shards, we have removed them from the shard assignments, so the distribution has changed.
 	distributionChanged := len(deletedShards) > 0
-	// When new empty executors appear, assign shards to them using a load-aware
-	// selection to avoid counteracting initial load-aware placement.
-	distributionChanged = distributionChanged || assignShardsToEmptyExecutorsLoadAware(namespaceState, currentAssignments)
+	// When new empty executors appear, assign shards to them using a load-aware donor
+	// selection to avoid counteracting initial load-aware placement. Track count moved.
+	emptyBefore := make([]string, 0)
+	for id, shards := range currentAssignments {
+		if len(shards) == 0 {
+			emptyBefore = append(emptyBefore, id)
+		}
+	}
+	beforeCount := 0
+	for _, id := range emptyBefore {
+		beforeCount += len(currentAssignments[id])
+	}
+	didEmptyFill := assignShardsToEmptyExecutorsLoadAware(namespaceState, currentAssignments)
+	afterCount := 0
+	for _, id := range emptyBefore {
+		afterCount += len(currentAssignments[id])
+	}
+	movedEmpty := afterCount - beforeCount
+	if movedEmpty > 0 {
+		metricsLoopScope.Tagged(metrics.ReasonTag("empty_fill")).UpdateGauge(metrics.ShardDistributorAssignLoopNumRebalancedShards, float64(movedEmpty))
+	}
+	distributionChanged = distributionChanged || didEmptyFill
+	if len(shardsToReassign) > 0 {
+		metricsLoopScope.Tagged(metrics.ReasonTag("assign_orphans")).UpdateGauge(metrics.ShardDistributorAssignLoopNumRebalancedShards, float64(len(shardsToReassign)))
+	}
 	distributionChanged = distributionChanged || p.updateAssignments(shardsToReassign, activeExecutors, currentAssignments)
 
 	if !distributionChanged {
@@ -377,7 +398,8 @@ func (*namespaceProcessor) updateAssignments(shardsToReassign []string, activeEx
 		return false
 	}
 
-	i := rand.Intn(len(activeExecutors))
+	// Deterministic and even-spread placement to avoid churn.
+	i := 0
 	for _, shardID := range shardsToReassign {
 		executorID := activeExecutors[i%len(activeExecutors)]
 		currentAssignments[executorID] = append(currentAssignments[executorID], shardID)
@@ -621,10 +643,17 @@ func getShards(cfg config.Namespace, namespaceState *store.NamespaceState, delet
 	return nil
 }
 
+// Fixed shard list is cacheable
+var fixedShardListCache sync.Map // key: int64 shard count, value: []string
+
 func makeShards(num int64) []string {
+	if v, ok := fixedShardListCache.Load(num); ok {
+		return v.([]string)
+	}
 	shards := make([]string, num)
-	for i := range num {
+	for i := int64(0); i < num; i++ {
 		shards[i] = strconv.FormatInt(i, 10)
 	}
+	fixedShardListCache.Store(num, shards)
 	return shards
 }
