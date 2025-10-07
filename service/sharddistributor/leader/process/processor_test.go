@@ -503,7 +503,17 @@ func TestGetShards_Utility(t *testing.T) {
 	})
 }
 
-func TestAssignShardsToEmptyExecutors(t *testing.T) {
+func TestAssignShardsToEmptyExecutorsLoadAware(t *testing.T) {
+	// Helper to build a minimal NamespaceState with executors derived from inputAssignments.
+	makeNS := func(input map[string][]string) *store.NamespaceState {
+		execs := make(map[string]store.HeartbeatState, len(input))
+		for id := range input {
+			execs[id] = store.HeartbeatState{ // AggregatedLoad=0, ReportedShards=nil -> count-based fallback
+				ReportedShards: nil,
+			}
+		}
+		return &store.NamespaceState{Executors: execs}
+	}
 	cases := []struct {
 		name                       string
 		inputAssignments           map[string][]string
@@ -535,10 +545,11 @@ func TestAssignShardsToEmptyExecutors(t *testing.T) {
 				"exec-2": {"shard-7", "shard-8", "shard-9", "shard-10"},
 				"exec-3": {},
 			},
+			// Load-aware donor selection moves both shards from the most-loaded donor (exec-1): shard-1, shard-2
 			expectedAssignments: map[string][]string{
-				"exec-1": {"shard-2", "shard-3", "shard-4", "shard-5", "shard-6"},
-				"exec-2": {"shard-8", "shard-9", "shard-10"},
-				"exec-3": {"shard-1", "shard-7"},
+				"exec-1": {"shard-3", "shard-4", "shard-5", "shard-6"},
+				"exec-2": {"shard-7", "shard-8", "shard-9", "shard-10"},
+				"exec-3": {"shard-1", "shard-2"},
 			},
 			expectedDistributonChanged: true,
 		},
@@ -557,12 +568,14 @@ func TestAssignShardsToEmptyExecutors(t *testing.T) {
 				"exec-4": {},
 				"exec-5": {},
 			},
+			// Load-aware donor selection (count fallback) moves 8 shards in deterministic order:
+			// exec-4 <= 1,3,11,5 and exec-5 <= 2,4,18,12
 			expectedAssignments: map[string][]string{
-				"exec-1": {"shard-4", "shard-5", "shard-6", "shard-7", "shard-8", "shard-9", "shard-10"},
-				"exec-2": {"shard-14", "shard-15", "shard-16", "shard-17"},
-				"exec-3": {"shard-20", "shard-21", "shard-22", "shard-23", "shard-24"},
-				"exec-4": {"shard-1", "shard-18", "shard-12", "shard-3"},
-				"exec-5": {"shard-11", "shard-2", "shard-19", "shard-13"},
+				"exec-1": {"shard-6", "shard-7", "shard-8", "shard-9", "shard-10"},
+				"exec-2": {"shard-13", "shard-14", "shard-15", "shard-16", "shard-17"},
+				"exec-3": {"shard-19", "shard-20", "shard-21", "shard-22", "shard-23", "shard-24"},
+				"exec-4": {"shard-1", "shard-3", "shard-11", "shard-5"},
+				"exec-5": {"shard-2", "shard-4", "shard-18", "shard-12"},
 			},
 			expectedDistributonChanged: true,
 		},
@@ -570,7 +583,8 @@ func TestAssignShardsToEmptyExecutors(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			actualDistributionChanged := assignShardsToEmptyExecutors(c.inputAssignments)
+			nsState := makeNS(c.inputAssignments)
+			actualDistributionChanged := assignShardsToEmptyExecutorsLoadAware(nsState, c.inputAssignments)
 
 			assert.Equal(t, c.expectedAssignments, c.inputAssignments)
 			assert.Equal(t, c.expectedDistributonChanged, actualDistributionChanged)
