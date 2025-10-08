@@ -44,6 +44,8 @@ type Factory interface {
 const (
 	_defaultPeriod      = time.Second
 	_defaultHearbeatTTL = 10 * time.Second
+	// Phase 2: conservative cap on number of shards moved during empty-fill per loop.
+	_emptyFillMoveBudget = 8
 )
 
 type processorFactory struct {
@@ -323,7 +325,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	if len(shardsToReassign) > 0 {
 		metricsLoopScope.Tagged(metrics.ReasonTag("assign_orphans")).UpdateGauge(metrics.ShardDistributorAssignLoopNumRebalancedShards, float64(len(shardsToReassign)))
 	}
-	distributionChanged = distributionChanged || p.updateAssignments(shardsToReassign, activeExecutors, currentAssignments)
+	distributionChanged = distributionChanged || p.updateAssignments(shardsToReassign, activeExecutors, currentAssignments, namespaceState)
 
 	if !distributionChanged {
 		return nil
@@ -393,17 +395,71 @@ func (p *namespaceProcessor) findShardsToReassign(activeExecutors []string, name
 	return shardsToReassign, currentAssignments
 }
 
-func (*namespaceProcessor) updateAssignments(shardsToReassign []string, activeExecutors []string, currentAssignments map[string][]string) (distributionChanged bool) {
+func (*namespaceProcessor) updateAssignments(
+	shardsToReassign []string,
+	activeExecutors []string,
+	currentAssignments map[string][]string,
+	namespaceState *store.NamespaceState,
+) (distributionChanged bool) {
 	if len(shardsToReassign) == 0 {
 		return false
 	}
 
-	// Deterministic and even-spread placement to avoid churn.
-	i := 0
+	// Build current estimated load per active executor. Prefer AggregatedLoad,
+	// but we fall back to the sum of reported loads for currently assigned shards,
+	// and finally to simple shard counts.
+	currentLoad := make(map[string]float64, len(activeExecutors))
+	// Ensure deterministic order by sorting by executor IDs
+	execs := append([]string(nil), activeExecutors...)
+	slices.Sort(execs)
+	for _, id := range execs {
+		hb := namespaceState.Executors[id]
+		load := hb.AggregatedLoad
+		if load == 0 {
+			for _, s := range currentAssignments[id] {
+				if r := hb.ReportedShards[s]; r != nil {
+					load += r.ShardLoad
+				} else {
+					load += 1.0 // fall back to shard count
+				}
+			}
+		}
+
+		// if AggregatedLoad exists (prefered)
+		currentLoad[id] = load
+	}
+
+	// Estimate per-shard contribution using previous report if available.
+	// We don't want to treat shards as identical if we have past data
+	// taking from last known load we can:
+	// - avoid stacking multiple heavy shards on the same executor
+	// - place lighter and heavier ones more evenly
+	shardWeight := func(shardID string) float64 {
+		prevOwner := namespaceState.Shards[shardID].ExecutorID
+		if prevOwner != "" {
+			if rep := namespaceState.Executors[prevOwner].ReportedShards[shardID]; rep != nil {
+				if rep.ShardLoad > 0 {
+					return rep.ShardLoad
+				}
+			}
+		}
+		return 1.0
+	}
+
+	// Place shards onto the lowest-load executor (deterministic tiebreak by ID).
 	for _, shardID := range shardsToReassign {
-		executorID := activeExecutors[i%len(activeExecutors)]
-		currentAssignments[executorID] = append(currentAssignments[executorID], shardID)
-		i++
+		var target string
+		var minLoad float64
+		first := true
+		for _, id := range execs {
+			if first || currentLoad[id] < minLoad || (currentLoad[id] == minLoad && id < target) {
+				target = id
+				minLoad = currentLoad[id]
+				first = false
+			}
+		}
+		currentAssignments[target] = append(currentAssignments[target], shardID)
+		currentLoad[target] += shardWeight(shardID)
 	}
 	return true
 }
@@ -479,10 +535,11 @@ func assignShardsToEmptyExecutorsLoadAware(
 	}
 
 	// Compute how many shards to move per empty executor, re-using the prior
-	// count-based formula to keep behavior predictable and bounded.
+	// count-based formula to keep behavior predictable and bounded. Ensure at
+	// least one round of moves if donors exist to make progress.
 	numShardsToAssignEmptyExecutors := minShardsCurrentlyAssigned * len(executorsWithShards) / len(currentAssignments)
 	if numShardsToAssignEmptyExecutors == 0 {
-		return false
+		numShardsToAssignEmptyExecutors = 1
 	}
 
 	// Build a per-executor current load map. Prefer AggregatedLoad and adjust
@@ -553,8 +610,19 @@ func assignShardsToEmptyExecutorsLoadAware(
 		return chosen, true
 	}
 
+	// Apply a conservative global move budget to limit churn.
+	roundsByBudget := numShardsToAssignEmptyExecutors
+	totalPerRound := len(emptyExecutors)
+	if _emptyFillMoveBudget > 0 {
+		maxRounds := (_emptyFillMoveBudget + totalPerRound - 1) / totalPerRound
+		if maxRounds < roundsByBudget {
+			roundsByBudget = maxRounds
+		}
+	}
+
 	// Distribute shards to empties. Iterate in deterministic empty ID order.
-	for i := 0; i < numShardsToAssignEmptyExecutors; i++ {
+	moved := 0
+	for i := 0; i < roundsByBudget; i++ {
 		for _, emptyID := range emptyExecutors {
 			donor, ok := pickDonor()
 			if !ok {
@@ -572,6 +640,10 @@ func assignShardsToEmptyExecutorsLoadAware(
 				recvLoad = r.ShardLoad
 			}
 			currentLoad[emptyID] += recvLoad
+			moved++
+			if _emptyFillMoveBudget > 0 && moved >= _emptyFillMoveBudget {
+				return true
+			}
 		}
 	}
 
