@@ -281,6 +281,10 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		return fmt.Errorf("get state: %w", err)
 	}
 
+	if len(namespaceState.ShardMetrics) > 0 {
+		p.logger.Info("Shard metrics snapshot", tag.NewStringTag("metrics", fmt.Sprintf("%v", namespaceState.ShardMetrics)))
+	}
+
 	if namespaceState.GlobalRevision <= p.lastAppliedRevision {
 		p.logger.Debug("No changes detected. Skipping rebalance.")
 		return nil
