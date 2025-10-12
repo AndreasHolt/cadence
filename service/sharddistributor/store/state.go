@@ -28,7 +28,7 @@ type ShardState struct {
 }
 
 type ShardMetrics struct {
-	SmoothedLoad   float64 `json:"smoothed_load"`    // EWMA of shard load
-	LastUpdateTime int64   `json:"last_update_time"` // timestamp of the heartbeat that last updated the EWMA
-	LastMoveTime   int64   `json:"last_move_time"`   // timestamp of the most recent reassignment
+	SmoothedLoad   float64 `json:"smoothed_load"`    // EWMA of shard load that persists across executor changes
+	LastUpdateTime int64   `json:"last_update_time"` // heartbeat timestamp that last updated the EWMA
+	LastMoveTime   int64   `json:"last_move_time"`   // timestamp for the latest reassignment, used for cooldowns
 }
