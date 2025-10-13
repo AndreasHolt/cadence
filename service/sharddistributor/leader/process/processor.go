@@ -389,7 +389,15 @@ func (*namespaceProcessor) updateAssignments(shardsToReassign []string, activeEx
 }
 
 func (p *namespaceProcessor) addAssignmentsToNamespaceState(namespaceState *store.NamespaceState, currentAssignments map[string][]string) {
+	if namespaceState.Shards == nil {
+		namespaceState.Shards = make(map[string]store.ShardState)
+	}
+	if namespaceState.ShardMetrics == nil {
+		namespaceState.ShardMetrics = make(map[string]store.ShardMetrics)
+	}
+
 	newState := make(map[string]store.AssignedState)
+	newMetrics := make(map[string]store.ShardMetrics)
 	for executorID, shards := range currentAssignments {
 		assignedShardsMap := make(map[string]*types.ShardAssignment)
 		for _, shardID := range shards {
@@ -398,6 +406,16 @@ func (p *namespaceProcessor) addAssignmentsToNamespaceState(namespaceState *stor
 		modRevision := int64(0) // Should be 0 if we have not seen it yet
 		if namespaceAssignments, ok := namespaceState.ShardAssignments[executorID]; ok {
 			modRevision = namespaceAssignments.ModRevision
+			namespaceState.Shards[shardID] = store.ShardState{
+				ExecutorID: executorID,
+				Revision:   namespaceState.Shards[shardID].Revision,
+			}
+			if metrics, ok := namespaceState.ShardMetrics[shardID]; ok {
+				newMetrics[shardID] = metrics
+			} else {
+				// seed the metircs map so the store can write defaults for new shards.
+				newMetrics[shardID] = store.ShardMetrics{}
+			}
 		}
 
 		newState[executorID] = store.AssignedState{
@@ -408,6 +426,7 @@ func (p *namespaceProcessor) addAssignmentsToNamespaceState(namespaceState *stor
 	}
 
 	namespaceState.ShardAssignments = newState
+	namespaceState.ShardMetrics = newMetrics
 }
 
 func (*namespaceProcessor) getActiveExecutors(namespaceState *store.NamespaceState) []string {
