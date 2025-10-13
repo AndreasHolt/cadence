@@ -475,7 +475,6 @@ func (s *executorStoreImpl) AssignShard(ctx context.Context, namespace, shardID,
 		}
 
 		var state store.AssignedState
-		var metrics store.ShardMetrics
 		modRevision := int64(0) // A revision of 0 means the key doesn't exist yet.
 
 		if len(resp.Kvs) > 0 {
@@ -510,6 +509,17 @@ func (s *executorStoreImpl) AssignShard(ctx context.Context, namespace, shardID,
 		// 2. Modify the state in memory, adding the new shard if it's not already there.
 		if _, alreadyAssigned := state.AssignedShards[shardID]; !alreadyAssigned {
 			state.AssignedShards[shardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
+		}
+
+		// Seed metrics for the new shard. later heartbeats will update these numbers.
+		metrics := store.ShardMetrics{
+			SmoothedLoad:   0,
+			LastUpdateTime: time.Now().Unix(),
+			LastMoveTime:   time.Now().Unix(),
+		}
+		metricsValue, err := json.Marshal(metrics)
+		if err != nil {
+			return fmt.Errorf("marshal shard metrics: %w", err)
 		}
 
 		newStateValue, err := json.Marshal(state)
