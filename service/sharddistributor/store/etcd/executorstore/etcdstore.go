@@ -456,6 +456,38 @@ func (s *executorStoreImpl) AssignShard(ctx context.Context, namespace, shardID,
 	if err != nil {
 		return fmt.Errorf("build executor assigned state key: %w", err)
 	}
+	if resp.Count == 0 {
+		return "", store.ErrShardNotFound
+	}
+	return string(resp.Kvs[0].Value), nil
+}
+
+// GetShardMetrics retrieves the metrics for the given shards.
+func (s *Store) GetShardMetrics(ctx context.Context, namespace string, shardIDs []string) (map[string]store.ShardMetrics, error) {
+	metrics := make(map[string]store.ShardMetrics, len(shardIDs))
+	for _, shardID := range shardIDs {
+		metricKey := s.buildShardKey(namespace, shardID, shardMetricsKey)
+		resp, err := s.client.Get(ctx, metricKey)
+		if err != nil {
+			return nil, fmt.Errorf("get shard metrics %s: %w", shardID, err)
+		}
+		if len(resp.Kvs) == 0 {
+			continue
+		}
+		var metric store.ShardMetrics
+		if err := json.Unmarshal(resp.Kvs[0].Value, &metric); err != nil {
+			return nil, fmt.Errorf("unmarshal shard metrics for %s: %w", shardID, err)
+		}
+		metrics[shardID] = metric
+	}
+	return metrics, nil
+}
+
+func (s *Store) AssignShard(ctx context.Context, namespace, shardID, executorID string) error {
+	assignedState := s.buildExecutorKey(namespace, executorID, executorAssignedStateKey)
+	statusKey := s.buildExecutorKey(namespace, executorID, executorStatusKey)
+	shardOwnerKey := s.buildShardKey(namespace, shardID, shardAssignedKey)
+	metricsKey := s.buildShardKey(namespace, shardID, shardMetricsKey)
 	statusKey, err := etcdkeys.BuildExecutorKey(s.prefix, namespace, executorID, etcdkeys.ExecutorStatusKey)
 	if err != nil {
 		return fmt.Errorf("build executor status key: %w", err)
@@ -624,6 +656,68 @@ func (s *executorStoreImpl) DeleteExecutors(ctx context.Context, namespace strin
 	if !resp.Succeeded {
 		return fmt.Errorf("transaction failed, leadership may have changed")
 	}
+	return nil
+}
+
+// UpdateShardMetrics updates the metrics for the given shards.
+func (s *Store) UpdateShardMetrics(ctx context.Context, namespace, executorID string, metrics map[string]store.ShardMetrics) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+	ops := make([]clientv3.Op, 0, len(metrics))
+	comparisons := make([]clientv3.Cmp, 0, len(metrics))
+
+	for shardID, metric := range metrics {
+		metricKey := s.buildShardKey(namespace, shardID, shardMetricsKey)
+		metricBytes, err := json.Marshal(metric)
+		if err != nil {
+			return fmt.Errorf("marshal shard metrics for %s: %w", shardID, err)
+		}
+		ops = append(ops, clientv3.OpPut(metricKey, string(metricBytes)))
+
+		ownerKey := s.buildShardKey(namespace, shardID, shardAssignedKey)
+		comparisons = append(comparisons, clientv3.Compare(clientv3.Value(ownerKey), "=", executorID))
+	}
+
+	resp, err := s.client.Txn(ctx).If(comparisons...).Then(ops...).Commit()
+	if err != nil {
+		return fmt.Errorf("update shard metrics transaction: %w", err)
+	}
+	if !resp.Succeeded {
+		return fmt.Errorf("%w: shard ownership changed during metrics update", store.ErrVersionConflict)
+	}
+
+	return nil
+}
+
+// UpdateShardMetrics updates the metrics for the given shards.
+func (s *Store) UpdateShrdMetrics(ctx context.Context, namespace, executorID string, metrics map[string]store.ShardMetrics) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+	ops := make([]clientv3.Op, 0, len(metrics))
+	comparisons := make([]clientv3.Cmp, 0, len(metrics))
+
+	for shardID, metric := range metrics {
+		metricKey := s.buildShardKey(namespace, shardID, shardMetricsKey)
+		metricBytes, err := json.Marshal(metric)
+		if err != nil {
+			return fmt.Errorf("marshal shard metrics for %s: %w", shardID, err)
+		}
+		ops = append(ops, clientv3.OpPut(metricKey, string(metricBytes)))
+
+		ownerKey := s.buildShardKey(namespace, shardID, shardAssignedKey)
+		comparisons = append(comparisons, clientv3.Compare(clientv3.Value(ownerKey), "=", executorID))
+	}
+
+	resp, err := s.client.Txn(ctx).If(comparisons...).Then(ops...).Commit()
+	if err != nil {
+		return fmt.Errorf("update shard metrics transaction: %w", err)
+	}
+	if !resp.Succeeded {
+		return fmt.Errorf("%w: shard ownership changed during metrics update", store.ErrVersionConflict)
+	}
+
 	return nil
 }
 
