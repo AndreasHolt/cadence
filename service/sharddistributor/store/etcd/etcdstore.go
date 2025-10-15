@@ -88,7 +88,6 @@ func NewStore(p StoreParams) (store.Store, error) {
 
 func (s *Store) RecordHeartbeat(ctx context.Context, namespace, executorID string, request store.HeartbeatState) error {
 	heartbeatETCDKey := s.buildExecutorKey(namespace, executorID, executorHeartbeatKey)
-	aggregatedLoadKey := s.buildExecutorKey(namespace, executorID, executorAggregatedLoadKey)
 	stateETCDKey := s.buildExecutorKey(namespace, executorID, executorStatusKey)
 	reportedShardsETCDKey := s.buildExecutorKey(namespace, executorID, executorReportedShardsKey)
 
@@ -105,7 +104,6 @@ func (s *Store) RecordHeartbeat(ctx context.Context, namespace, executorID strin
 	// Atomically update both the timestamp and the state.
 	_, err = s.client.Txn(ctx).Then(
 		clientv3.OpPut(heartbeatETCDKey, strconv.FormatInt(request.LastHeartbeat, 10)),
-		clientv3.OpPut(aggregatedLoadKey, strconv.FormatFloat(request.AggregatedLoad, 'f', 3, 64)),
 		clientv3.OpPut(stateETCDKey, string(jsonState)),
 		clientv3.OpPut(reportedShardsETCDKey, string(reportedShardsData)),
 	).Commit()
@@ -176,6 +174,81 @@ func (s *Store) GetHeartbeat(ctx context.Context, namespace string, executorID s
 }
 
 // --- ShardStore Implementation ---
+func (s *Store) GetShardLoadMap(ctx context.Context, namespace string, shardIds []string) (map[string]float64, error) {
+	if len(shardIds) == 0 {
+		return make(map[string]float64), nil
+	}
+
+	// 1. Create a GET operation for each shard ID to fetch them in a single batch.
+	var ops []clientv3.Op
+	for _, shardID := range shardIds {
+		// The key for smooth load is consistent with what's used in RecordShardSmoothLoad.
+		key := s.buildShardKey(namespace, shardID, "SmoothLoad")
+		ops = append(ops, clientv3.OpGet(key))
+	}
+
+	// 2. Execute the transaction to retrieve all shard loads.
+	resp, err := s.client.Txn(ctx).Then(ops...).Commit()
+	if err != nil {
+		return nil, fmt.Errorf("etcd transaction to get shard loads failed: %w", err)
+	}
+
+	loadMap := make(map[string]float64)
+	shardsPrefix := s.buildShardsPrefix(namespace)
+
+	// 3. Process the response for each operation.
+	for _, opResp := range resp.Responses {
+		getResp := opResp.GetResponseRange()
+		// If a key doesn't exist for a shard, its Kvs will be empty.
+		if len(getResp.Kvs) == 0 {
+			continue
+		}
+
+		kv := getResp.Kvs[0]
+		key := string(kv.Key)
+		value := string(kv.Value)
+
+		// 4. Parse the shard ID from the full etcd key.
+		// e.g., from "{prefix}/shards/123/SmoothLoad", extract "123".
+		remainder := strings.TrimPrefix(key, shardsPrefix)
+		parts := strings.Split(remainder, "/")
+		if len(parts) < 2 {
+			// Ignore malformed keys that don't fit the "shardID/keyType" pattern.
+			continue
+		}
+		shardID := parts[0]
+
+		// 5. Parse the string value into a float.
+		load, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			// Data is corrupt; return an error.
+			return nil, fmt.Errorf("failed to parse load for shard %s from value '%s': %w", shardID, value, err)
+		}
+
+		loadMap[shardID] = load
+	}
+
+	return loadMap, nil
+}
+
+func (s *Store) RecordShardLoadMap(ctx context.Context, namespace string, loadMap map[string]float64) error {
+
+	var ops []clientv3.Op
+	for shardID, load := range loadMap {
+		shardPrefix := s.buildShardKey(namespace, shardID, "SmoothLoad")
+		ops = append(ops, clientv3.OpPut(shardPrefix, strconv.FormatFloat(load, 'f', 3, 64)))
+	}
+	txnResp, err := s.client.Txn(ctx).Then(ops...).Commit()
+	if err != nil {
+		return fmt.Errorf("commit shard load transaction: %w", err)
+	}
+
+	if !txnResp.Succeeded {
+		return fmt.Errorf("%w: transaction failed", store.ErrVersionConflict)
+	}
+
+	return nil
+}
 
 func (s *Store) GetState(ctx context.Context, namespace string) (*store.NamespaceState, error) {
 	heartbeatStates := make(map[string]store.HeartbeatState)
@@ -215,11 +288,7 @@ func (s *Store) GetState(ctx context.Context, namespace string) (*store.Namespac
 			if err != nil {
 				return nil, fmt.Errorf("unmarshal assigned shards: %w, %s", err, value)
 			}
-		case executorAggregatedLoadKey:
-			load, _ := strconv.ParseFloat(value, 64)
-			heartbeat.AggregatedLoad = load
 		}
-
 		heartbeatStates[executorID] = heartbeat
 		assignedStates[executorID] = assigned
 	}

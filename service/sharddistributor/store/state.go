@@ -4,6 +4,7 @@ import (
 	"github.com/uber/cadence/common/types"
 )
 
+// SmoothLoads should not be on HeartBeat, make new struct (Or use ShardState) and put it on NamespaceState
 type HeartbeatState struct {
 	LastHeartbeat  int64                               `json:"last_heartbeat"`
 	Status         types.ExecutorStatus                `json:"status"`
@@ -25,4 +26,5 @@ type NamespaceState struct {
 type ShardState struct {
 	ExecutorID string
 	Revision   int64
+	SmoothLoad float64 `json:"smooth_load_shards"`
 }

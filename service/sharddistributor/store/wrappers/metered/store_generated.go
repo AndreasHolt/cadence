@@ -79,6 +79,16 @@ func (c *meteredStore) GetHeartbeat(ctx context.Context, namespace string, execu
 	return
 }
 
+func (c *meteredStore) GetShardLoadMap(ctx context.Context, namespace string, shardIds []string) (m1 map[string]float64, err error) {
+	op := func() error {
+		m1, err = c.wrapped.GetShardLoadMap(ctx, namespace, shardIds)
+		return err
+	}
+
+	err = c.call(metrics.ShardDistributorStoreGetShardLoadMapScope, op, metrics.NamespaceTag(namespace))
+	return
+}
+
 func (c *meteredStore) GetShardOwner(ctx context.Context, namespace string, shardID string) (s1 string, err error) {
 	op := func() error {
 		s1, err = c.wrapped.GetShardOwner(ctx, namespace, shardID)
@@ -106,6 +116,16 @@ func (c *meteredStore) RecordHeartbeat(ctx context.Context, namespace string, ex
 	}
 
 	err = c.call(metrics.ShardDistributorStoreRecordHeartbeatScope, op, metrics.NamespaceTag(namespace))
+	return
+}
+
+func (c *meteredStore) RecordShardLoadMap(ctx context.Context, namespace string, loadMap map[string]float64) (err error) {
+	op := func() error {
+		err = c.wrapped.RecordShardLoadMap(ctx, namespace, loadMap)
+		return err
+	}
+
+	err = c.call(metrics.ShardDistributorStoreRecordShardLoadMapScope, op, metrics.NamespaceTag(namespace))
 	return
 }
 

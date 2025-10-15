@@ -94,7 +94,7 @@ func (h *handlerImpl) GetShardOwner(ctx context.Context, request *types.GetShard
 	executorID, err := h.storage.GetShardOwner(ctx, request.Namespace, request.ShardKey)
 	if errors.Is(err, store.ErrShardNotFound) {
 		if h.shardDistributionCfg.Namespaces[namespaceIdx].Type == config.NamespaceTypeEphemeral {
-			return h.assignEphemeralShard(ctx, request.Namespace, request.ShardKey, findExecutorWithLeastLoad)
+			return h.assignEphemeralShard(ctx, request.Namespace, request.ShardKey, findExecutorWithLeastShards)
 		}
 
 		return nil, &types.ShardNotFoundError{
@@ -129,12 +129,21 @@ func findExecutorWithLeastShards(state *store.NamespaceState) string {
 	return executor
 }
 
-func findExecutorWithLeastLoad(state *store.NamespaceState) string {
+func (h *handlerImpl) findExecutorWithLeastLoad(state *store.NamespaceState) string {
 	var executor string
 	minLoad := math.MaxFloat64
 	for heartbeatExecutor, heartbeat := range state.Executors {
-		if heartbeat.AggregatedLoad < minLoad {
-			minLoad = heartbeat.AggregatedLoad
+		var assignedShards []string
+		for shardID, _ := range heartbeat.ReportedShards {
+			assignedShards = append(assignedShards, shardID)
+		}
+		aggregatedLoad := 0.0
+		for _, id := range assignedShards {
+			aggregatedLoad += state.Shards[id].SmoothLoad
+		}
+		h.logger.Info(fmt.Sprintf("Executor: %s, with load: %f", heartbeatExecutor, aggregatedLoad))
+		if aggregatedLoad < minLoad {
+			minLoad = aggregatedLoad
 			executor = heartbeatExecutor
 		}
 	}

@@ -122,6 +122,21 @@ func (mr *MockStoreMockRecorder) GetHeartbeat(ctx, namespace, executorID any) *g
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetHeartbeat", reflect.TypeOf((*MockStore)(nil).GetHeartbeat), ctx, namespace, executorID)
 }
 
+// GetShardLoadMap mocks base method.
+func (m *MockStore) GetShardLoadMap(ctx context.Context, namespace string, shardIds []string) (map[string]float64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetShardLoadMap", ctx, namespace, shardIds)
+	ret0, _ := ret[0].(map[string]float64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetShardLoadMap indicates an expected call of GetShardLoadMap.
+func (mr *MockStoreMockRecorder) GetShardLoadMap(ctx, namespace, shardIds any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetShardLoadMap", reflect.TypeOf((*MockStore)(nil).GetShardLoadMap), ctx, namespace, shardIds)
+}
+
 // GetShardOwner mocks base method.
 func (m *MockStore) GetShardOwner(ctx context.Context, namespace, shardID string) (string, error) {
 	m.ctrl.T.Helper()
@@ -164,6 +179,20 @@ func (m *MockStore) RecordHeartbeat(ctx context.Context, namespace, executorID s
 func (mr *MockStoreMockRecorder) RecordHeartbeat(ctx, namespace, executorID, state any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordHeartbeat", reflect.TypeOf((*MockStore)(nil).RecordHeartbeat), ctx, namespace, executorID, state)
+}
+
+// RecordShardLoadMap mocks base method.
+func (m *MockStore) RecordShardLoadMap(ctx context.Context, namespace string, loadMap map[string]float64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RecordShardLoadMap", ctx, namespace, loadMap)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RecordShardLoadMap indicates an expected call of RecordShardLoadMap.
+func (mr *MockStoreMockRecorder) RecordShardLoadMap(ctx, namespace, loadMap any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordShardLoadMap", reflect.TypeOf((*MockStore)(nil).RecordShardLoadMap), ctx, namespace, loadMap)
 }
 
 // Subscribe mocks base method.

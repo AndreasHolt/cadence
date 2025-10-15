@@ -63,6 +63,9 @@ type Store interface {
 
 	GetHeartbeat(ctx context.Context, namespace string, executorID string) (*HeartbeatState, *AssignedState, error)
 	RecordHeartbeat(ctx context.Context, namespace, executorID string, state HeartbeatState) error
+	RecordShardLoadMap(ctx context.Context, namespace string, loadMap map[string]float64) error
+
+	GetShardLoadMap(ctx context.Context, namespace string, shardIds []string) (map[string]float64, error)
 }
 
 // Impl could be used to build an implementation in the registry.
