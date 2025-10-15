@@ -660,14 +660,14 @@ func (s *executorStoreImpl) DeleteExecutors(ctx context.Context, namespace strin
 }
 
 // UpdateShardMetrics updates the metrics for the given shards.
-func (s *Store) UpdateShardMetrics(ctx context.Context, namespace, executorID string, metrics map[string]store.ShardMetrics) error {
-	if len(metrics) == 0 {
+func (s *Store) UpdateShardMetrics(ctx context.Context, namespace, executorID string, shardMetrics map[string]store.ShardMetrics) error {
+	if len(shardMetrics) == 0 {
 		return nil
 	}
-	ops := make([]clientv3.Op, 0, len(metrics))
-	comparisons := make([]clientv3.Cmp, 0, len(metrics))
+	ops := make([]clientv3.Op, 0, len(shardMetrics))
+	comparisons := make([]clientv3.Cmp, 0, len(shardMetrics))
 
-	for shardID, metric := range metrics {
+	for shardID, metric := range shardMetrics {
 		metricKey := s.buildShardKey(namespace, shardID, shardMetricsKey)
 		metricBytes, err := json.Marshal(metric)
 		if err != nil {

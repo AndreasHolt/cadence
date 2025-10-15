@@ -60,6 +60,8 @@ type Store interface {
 	AssignShards(ctx context.Context, namespace string, request AssignShardsRequest, guard GuardFunc) error
 	Subscribe(ctx context.Context, namespace string) (<-chan int64, error)
 	DeleteExecutors(ctx context.Context, namespace string, executorIDs []string, guard GuardFunc) error
+	GetShardMetrics(ctx context.Context, namespace string, shardIDs []string) (map[string]ShardMetrics, error)
+	UpdateShardMetrics(ctx context.Context, namespace, executorID string, shardMetrics map[string]ShardMetrics) error
 
 	GetShardOwner(ctx context.Context, namespace, shardID string) (string, error)
 	AssignShard(ctx context.Context, namespace, shardID, executorID string) error

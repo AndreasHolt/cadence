@@ -122,6 +122,21 @@ func (mr *MockStoreMockRecorder) GetHeartbeat(ctx, namespace, executorID any) *g
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetHeartbeat", reflect.TypeOf((*MockStore)(nil).GetHeartbeat), ctx, namespace, executorID)
 }
 
+// GetShardMetrics mocks base method.
+func (m *MockStore) GetShardMetrics(ctx context.Context, namespace string, shardIDs []string) (map[string]ShardMetrics, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetShardMetrics", ctx, namespace, shardIDs)
+	ret0, _ := ret[0].(map[string]ShardMetrics)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetShardMetrics indicates an expected call of GetShardMetrics.
+func (mr *MockStoreMockRecorder) GetShardMetrics(ctx, namespace, shardIDs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetShardMetrics", reflect.TypeOf((*MockStore)(nil).GetShardMetrics), ctx, namespace, shardIDs)
+}
+
 // GetShardOwner mocks base method.
 func (m *MockStore) GetShardOwner(ctx context.Context, namespace, shardID string) (string, error) {
 	m.ctrl.T.Helper()
@@ -179,4 +194,18 @@ func (m *MockStore) Subscribe(ctx context.Context, namespace string) (<-chan int
 func (mr *MockStoreMockRecorder) Subscribe(ctx, namespace any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Subscribe", reflect.TypeOf((*MockStore)(nil).Subscribe), ctx, namespace)
+}
+
+// UpdateShardMetrics mocks base method.
+func (m *MockStore) UpdateShardMetrics(ctx context.Context, namespace, executorID string, shardMetrics map[string]ShardMetrics) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateShardMetrics", ctx, namespace, executorID, shardMetrics)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateShardMetrics indicates an expected call of UpdateShardMetrics.
+func (mr *MockStoreMockRecorder) UpdateShardMetrics(ctx, namespace, executorID, shardMetrics any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateShardMetrics", reflect.TypeOf((*MockStore)(nil).UpdateShardMetrics), ctx, namespace, executorID, shardMetrics)
 }
