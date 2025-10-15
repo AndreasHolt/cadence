@@ -400,6 +400,10 @@ func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, 
 		ops = append(ops, clientv3.OpPut(executorStateKey, string(value)))
 
 		// For each shard in the new assignment, add a Put operation and a revision check.
+		if request.NewState.ShardMetrics == nil {
+			request.NewState.ShardMetrics = make(map[string]store.ShardMetrics)
+		}
+
 		for shardID := range state.AssignedShards {
 			shardOwnerKey := s.buildShardKey(namespace, shardID, shardAssignedKey)
 			ops = append(ops, clientv3.OpPut(shardOwnerKey, executorID))
