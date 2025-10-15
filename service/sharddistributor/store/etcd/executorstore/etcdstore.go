@@ -398,7 +398,47 @@ func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, 
 			return fmt.Errorf("marshal assigned shards for executor %s: %w", executorID, err)
 		}
 		ops = append(ops, clientv3.OpPut(executorStateKey, string(value)))
-		comparisons = append(comparisons, clientv3.Compare(clientv3.ModRevision(executorStateKey), "=", state.ModRevision))
+
+		// For each shard in the new assignment, add a Put operation and a revision check.
+		for shardID := range state.AssignedShards {
+			shardOwnerKey := s.buildShardKey(namespace, shardID, shardAssignedKey)
+			ops = append(ops, clientv3.OpPut(shardOwnerKey, executorID))
+			metricsValue := request.NewState.ShardMetrics[shardID]
+			if metricsValue.LastMoveTime == 0 && metricsValue.LastUpdateTime == 0 {
+				now := time.Now().Unix()
+				metricsValue.LastMoveTime = now
+				metricsValue.LastUpdateTime = now
+				metricsValue.SmoothedLoad = 0
+				request.NewState.ShardMetrics[shardID] = metricsValue
+			}
+			// Persist shard-level metrics alongside ownership so readers observe both atomically.
+			metricsBytes, err := json.Marshal(metricsValue)
+			if err != nil {
+				return fmt.Errorf("marshal shard metrics for shard %s: %w", shardID, err)
+			}
+			metricsKey := s.buildShardKey(namespace, shardID, shardMetricsKey)
+			ops = append(ops, clientv3.OpPut(metricsKey, string(metricsBytes)))
+
+			// Check the revision of the shard from the state we read in GetState.
+			previousShardState, ok := request.NewState.Shards[shardID]
+			if ok {
+				// The shard existed before. Check that its revision has not changed.
+				// This handles moves and re-assignments to the same executor.
+				comparisons = append(comparisons, clientv3.Compare(clientv3.ModRevision(shardOwnerKey), "=", previousShardState.Revision))
+			} else {
+				// The shard is new. Check that it has not been created by another process.
+				// A non-existent key has a ModRevision of 0.
+				comparisons = append(comparisons, clientv3.Compare(clientv3.ModRevision(shardOwnerKey), "=", 0))
+			}
+		}
+	}
+
+	for shardID, shardState := range request.ShardsToDelete {
+		shardOwnerKey := s.buildShardKey(namespace, shardID, shardAssignedKey)
+		ops = append(ops, clientv3.OpDelete(shardOwnerKey))
+		metricsKey := s.buildShardKey(namespace, shardID, shardMetricsKey)
+		ops = append(ops, clientv3.OpDelete(metricsKey))
+		comparisons = append(comparisons, clientv3.Compare(clientv3.ModRevision(shardOwnerKey), "=", shardState.Revision))
 	}
 
 	if len(ops) == 0 {
