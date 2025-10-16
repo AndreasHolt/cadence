@@ -630,6 +630,19 @@ func (s *Store) AssignShard(ctx context.Context, namespace, shardID, executorID 
 		if err == nil {
 			return &store.ErrShardAlreadyAssigned{ShardID: shardID, AssignedTo: owner}
 		}
+		// 3. Prepare and commit the transaction with four atomic checks.
+		// a) Check that the shard is not already assigned (its key revision must be 0).
+		cmpShardUnassigned := clientv3.Compare(clientv3.ModRevision(shardOwnerKey), "=", 0)
+		// b) Check that metrics key is not set.
+		cmpShardMetricsEmpty := clientv3.Compare(clientv3.ModRevision(metricsKey), "=", 0)
+		// c) Check that the executor's status is ACTIVE.
+		cmpStatus := clientv3.Compare(clientv3.Value(statusKey), "=", _executorStatusRunningJSON)
+		// d) Check that the assigned_state key hasn't been changed by another process.
+		cmpAssignedState := clientv3.Compare(clientv3.ModRevision(assignedState), "=", modRevision)
+
+		opUpdateExecutorState := clientv3.OpPut(assignedState, string(newStateValue))
+		opUpdateShardOwner := clientv3.OpPut(shardOwnerKey, executorID)
+		opUpdateShardMetrics := clientv3.OpPut(metricsKey, string(metricsValue))
 
 		txnResp, err := s.client.Txn(ctx).
 			If(comparisons...).
@@ -637,6 +650,8 @@ func (s *Store) AssignShard(ctx context.Context, namespace, shardID, executorID 
 				clientv3.OpPut(assignedState, string(newStateValue)),
 				clientv3.OpPut(shardMetricsKey, string(metricsValue)),
 			).
+			If(cmpShardUnassigned, cmpShardMetricsEmpty, cmpStatus, cmpAssignedState). // All conditions must be true.
+			Then(opUpdateExecutorState, opUpdateShardOwner, opUpdateShardMetrics).
 			Commit()
 
 		if err != nil {
