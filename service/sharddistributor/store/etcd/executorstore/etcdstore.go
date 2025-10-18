@@ -254,28 +254,57 @@ func (s *executorStoreImpl) GetState(ctx context.Context, namespace string) (*st
 		if err != nil {
 			continue
 		}
-		switch shardKeyType {
-		case etcdkeys.ShardMetricsKey:
-			var m store.ShardMetrics
-			if err := json.Unmarshal(kv.Value, &m); err != nil {
-				return nil, fmt.Errorf("unmarshal shard metrics: %w", err)
-			}
-			shardMetrics[shardID] = m
+		if shardKeyType != etcdkeys.ShardMetricsKey {
+			continue
 		}
+		var metrics store.ShardMetrics
+		if err := json.Unmarshal(kv.Value, &metrics); err != nil {
+			return nil, fmt.Errorf("unmarshal shard metrics: %w", err)
+		}
+		shardMetrics[shardID] = metrics
 	}
 
 	// Compute a global revision that reflects both executor and shard state.
-	globalRev := resp.Header.Revision
-	if shardResp.Header.Revision > globalRev {
-		globalRev = shardResp.Header.Revision
+	globalRevision := resp.Header.Revision
+	if shardResp.Header.Revision > globalRevision {
+		globalRevision = shardResp.Header.Revision
 	}
 
 	return &store.NamespaceState{
 		Executors:        heartbeatStates,
 		ShardMetrics:     shardMetrics,
 		ShardAssignments: assignedStates,
-		GlobalRevision:   globalRev,
+		GlobalRevision:   globalRevision,
 	}, nil
+}
+
+func (s *executorStoreImpl) GetShardMetrics(ctx context.Context, namespace string, shardIDs []string) (map[string]store.ShardMetrics, error) {
+	result := make(map[string]store.ShardMetrics, len(shardIDs))
+	if len(shardIDs) == 0 {
+		return result, nil
+	}
+
+	for _, shardID := range shardIDs {
+		metricsKey, err := etcdkeys.BuildShardKey(s.prefix, namespace, shardID, etcdkeys.ShardMetricsKey)
+		if err != nil {
+			return nil, fmt.Errorf("build shard metrics key: %w", err)
+		}
+		resp, err := s.client.Get(ctx, metricsKey)
+		if err != nil {
+			return nil, fmt.Errorf("get shard metrics: %w", err)
+		}
+		if len(resp.Kvs) == 0 {
+			continue
+		}
+
+		var metrics store.ShardMetrics
+		if err := json.Unmarshal(resp.Kvs[0].Value, &metrics); err != nil {
+			return nil, fmt.Errorf("unmarshal shard metrics: %w", err)
+		}
+		result[shardID] = metrics
+	}
+
+	return result, nil
 }
 
 func (s *executorStoreImpl) Subscribe(ctx context.Context, namespace string) (<-chan int64, error) {
@@ -337,19 +366,19 @@ func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, 
 		if keyErr != nil || keyType != etcdkeys.ExecutorAssignedStateKey {
 			continue
 		}
-		var st store.AssignedState
-		if err := json.Unmarshal(kv.Value, &st); err != nil {
+		var state store.AssignedState
+		if err := json.Unmarshal(kv.Value, &state); err != nil {
 			return fmt.Errorf("unmarshal current assigned state: %w", err)
 		}
-		for shardID := range st.AssignedShards {
+		for shardID := range state.AssignedShards {
 			currentAssignments[shardID] = executorID
 		}
 	}
 
 	// Build new owner map and detect moved shards.
-	newAssignments := make(map[string]string) // shardID -> executorID
-	for executorID, st := range request.NewState.ShardAssignments {
-		for shardID := range st.AssignedShards {
+	newAssignments := make(map[string]string)
+	for executorID, state := range request.NewState.ShardAssignments {
+		for shardID := range state.AssignedShards {
 			newAssignments[shardID] = executorID
 		}
 	}
@@ -363,22 +392,21 @@ func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, 
 		if err != nil {
 			return fmt.Errorf("build shard metrics key: %w", err)
 		}
-		var m store.ShardMetrics
-		mResp, err := s.client.Get(ctx, shardMetricsKey)
+		var metrics store.ShardMetrics
+		metricsResp, err := s.client.Get(ctx, shardMetricsKey)
 		if err != nil {
 			return fmt.Errorf("get shard metrics: %w", err)
 		}
-		if len(mResp.Kvs) > 0 {
-			if err := json.Unmarshal(mResp.Kvs[0].Value, &m); err != nil {
+		if len(metricsResp.Kvs) > 0 {
+			if err := json.Unmarshal(metricsResp.Kvs[0].Value, &metrics); err != nil {
 				return fmt.Errorf("unmarshal shard metrics: %w", err)
 			}
 		} else {
-			// Initialize on first seen move for this shard.
-			m.SmoothedLoad = 0
-			m.LastUpdateTime = now
+			metrics.SmoothedLoad = 0
+			metrics.LastUpdateTime = now
 		}
-		m.LastMoveTime = now
-		payload, err := json.Marshal(m)
+		metrics.LastMoveTime = now
+		payload, err := json.Marshal(metrics)
 		if err != nil {
 			return fmt.Errorf("marshal shard metrics: %w", err)
 		}
@@ -398,51 +426,7 @@ func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, 
 			return fmt.Errorf("marshal assigned shards for executor %s: %w", executorID, err)
 		}
 		ops = append(ops, clientv3.OpPut(executorStateKey, string(value)))
-
-		// For each shard in the new assignment, add a Put operation and a revision check.
-		if request.NewState.ShardMetrics == nil {
-			request.NewState.ShardMetrics = make(map[string]store.ShardMetrics)
-		}
-
-		for shardID := range state.AssignedShards {
-			shardOwnerKey := s.buildShardKey(namespace, shardID, shardAssignedKey)
-			ops = append(ops, clientv3.OpPut(shardOwnerKey, executorID))
-			metricsValue := request.NewState.ShardMetrics[shardID]
-			if metricsValue.LastMoveTime == 0 && metricsValue.LastUpdateTime == 0 {
-				now := time.Now().Unix()
-				metricsValue.LastMoveTime = now
-				metricsValue.LastUpdateTime = now
-				metricsValue.SmoothedLoad = 0
-				request.NewState.ShardMetrics[shardID] = metricsValue
-			}
-			// Persist shard-level metrics alongside ownership so readers observe both atomically.
-			metricsBytes, err := json.Marshal(metricsValue)
-			if err != nil {
-				return fmt.Errorf("marshal shard metrics for shard %s: %w", shardID, err)
-			}
-			metricsKey := s.buildShardKey(namespace, shardID, shardMetricsKey)
-			ops = append(ops, clientv3.OpPut(metricsKey, string(metricsBytes)))
-
-			// Check the revision of the shard from the state we read in GetState.
-			previousShardState, ok := request.NewState.Shards[shardID]
-			if ok {
-				// The shard existed before. Check that its revision has not changed.
-				// This handles moves and re-assignments to the same executor.
-				comparisons = append(comparisons, clientv3.Compare(clientv3.ModRevision(shardOwnerKey), "=", previousShardState.Revision))
-			} else {
-				// The shard is new. Check that it has not been created by another process.
-				// A non-existent key has a ModRevision of 0.
-				comparisons = append(comparisons, clientv3.Compare(clientv3.ModRevision(shardOwnerKey), "=", 0))
-			}
-		}
-	}
-
-	for shardID, shardState := range request.ShardsToDelete {
-		shardOwnerKey := s.buildShardKey(namespace, shardID, shardAssignedKey)
-		ops = append(ops, clientv3.OpDelete(shardOwnerKey))
-		metricsKey := s.buildShardKey(namespace, shardID, shardMetricsKey)
-		ops = append(ops, clientv3.OpDelete(metricsKey))
-		comparisons = append(comparisons, clientv3.Compare(clientv3.ModRevision(shardOwnerKey), "=", shardState.Revision))
+		comparisons = append(comparisons, clientv3.Compare(clientv3.ModRevision(executorStateKey), "=", state.ModRevision))
 	}
 
 	if len(ops) == 0 {
@@ -500,43 +484,10 @@ func (s *executorStoreImpl) AssignShard(ctx context.Context, namespace, shardID,
 	if err != nil {
 		return fmt.Errorf("build executor assigned state key: %w", err)
 	}
-	if resp.Count == 0 {
-		return "", store.ErrShardNotFound
-	}
-	return string(resp.Kvs[0].Value), nil
-}
-
-// GetShardMetrics retrieves the metrics for the given shards.
-func (s *Store) GetShardMetrics(ctx context.Context, namespace string, shardIDs []string) (map[string]store.ShardMetrics, error) {
-	metrics := make(map[string]store.ShardMetrics, len(shardIDs))
-	for _, shardID := range shardIDs {
-		metricKey := s.buildShardKey(namespace, shardID, shardMetricsKey)
-		resp, err := s.client.Get(ctx, metricKey)
-		if err != nil {
-			return nil, fmt.Errorf("get shard metrics %s: %w", shardID, err)
-		}
-		if len(resp.Kvs) == 0 {
-			continue
-		}
-		var metric store.ShardMetrics
-		if err := json.Unmarshal(resp.Kvs[0].Value, &metric); err != nil {
-			return nil, fmt.Errorf("unmarshal shard metrics for %s: %w", shardID, err)
-		}
-		metrics[shardID] = metric
-	}
-	return metrics, nil
-}
-
-func (s *Store) AssignShard(ctx context.Context, namespace, shardID, executorID string) error {
-	assignedState := s.buildExecutorKey(namespace, executorID, executorAssignedStateKey)
-	statusKey := s.buildExecutorKey(namespace, executorID, executorStatusKey)
-	shardOwnerKey := s.buildShardKey(namespace, shardID, shardAssignedKey)
-	metricsKey := s.buildShardKey(namespace, shardID, shardMetricsKey)
 	statusKey, err := etcdkeys.BuildExecutorKey(s.prefix, namespace, executorID, etcdkeys.ExecutorStatusKey)
 	if err != nil {
 		return fmt.Errorf("build executor status key: %w", err)
 	}
-
 	shardMetricsKey, err := etcdkeys.BuildShardKey(s.prefix, namespace, shardID, etcdkeys.ShardMetricsKey)
 	if err != nil {
 		return fmt.Errorf("build shard metrics key: %w", err)
@@ -551,6 +502,7 @@ func (s *Store) AssignShard(ctx context.Context, namespace, shardID, executorID 
 		}
 
 		var state store.AssignedState
+		var metrics store.ShardMetrics
 		modRevision := int64(0) // A revision of 0 means the key doesn't exist yet.
 
 		if len(resp.Kvs) > 0 {
@@ -565,8 +517,6 @@ func (s *Store) AssignShard(ctx context.Context, namespace, shardID, executorID 
 			state.AssignedShards = make(map[string]*types.ShardAssignment)
 		}
 
-		// 1.a Load existing shard metrics if present; initialize only if missing.
-		// This preserves any historical timestamps across rebalances.
 		metricsResp, err := s.client.Get(ctx, shardMetricsKey)
 		if err != nil {
 			return fmt.Errorf("get shard metrics: %w", err)
@@ -576,8 +526,8 @@ func (s *Store) AssignShard(ctx context.Context, namespace, shardID, executorID 
 				return fmt.Errorf("unmarshal existing shard metrics: %w", err)
 			}
 		} else {
-			metrics.SmoothedLoad = 0
 			now := time.Now().Unix()
+			metrics.SmoothedLoad = 0
 			metrics.LastUpdateTime = now
 			metrics.LastMoveTime = now
 		}
@@ -587,22 +537,10 @@ func (s *Store) AssignShard(ctx context.Context, namespace, shardID, executorID 
 			state.AssignedShards[shardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
 		}
 
-		// Seed metrics for the new shard. later heartbeats will update these numbers.
-		metrics := store.ShardMetrics{
-			SmoothedLoad:   0,
-			LastUpdateTime: time.Now().Unix(),
-			LastMoveTime:   time.Now().Unix(),
-		}
-		metricsValue, err := json.Marshal(metrics)
-		if err != nil {
-			return fmt.Errorf("marshal shard metrics: %w", err)
-		}
-
 		newStateValue, err := json.Marshal(state)
 		if err != nil {
 			return fmt.Errorf("marshal new assigned state: %w", err)
 		}
-
 		metricsValue, err := json.Marshal(metrics)
 		if err != nil {
 			return fmt.Errorf("marshal shard metrics: %w", err)
@@ -630,19 +568,6 @@ func (s *Store) AssignShard(ctx context.Context, namespace, shardID, executorID 
 		if err == nil {
 			return &store.ErrShardAlreadyAssigned{ShardID: shardID, AssignedTo: owner}
 		}
-		// 3. Prepare and commit the transaction with four atomic checks.
-		// a) Check that the shard is not already assigned (its key revision must be 0).
-		cmpShardUnassigned := clientv3.Compare(clientv3.ModRevision(shardOwnerKey), "=", 0)
-		// b) Check that metrics key is not set.
-		cmpShardMetricsEmpty := clientv3.Compare(clientv3.ModRevision(metricsKey), "=", 0)
-		// c) Check that the executor's status is ACTIVE.
-		cmpStatus := clientv3.Compare(clientv3.Value(statusKey), "=", _executorStatusRunningJSON)
-		// d) Check that the assigned_state key hasn't been changed by another process.
-		cmpAssignedState := clientv3.Compare(clientv3.ModRevision(assignedState), "=", modRevision)
-
-		opUpdateExecutorState := clientv3.OpPut(assignedState, string(newStateValue))
-		opUpdateShardOwner := clientv3.OpPut(shardOwnerKey, executorID)
-		opUpdateShardMetrics := clientv3.OpPut(metricsKey, string(metricsValue))
 
 		txnResp, err := s.client.Txn(ctx).
 			If(comparisons...).
@@ -650,8 +575,6 @@ func (s *Store) AssignShard(ctx context.Context, namespace, shardID, executorID 
 				clientv3.OpPut(assignedState, string(newStateValue)),
 				clientv3.OpPut(shardMetricsKey, string(metricsValue)),
 			).
-			If(cmpShardUnassigned, cmpShardMetricsEmpty, cmpStatus, cmpAssignedState). // All conditions must be true.
-			Then(opUpdateExecutorState, opUpdateShardOwner, opUpdateShardMetrics).
 			Commit()
 
 		if err != nil {
@@ -675,6 +598,61 @@ func (s *Store) AssignShard(ctx context.Context, namespace, shardID, executorID 
 		s.logger.Info("Assign shard transaction failed due to a conflict. Retrying...", tag.ShardNamespace(namespace), tag.ShardKey(shardID), tag.ShardExecutor(executorID))
 		// Otherwise, it was a revision mismatch. Loop to retry the operation.
 	}
+}
+
+func (s *executorStoreImpl) UpdateShardMetrics(ctx context.Context, namespace, executorID string, shardMetrics map[string]store.ShardMetrics) error {
+	if len(shardMetrics) == 0 {
+		return nil
+	}
+
+	assignedKey, err := etcdkeys.BuildExecutorKey(s.prefix, namespace, executorID, etcdkeys.ExecutorAssignedStateKey)
+	if err != nil {
+		return fmt.Errorf("build executor assigned state key: %w", err)
+	}
+	resp, err := s.client.Get(ctx, assignedKey)
+	if err != nil {
+		return fmt.Errorf("get executor assigned state: %w", err)
+	}
+	if len(resp.Kvs) == 0 {
+		return store.ErrExecutorNotFound
+	}
+
+	var assigned store.AssignedState
+	if err := json.Unmarshal(resp.Kvs[0].Value, &assigned); err != nil {
+		return fmt.Errorf("unmarshal assigned state: %w", err)
+	}
+
+	for shardID := range shardMetrics {
+		if _, ok := assigned.AssignedShards[shardID]; !ok {
+			return fmt.Errorf("%w: shard %s not owned by executor %s", store.ErrVersionConflict, shardID, executorID)
+		}
+	}
+
+	ops := make([]clientv3.Op, 0, len(shardMetrics))
+	for shardID, metrics := range shardMetrics {
+		metricsKey, err := etcdkeys.BuildShardKey(s.prefix, namespace, shardID, etcdkeys.ShardMetricsKey)
+		if err != nil {
+			return fmt.Errorf("build shard metrics key: %w", err)
+		}
+		payload, err := json.Marshal(metrics)
+		if err != nil {
+			return fmt.Errorf("marshal shard metrics for %s: %w", shardID, err)
+		}
+		ops = append(ops, clientv3.OpPut(metricsKey, string(payload)))
+	}
+
+	txnResp, err := s.client.Txn(ctx).
+		If(clientv3.Compare(clientv3.ModRevision(assignedKey), "=", resp.Kvs[0].ModRevision)).
+		Then(ops...).
+		Commit()
+	if err != nil {
+		return fmt.Errorf("update shard metrics transaction: %w", err)
+	}
+	if !txnResp.Succeeded {
+		return fmt.Errorf("%w: shard ownership changed during metrics update", store.ErrVersionConflict)
+	}
+
+	return nil
 }
 
 // DeleteExecutors deletes the given executors from the store. It does not delete the shards owned by the executors, this
@@ -715,68 +693,6 @@ func (s *executorStoreImpl) DeleteExecutors(ctx context.Context, namespace strin
 	if !resp.Succeeded {
 		return fmt.Errorf("transaction failed, leadership may have changed")
 	}
-	return nil
-}
-
-// UpdateShardMetrics updates the metrics for the given shards.
-func (s *Store) UpdateShardMetrics(ctx context.Context, namespace, executorID string, shardMetrics map[string]store.ShardMetrics) error {
-	if len(shardMetrics) == 0 {
-		return nil
-	}
-	ops := make([]clientv3.Op, 0, len(shardMetrics))
-	comparisons := make([]clientv3.Cmp, 0, len(shardMetrics))
-
-	for shardID, metric := range shardMetrics {
-		metricKey := s.buildShardKey(namespace, shardID, shardMetricsKey)
-		metricBytes, err := json.Marshal(metric)
-		if err != nil {
-			return fmt.Errorf("marshal shard metrics for %s: %w", shardID, err)
-		}
-		ops = append(ops, clientv3.OpPut(metricKey, string(metricBytes)))
-
-		ownerKey := s.buildShardKey(namespace, shardID, shardAssignedKey)
-		comparisons = append(comparisons, clientv3.Compare(clientv3.Value(ownerKey), "=", executorID))
-	}
-
-	resp, err := s.client.Txn(ctx).If(comparisons...).Then(ops...).Commit()
-	if err != nil {
-		return fmt.Errorf("update shard metrics transaction: %w", err)
-	}
-	if !resp.Succeeded {
-		return fmt.Errorf("%w: shard ownership changed during metrics update", store.ErrVersionConflict)
-	}
-
-	return nil
-}
-
-// UpdateShardMetrics updates the metrics for the given shards.
-func (s *Store) UpdateShrdMetrics(ctx context.Context, namespace, executorID string, metrics map[string]store.ShardMetrics) error {
-	if len(metrics) == 0 {
-		return nil
-	}
-	ops := make([]clientv3.Op, 0, len(metrics))
-	comparisons := make([]clientv3.Cmp, 0, len(metrics))
-
-	for shardID, metric := range metrics {
-		metricKey := s.buildShardKey(namespace, shardID, shardMetricsKey)
-		metricBytes, err := json.Marshal(metric)
-		if err != nil {
-			return fmt.Errorf("marshal shard metrics for %s: %w", shardID, err)
-		}
-		ops = append(ops, clientv3.OpPut(metricKey, string(metricBytes)))
-
-		ownerKey := s.buildShardKey(namespace, shardID, shardAssignedKey)
-		comparisons = append(comparisons, clientv3.Compare(clientv3.Value(ownerKey), "=", executorID))
-	}
-
-	resp, err := s.client.Txn(ctx).If(comparisons...).Then(ops...).Commit()
-	if err != nil {
-		return fmt.Errorf("update shard metrics transaction: %w", err)
-	}
-	if !resp.Succeeded {
-		return fmt.Errorf("%w: shard ownership changed during metrics update", store.ErrVersionConflict)
-	}
-
 	return nil
 }
 
