@@ -38,6 +38,7 @@ func TestHeartbeat(t *testing.T) {
 			LastHeartbeat: now.Unix(),
 			Status:        types.ExecutorStatusACTIVE,
 		})
+		mockStore.EXPECT().GetState(gomock.Any(), namespace).Return(&store.NamespaceState{}, nil)
 
 		_, err := handler.Heartbeat(ctx, req)
 		require.NoError(t, err)
@@ -93,6 +94,7 @@ func TestHeartbeat(t *testing.T) {
 			LastHeartbeat: mockTimeSource.Now().Unix(),
 			Status:        types.ExecutorStatusACTIVE,
 		})
+		mockStore.EXPECT().GetState(gomock.Any(), namespace).Return(&store.NamespaceState{}, nil)
 
 		_, err := handler.Heartbeat(ctx, req)
 		require.NoError(t, err)
@@ -121,6 +123,7 @@ func TestHeartbeat(t *testing.T) {
 			LastHeartbeat: now.Unix(),
 			Status:        types.ExecutorStatusDRAINING,
 		})
+		mockStore.EXPECT().GetState(gomock.Any(), namespace).Return(&store.NamespaceState{}, nil)
 
 		_, err := handler.Heartbeat(ctx, req)
 		require.NoError(t, err)
@@ -145,6 +148,96 @@ func TestHeartbeat(t *testing.T) {
 		_, err := handler.Heartbeat(ctx, req)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), expectedErr.Error())
+	})
+
+	// Test Case 6: Heartbeat with a report for an unassigned shard
+	t.Run("HeartbeatWithUnassignedShardReport", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		mockStore := store.NewMockStore(ctrl)
+		mockTimeSource := clock.NewMockedTimeSourceAt(now)
+		handler := NewExecutorHandler(mockStore, mockTimeSource)
+
+		assignedShards := &store.AssignedState{
+			AssignedShards: map[string]*types.ShardAssignment{
+				"shard-1": {Status: types.AssignmentStatusREADY},
+			},
+		}
+
+		req := &types.ExecutorHeartbeatRequest{
+			Namespace:  namespace,
+			ExecutorID: executorID,
+			Status:     types.ExecutorStatusACTIVE,
+			ShardStatusReports: map[string]*types.ShardStatusReport{
+				"shard-1": {ShardLoad: 0.5},
+				"shard-2": {ShardLoad: 0.8}, // This shard is not assigned
+			},
+		}
+
+		previousHeartbeat := store.HeartbeatState{
+			LastHeartbeat: now.Unix() - 5, // ensure refresh
+			Status:        types.ExecutorStatusACTIVE,
+		}
+
+		state := &store.NamespaceState{
+			ShardMetrics: map[string]store.ShardMetrics{
+				"shard-1": {SmoothedLoad: 0.4, LastUpdateTime: now.Unix() - 10},
+				"shard-2": {SmoothedLoad: 0.7, LastUpdateTime: now.Unix() - 10},
+			},
+		}
+
+		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(&previousHeartbeat, assignedShards, nil)
+		mockStore.EXPECT().RecordHeartbeat(gomock.Any(), namespace, executorID, gomock.Any())
+		mockStore.EXPECT().GetState(gomock.Any(), namespace).Return(state, nil)
+		mockStore.EXPECT().UpdateShardMetrics(gomock.Any(), namespace, executorID, gomock.Any()).Do(func(_ context.Context, _, _ string, metrics map[string]store.ShardMetrics) {
+			require.Len(t, metrics, 1)
+			_, ok := metrics["shard-2"]
+			require.False(t, ok, "UpdateShardMetrics should not be called for unassigned shard")
+		})
+
+		_, err := handler.Heartbeat(ctx, req)
+		require.NoError(t, err)
+	})
+
+	// Test Case 7: Heartbeat with a version conflict on update
+	t.Run("HeartbeatWithVersionConflictOnUpdate", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		mockStore := store.NewMockStore(ctrl)
+		mockTimeSource := clock.NewMockedTimeSourceAt(now)
+		handler := NewExecutorHandler(mockStore, mockTimeSource)
+
+		assignedShards := &store.AssignedState{
+			AssignedShards: map[string]*types.ShardAssignment{
+				"shard-1": {Status: types.AssignmentStatusREADY},
+			},
+		}
+
+		req := &types.ExecutorHeartbeatRequest{
+			Namespace:  namespace,
+			ExecutorID: executorID,
+			Status:     types.ExecutorStatusACTIVE,
+			ShardStatusReports: map[string]*types.ShardStatusReport{
+				"shard-1": {ShardLoad: 0.5},
+			},
+		}
+
+		previousHeartbeat := store.HeartbeatState{
+			LastHeartbeat: now.Unix() - 5, // ensure refresh
+			Status:        types.ExecutorStatusACTIVE,
+		}
+
+		state := &store.NamespaceState{
+			ShardMetrics: map[string]store.ShardMetrics{
+				"shard-1": {SmoothedLoad: 0.4, LastUpdateTime: now.Unix() - 10},
+			},
+		}
+
+		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(&previousHeartbeat, assignedShards, nil)
+		mockStore.EXPECT().RecordHeartbeat(gomock.Any(), namespace, executorID, gomock.Any())
+		mockStore.EXPECT().GetState(gomock.Any(), namespace).Return(state, nil)
+		mockStore.EXPECT().UpdateShardMetrics(gomock.Any(), namespace, executorID, gomock.Any()).Return(store.ErrVersionConflict)
+
+		_, err := handler.Heartbeat(ctx, req)
+		require.NoError(t, err)
 	})
 }
 
