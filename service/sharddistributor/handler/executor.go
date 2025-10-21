@@ -35,7 +35,6 @@ func NewExecutorHandler(storage store.Store,
 }
 
 func (h *executor) Heartbeat(ctx context.Context, request *types.ExecutorHeartbeatRequest) (*types.ExecutorHeartbeatResponse, error) {
-	request.ExecutorID
 	previousHeartbeat, assignedShards, err := h.storage.GetHeartbeat(ctx, request.Namespace, request.ExecutorID)
 	// We ignore Executor not found errors, since it just means that this executor heartbeat the first time.
 	if err != nil && !errors.Is(err, store.ErrExecutorNotFound) {
@@ -59,14 +58,14 @@ func (h *executor) Heartbeat(ctx context.Context, request *types.ExecutorHeartbe
 		ReportedShards: request.ShardStatusReports,
 	}
 
-	err = h.updateShardload(ctx, request.Namespace, request.ShardStatusReports)
+	err = h.storage.RecordHeartbeat(ctx, request.Namespace, request.ExecutorID, newHeartbeat)
 	if err != nil {
 		return nil, fmt.Errorf("record heartbeat: %w", err)
 	}
 
-	err = h.storage.RecordHeartbeat(ctx, request.Namespace, request.ExecutorID, newHeartbeat)
+	err = h.updateShardload(ctx, request, request.ShardStatusReports, assignedShards)
 	if err != nil {
-		return nil, fmt.Errorf("record heartbeat: %w", err)
+		return nil, fmt.Errorf("update shardload: %w", err)
 	}
 
 	return _convertResponse(assignedShards), nil
@@ -81,18 +80,42 @@ func _convertResponse(shards *store.AssignedState) *types.ExecutorHeartbeatRespo
 	return res
 }
 
-func (h *executor) updateShardload(ctx context.Context, request *types.ExecutorHeartbeatRequest, shardReports map[string]*types.ShardStatusReport) error {
+func (h *executor) updateShardload(ctx context.Context, request *types.ExecutorHeartbeatRequest, shardReports map[string]*types.ShardStatusReport, assignedShards *store.AssignedState) error {
 	state, err := h.storage.GetState(ctx, request.Namespace)
 	if err != nil {
 		return err
 	}
+
+	assignedShardsSet := make(map[string]struct{})
+	if assignedShards != nil {
+		for shardID := range assignedShards.AssignedShards {
+			assignedShardsSet[shardID] = struct{}{}
+		}
+	}
+
 	newShardMetrics := make(map[string]store.ShardMetrics)
 	for shardID, shardMetric := range state.ShardMetrics {
 		newShardMetric := shardMetric
-		newShardMetric.SmoothedLoad = _ewmaAlpha*shardReports[shardID].ShardLoad + (1-_ewmaAlpha)*shardMetric.SmoothedLoad
+		report, ok := shardReports[shardID]
+		if !ok {
+			continue
+		}
+
+		if _, ok := assignedShardsSet[shardID]; !ok {
+			// This executor is reporting metrics for a shard that is not assigned to it.
+			// This can happen due to race conditions where shard ownership changes.
+			// We should not update metrics for such shards.
+			continue
+		}
+
+		newShardMetric.SmoothedLoad = _ewmaAlpha*report.ShardLoad + (1-_ewmaAlpha)*shardMetric.SmoothedLoad
 		newShardMetric.LastUpdateTime = h.timeSource.Now().Unix()
 
 		newShardMetrics[shardID] = newShardMetric
+	}
+
+	if len(newShardMetrics) == 0 {
+		return nil
 	}
 
 	err = h.storage.UpdateShardMetrics(ctx, request.Namespace, request.ExecutorID, newShardMetrics)
