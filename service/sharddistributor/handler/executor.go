@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -9,10 +10,14 @@ import (
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/sharddistributor/store"
+	"github.com/uber/cadence/service/sharddistributor/store/etcd/etcdkeys"
 )
 
 const (
 	_heartbeatRefreshRate = 2 * time.Second
+
+	// Unsure where to put this
+	_ewmaAlpha = 0.1
 )
 
 type executor struct {
@@ -30,6 +35,7 @@ func NewExecutorHandler(storage store.Store,
 }
 
 func (h *executor) Heartbeat(ctx context.Context, request *types.ExecutorHeartbeatRequest) (*types.ExecutorHeartbeatResponse, error) {
+	request.ExecutorID
 	previousHeartbeat, assignedShards, err := h.storage.GetHeartbeat(ctx, request.Namespace, request.ExecutorID)
 	// We ignore Executor not found errors, since it just means that this executor heartbeat the first time.
 	if err != nil && !errors.Is(err, store.ErrExecutorNotFound) {
@@ -53,6 +59,11 @@ func (h *executor) Heartbeat(ctx context.Context, request *types.ExecutorHeartbe
 		ReportedShards: request.ShardStatusReports,
 	}
 
+	err = h.updateShardload(ctx, request.Namespace, request.ShardStatusReports)
+	if err != nil {
+		return nil, fmt.Errorf("record heartbeat: %w", err)
+	}
+
 	err = h.storage.RecordHeartbeat(ctx, request.Namespace, request.ExecutorID, newHeartbeat)
 	if err != nil {
 		return nil, fmt.Errorf("record heartbeat: %w", err)
@@ -68,4 +79,26 @@ func _convertResponse(shards *store.AssignedState) *types.ExecutorHeartbeatRespo
 	}
 	res.ShardAssignments = shards.AssignedShards
 	return res
+}
+
+func (h *executor) updateShardload(ctx context.Context, request *types.ExecutorHeartbeatRequest, shardReports map[string]*types.ShardStatusReport) error {
+	state, err := h.storage.GetState(ctx, request.Namespace)
+	if err != nil {
+		return err
+	}
+	newShardMetrics := make(map[string]store.ShardMetrics)
+	for shardID, shardMetric := range state.ShardMetrics {
+		newShardMetric := shardMetric
+		newShardMetric.SmoothedLoad = _ewmaAlpha*shardReports[shardID].ShardLoad + (1-_ewmaAlpha)*shardMetric.SmoothedLoad
+		newShardMetric.LastUpdateTime = h.timeSource.Now().Unix()
+
+		newShardMetrics[shardID] = newShardMetric
+	}
+
+	err = h.storage.UpdateShardMetrics(ctx, request.Namespace, request.ExecutorID, newShardMetrics)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
