@@ -237,7 +237,8 @@ func TestHeartbeat(t *testing.T) {
 		mockStore.EXPECT().UpdateShardMetrics(gomock.Any(), namespace, executorID, gomock.Any()).Return(store.ErrVersionConflict)
 
 		_, err := handler.Heartbeat(ctx, req)
-		require.NoError(t, err)
+		require.Error(t, err)
+		require.ErrorIs(t, err, store.ErrVersionConflict)
 	})
 }
 

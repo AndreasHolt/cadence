@@ -78,34 +78,24 @@ func _convertResponse(shards *store.AssignedState) *types.ExecutorHeartbeatRespo
 	return res
 }
 
-func (h *executor) updateShardload(ctx context.Context, request *types.ExecutorHeartbeatRequest, shardReports map[string]*types.ShardStatusReport, assignedShards *store.AssignedState) error {
+func (h *executor) updateShardload(ctx context.Context, request *types.ExecutorHeartbeatRequest, shardReports map[string]*types.ShardStatusReport, assignedState *store.AssignedState) error {
 	state, err := h.storage.GetState(ctx, request.Namespace)
 	if err != nil {
 		return err
 	}
 
-	assignedShardsSet := make(map[string]struct{})
-	if assignedShards != nil {
-		for shardID := range assignedShards.AssignedShards {
-			assignedShardsSet[shardID] = struct{}{}
-		}
-	}
-
 	newShardMetrics := make(map[string]store.ShardMetrics)
 	for shardID, shardMetric := range state.ShardMetrics {
+		if _, ok := assignedState.AssignedShards[shardID]; !ok {
+			// This shard is not assigned to the current executor, we can safely continue
+			continue
+		}
 		newShardMetric := shardMetric
+
 		report, ok := shardReports[shardID]
 		if !ok {
-			continue
+			return fmt.Errorf("Could not get report for assigned shard")
 		}
-
-		if _, ok := assignedShardsSet[shardID]; !ok {
-			// This executor is reporting metrics for a shard that is not assigned to it.
-			// This can happen due to race conditions where shard ownership changes.
-			// We should not update metrics for such shards.
-			continue
-		}
-
 		newShardMetric.SmoothedLoad = _ewmaAlpha*report.ShardLoad + (1-_ewmaAlpha)*shardMetric.SmoothedLoad
 		newShardMetric.LastUpdateTime = h.timeSource.Now().Unix()
 
