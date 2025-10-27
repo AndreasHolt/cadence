@@ -79,16 +79,6 @@ func (c *meteredStore) GetHeartbeat(ctx context.Context, namespace string, execu
 	return
 }
 
-func (c *meteredStore) GetShardMetrics(ctx context.Context, namespace string, shardIDs []string) (m1 map[string]store.ShardMetrics, err error) {
-	op := func() error {
-		m1, err = c.wrapped.GetShardMetrics(ctx, namespace, shardIDs)
-		return err
-	}
-
-	err = c.call(metrics.ShardDistributorStoreGetShardMetricsScope, op, metrics.NamespaceTag(namespace))
-	return
-}
-
 func (c *meteredStore) GetShardOwner(ctx context.Context, namespace string, shardID string) (s1 string, err error) {
 	op := func() error {
 		s1, err = c.wrapped.GetShardOwner(ctx, namespace, shardID)
@@ -96,6 +86,16 @@ func (c *meteredStore) GetShardOwner(ctx context.Context, namespace string, shar
 	}
 
 	err = c.call(metrics.ShardDistributorStoreGetShardOwnerScope, op, metrics.NamespaceTag(namespace))
+	return
+}
+
+func (c *meteredStore) GetShardStatistics(ctx context.Context, namespace string, shardIDs []string) (m1 map[string]store.ShardStatistics, err error) {
+	op := func() error {
+		m1, err = c.wrapped.GetShardStatistics(ctx, namespace, shardIDs)
+		return err
+	}
+
+	err = c.call(metrics.ShardDistributorStoreGetShardStatisticsScope, op, metrics.NamespaceTag(namespace))
 	return
 }
 
@@ -129,12 +129,12 @@ func (c *meteredStore) Subscribe(ctx context.Context, namespace string) (ch1 <-c
 	return
 }
 
-func (c *meteredStore) UpdateShardMetrics(ctx context.Context, namespace string, executorID string, shardMetrics map[string]store.ShardMetrics) (err error) {
+func (c *meteredStore) UpdateShardStatistics(ctx context.Context, namespace string, executorID string, shardMetrics map[string]store.ShardStatistics) (err error) {
 	op := func() error {
-		err = c.wrapped.UpdateShardMetrics(ctx, namespace, executorID, shardMetrics)
+		err = c.wrapped.UpdateShardStatistics(ctx, namespace, executorID, shardMetrics)
 		return err
 	}
 
-	err = c.call(metrics.ShardDistributorStoreUpdateShardMetricsScope, op, metrics.NamespaceTag(namespace))
+	err = c.call(metrics.ShardDistributorStoreUpdateShardStatisticsScope, op, metrics.NamespaceTag(namespace))
 	return
 }
