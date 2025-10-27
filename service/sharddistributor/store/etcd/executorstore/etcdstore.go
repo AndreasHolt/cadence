@@ -660,37 +660,38 @@ func (s *executorStoreImpl) applyShardStatisticsUpdates(ctx context.Context, nam
 			)
 		}
 	}
-func (s *executorStoreImpl) GetShardMetrics(ctx context.Context, namespace string, shardIDs []string) (map[string]store.ShardMetrics, error) {
-	result := make(map[string]store.ShardMetrics, len(shardIDs))
+
+func (s *executorStoreImpl) GetShardStatistics(ctx context.Context, namespace string, shardIDs []string) (map[string]store.ShardStatistics, error) {
+	result := make(map[string]store.ShardStatistics, len(shardIDs))
 	if len(shardIDs) == 0 {
 		return result, nil
 	}
 
 	for _, shardID := range shardIDs {
-		metricsKey, err := etcdkeys.BuildShardKey(s.prefix, namespace, shardID, etcdkeys.ShardMetricsKey)
+		statisticsKey, err := etcdkeys.BuildShardKey(s.prefix, namespace, shardID, etcdkeys.ShardStatisticsKey)
 		if err != nil {
-			return nil, fmt.Errorf("build shard metrics key: %w", err)
+			return nil, fmt.Errorf("build shard statistics key: %w", err)
 		}
-		resp, err := s.client.Get(ctx, metricsKey)
+		resp, err := s.client.Get(ctx, statisticsKey)
 		if err != nil {
-			return nil, fmt.Errorf("get shard metrics: %w", err)
+			return nil, fmt.Errorf("get shard statistics: %w", err)
 		}
 		if len(resp.Kvs) == 0 {
 			continue
 		}
 
-		var metrics store.ShardMetrics
-		if err := json.Unmarshal(resp.Kvs[0].Value, &metrics); err != nil {
-			return nil, fmt.Errorf("unmarshal shard metrics: %w", err)
+		var statistics store.ShardStatistics
+		if err := json.Unmarshal(resp.Kvs[0].Value, &statistics); err != nil {
+			return nil, fmt.Errorf("unmarshal shard statistics: %w", err)
 		}
-		result[shardID] = metrics
+		result[shardID] = statistics
 	}
 
 	return result, nil
 }
 
-func (s *executorStoreImpl) UpdateShardMetrics(ctx context.Context, namespace, executorID string, shardMetrics map[string]store.ShardMetrics) error {
-	if len(shardMetrics) == 0 {
+func (s *executorStoreImpl) UpdateShardStatistics(ctx context.Context, namespace, executorID string, shardStatistics map[string]store.ShardStatistics) error {
+	if len(shardStatistics) == 0 {
 		return nil
 	}
 
@@ -711,23 +712,23 @@ func (s *executorStoreImpl) UpdateShardMetrics(ctx context.Context, namespace, e
 		return fmt.Errorf("unmarshal assigned state: %w", err)
 	}
 
-	for shardID := range shardMetrics {
+	for shardID := range shardStatistics {
 		if _, ok := assigned.AssignedShards[shardID]; !ok {
 			return fmt.Errorf("%w: shard %s not owned by executor %s", store.ErrVersionConflict, shardID, executorID)
 		}
 	}
 
-	ops := make([]clientv3.Op, 0, len(shardMetrics))
-	for shardID, metrics := range shardMetrics {
-		metricsKey, err := etcdkeys.BuildShardKey(s.prefix, namespace, shardID, etcdkeys.ShardMetricsKey)
+	ops := make([]clientv3.Op, 0, len(shardStatistics))
+	for shardID, statistics := range shardStatistics {
+		statisticsKey, err := etcdkeys.BuildShardKey(s.prefix, namespace, shardID, etcdkeys.ShardStatisticsKey)
 		if err != nil {
-			return fmt.Errorf("build shard metrics key: %w", err)
+			return fmt.Errorf("build shard statistics key: %w", err)
 		}
-		payload, err := json.Marshal(metrics)
+		payload, err := json.Marshal(statistics)
 		if err != nil {
-			return fmt.Errorf("marshal shard metrics for %s: %w", shardID, err)
+			return fmt.Errorf("marshal shard statistics for %s: %w", shardID, err)
 		}
-		ops = append(ops, clientv3.OpPut(metricsKey, string(payload)))
+		ops = append(ops, clientv3.OpPut(statisticsKey, string(payload)))
 	}
 
 	txnResp, err := s.client.Txn(ctx).
@@ -735,10 +736,10 @@ func (s *executorStoreImpl) UpdateShardMetrics(ctx context.Context, namespace, e
 		Then(ops...).
 		Commit()
 	if err != nil {
-		return fmt.Errorf("update shard metrics transaction: %w", err)
+		return fmt.Errorf("update shard statistics transaction: %w", err)
 	}
 	if !txnResp.Succeeded {
-		return fmt.Errorf("%w: shard ownership changed during metrics update", store.ErrVersionConflict)
+		return fmt.Errorf("%w: shard ownership changed during statistics update", store.ErrVersionConflict)
 	}
 
 	return nil

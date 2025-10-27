@@ -84,29 +84,29 @@ func (h *executor) updateShardload(ctx context.Context, request *types.ExecutorH
 		return err
 	}
 
-	newShardMetrics := make(map[string]store.ShardMetrics)
-	for shardID, shardMetric := range state.ShardMetrics {
+	newShardStatistics := make(map[string]store.ShardStatistics)
+	for shardID, shardStat := range state.ShardStats {
 		if _, ok := assignedState.AssignedShards[shardID]; !ok {
 			// This shard is not assigned to the current executor, we can safely continue
 			continue
 		}
-		newShardMetric := shardMetric
+		newShardStat := shardStat
 
 		report, ok := shardReports[shardID]
 		if !ok {
 			return fmt.Errorf("Could not get report for assigned shard")
 		}
-		newShardMetric.SmoothedLoad = _ewmaAlpha*report.ShardLoad + (1-_ewmaAlpha)*shardMetric.SmoothedLoad
-		newShardMetric.LastUpdateTime = h.timeSource.Now().Unix()
+		newShardStat.SmoothedLoad = _ewmaAlpha*report.ShardLoad + (1-_ewmaAlpha)*shardStat.SmoothedLoad
+		newShardStat.LastUpdateTime = h.timeSource.Now().Unix()
 
-		newShardMetrics[shardID] = newShardMetric
+		newShardStatistics[shardID] = newShardStat
 	}
 
-	if len(newShardMetrics) == 0 {
+	if len(newShardStatistics) == 0 {
 		return nil
 	}
 
-	err = h.storage.UpdateShardMetrics(ctx, request.Namespace, request.ExecutorID, newShardMetrics)
+	err = h.storage.UpdateShardStatistics(ctx, request.Namespace, request.ExecutorID, newShardStatistics)
 	if err != nil {
 		return err
 	}
