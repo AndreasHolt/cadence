@@ -660,6 +660,7 @@ func (s *executorStoreImpl) applyShardStatisticsUpdates(ctx context.Context, nam
 			)
 		}
 	}
+}
 
 func (s *executorStoreImpl) GetShardStatistics(ctx context.Context, namespace string, shardIDs []string) (map[string]store.ShardStatistics, error) {
 	result := make(map[string]store.ShardStatistics, len(shardIDs))
