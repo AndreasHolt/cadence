@@ -1,0 +1,78 @@
+package process
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/uber/cadence/service/sharddistributor/store"
+)
+
+func TestPlanLoadBasedAssignment_EmptyInputs(t *testing.T) {
+	result := planLoadBasedAssignment(nil, nil, nil, nil)
+	assert.Empty(t, result)
+}
+
+func TestPlanLoadBasedAssignment_BalancesByWeight(t *testing.T) {
+	stats := map[string]store.ShardStatistics{
+		"sA": {SmoothedLoad: 3},
+		"sB": {SmoothedLoad: 1},
+	}
+	loads := map[string]float64{
+		"exec-1": 0,
+		"exec-2": 0,
+	}
+	current := map[string][]string{
+		"exec-1": nil,
+		"exec-2": nil,
+	}
+
+	result := planLoadBasedAssignment([]string{"sA", "sB"}, loads, stats, current)
+
+	assert.Len(t, result, 2)
+	assert.ElementsMatch(t, []string{"sA"}, result["exec-1"])
+	assert.ElementsMatch(t, []string{"sB"}, result["exec-2"])
+}
+
+func TestPlanLoadBasedAssignment_RespectsExistingLoad(t *testing.T) {
+	stats := map[string]store.ShardStatistics{
+		"s1": {SmoothedLoad: 2},
+		"s2": {SmoothedLoad: 1},
+	}
+	loads := map[string]float64{
+		"exec-1": 5,
+		"exec-2": 1,
+		"exec-3": 4,
+	}
+	current := map[string][]string{
+		"exec-1": {"existing"},
+		"exec-2": {},
+		"exec-3": {"existing"},
+	}
+
+	assignments := planLoadBasedAssignment([]string{"s1", "s2"}, loads, stats, current)
+
+	assert.ElementsMatch(t, []string{"s1", "s2"}, assignments["exec-2"])
+	assert.Empty(t, assignments["exec-1"])
+	assert.Empty(t, assignments["exec-3"])
+}
+
+func TestPlanLoadBasedAssignment_UsesCountTieBreaker(t *testing.T) {
+	stats := map[string]store.ShardStatistics{
+		"s1": {SmoothedLoad: 0},
+		"s2": {SmoothedLoad: 0},
+	}
+	loads := map[string]float64{
+		"exec-1": 0,
+		"exec-2": 0,
+	}
+	current := map[string][]string{
+		"exec-1": {"existing"},
+		"exec-2": {},
+	}
+
+	assignments := planLoadBasedAssignment([]string{"s1", "s2"}, loads, stats, current)
+
+	assert.Len(t, assignments["exec-2"], 1)
+	assert.Len(t, assignments["exec-1"], 1)
+}
