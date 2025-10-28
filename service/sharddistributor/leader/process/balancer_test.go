@@ -76,3 +76,27 @@ func TestPlanLoadBasedAssignment_UsesCountTieBreaker(t *testing.T) {
 	assert.Len(t, assignments["exec-2"], 1)
 	assert.Len(t, assignments["exec-1"], 1)
 }
+
+func TestRedistributeToEmptyExecutors(t *testing.T) {
+	stats := map[string]store.ShardStatistics{
+		"s1": {SmoothedLoad: 5},
+		"s2": {SmoothedLoad: 2},
+		"s3": {SmoothedLoad: 1},
+	}
+	loads := map[string]float64{
+		"exec-1": 7,
+		"exec-2": 0,
+		"exec-3": 1,
+	}
+	assignments := map[string][]string{
+		"exec-1": {"s1", "s2"},
+		"exec-2": {},
+		"exec-3": {"s3"},
+	}
+
+	steals, updated := redistributeToEmptyExecutors(loads, stats, assignments)
+
+	assert.ElementsMatch(t, []string{"s1"}, steals["exec-2"])
+	assert.InDelta(t, 2, updated["exec-1"], 1e-9)
+	assert.InDelta(t, 5, updated["exec-2"], 1e-9)
+}

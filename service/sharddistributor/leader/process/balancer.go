@@ -51,6 +51,97 @@ func planLoadBasedAssignment(
 	return assignment
 }
 
+func redistributeToEmptyExecutors(
+	loads map[string]float64,
+	stats map[string]store.ShardStatistics,
+	assignments map[string][]string,
+) (map[string][]string, map[string]float64) {
+	if len(assignments) == 0 {
+		return nil, loads
+	}
+
+	emptyExecutors := make([]string, 0)
+	for executorID, shards := range assignments {
+		if len(shards) == 0 {
+			emptyExecutors = append(emptyExecutors, executorID)
+		}
+	}
+	if len(emptyExecutors) == 0 {
+		return nil, loads
+	}
+
+	type shardCandidate struct {
+		executor string
+		shardID  string
+		weight   float64
+	}
+	var donors []shardCandidate
+	for executorID, shards := range assignments {
+		if len(shards) == 0 {
+			continue
+		}
+		for _, shardID := range shards {
+			donors = append(donors, shardCandidate{
+				executor: executorID,
+				shardID:  shardID,
+				weight:   shardLoad(stats, shardID),
+			})
+		}
+	}
+	if len(donors) == 0 {
+		return nil, loads
+	}
+
+	sort.Slice(donors, func(i, j int) bool {
+		if donors[i].weight == donors[j].weight {
+			if donors[i].executor == donors[j].executor {
+				return donors[i].shardID < donors[j].shardID
+			}
+			return donors[i].executor < donors[j].executor
+		}
+		return donors[i].weight > donors[j].weight
+	})
+
+	sort.Strings(emptyExecutors)
+
+	steals := make(map[string][]string, len(emptyExecutors))
+	updatedLoads := make(map[string]float64, len(loads))
+	for k, v := range loads {
+		updatedLoads[k] = v
+	}
+
+	used := make(map[string]struct{}, len(emptyExecutors))
+	donorIdx := 0
+	for _, target := range emptyExecutors {
+		if donorIdx >= len(donors) {
+			break
+		}
+		var candidate shardCandidate
+		for donorIdx < len(donors) {
+			candidate = donors[donorIdx]
+			donorIdx++
+			if candidate.executor != target {
+				break
+			}
+		}
+		if candidate.executor == target {
+			continue
+		}
+
+		if _, taken := used[candidate.shardID]; taken {
+			continue
+		}
+		used[candidate.shardID] = struct{}{}
+
+		steals[target] = append(steals[target], candidate.shardID)
+		assignments[candidate.executor] = removeShard(assignments[candidate.executor], candidate.shardID)
+		updatedLoads[candidate.executor] -= candidate.weight
+		updatedLoads[target] += candidate.weight
+	}
+
+	return steals, updatedLoads
+}
+
 func findLeastLoadedExecutor(loads map[string]float64, counts map[string]int) string {
 	if len(loads) == 0 {
 		return ""
@@ -117,4 +208,13 @@ func safeLoad(value float64) float64 {
 		return 0
 	}
 	return value
+}
+
+func removeShard(shards []string, target string) []string {
+	for i, id := range shards {
+		if id == target {
+			return append(shards[:i], shards[i+1:]...)
+		}
+	}
+	return shards
 }
