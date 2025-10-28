@@ -394,6 +394,146 @@ func TestGetShards_Utility(t *testing.T) {
 	})
 }
 
+func TestAssignShardsToEmptyExecutorsLoadAware(t *testing.T) {
+	cases := []struct {
+		name                string
+		currentAssignments  map[string][]string
+		shardStats          map[string]store.ShardStatistics
+		expectedAssignments map[string][]string
+		expectedChanged     bool
+	}{
+		{
+			name: "no empty executors",
+			currentAssignments: map[string][]string{
+				"exec-1": {"s1", "s2"},
+				"exec-2": {"s3"},
+			},
+			shardStats: map[string]store.ShardStatistics{
+				"s1": {SmoothedLoad: 1.0},
+				"s2": {SmoothedLoad: 2.0},
+				"s3": {SmoothedLoad: 1.5},
+			},
+			expectedAssignments: map[string][]string{
+				"exec-1": {"s1", "s2"},
+				"exec-2": {"s3"},
+			},
+			expectedChanged: false,
+		},
+		{
+			name: "all executors empty",
+			currentAssignments: map[string][]string{
+				"exec-1": {},
+				"exec-2": {},
+			},
+			shardStats:          map[string]store.ShardStatistics{},
+			expectedAssignments: map[string][]string{"exec-1": {}, "exec-2": {}},
+			expectedChanged:     false,
+		},
+		{
+			name: "single donor and one empty executor",
+			currentAssignments: map[string][]string{
+				"exec-1": {"s1"},
+				"exec-2": {},
+			},
+			shardStats: map[string]store.ShardStatistics{
+				"s1": {SmoothedLoad: 5.0},
+			},
+			expectedAssignments: map[string][]string{
+				"exec-1": {"s1"},
+				"exec-2": {},
+			},
+			expectedChanged: false,
+		},
+		{
+			name: "multiple donors with unequal loads",
+			currentAssignments: map[string][]string{
+				"exec-1": {"s1", "s2"},
+				"exec-2": {"s3"},
+				"exec-3": {}, // empty
+			},
+			shardStats: map[string]store.ShardStatistics{
+				"s1": {SmoothedLoad: 10.0},
+				"s2": {SmoothedLoad: 8.0},
+				"s3": {SmoothedLoad: 2.0},
+			},
+			expectedAssignments: map[string][]string{
+				"exec-1": {"s2"},
+				"exec-2": {"s3"},
+				"exec-3": {"s1"},
+			},
+			expectedChanged: true,
+		},
+		{
+			name: "heaviest shard too heavy to move",
+			currentAssignments: map[string][]string{
+				"exec-1": {"s1"},
+				"exec-2": {},
+			},
+			shardStats: map[string]store.ShardStatistics{
+				"s1": {SmoothedLoad: 100.0},
+			},
+			expectedAssignments: map[string][]string{
+				"exec-1": {"s1"},
+				"exec-2": {},
+			},
+			expectedChanged: false,
+		},
+		{
+			name: "multi-pass balancing",
+			currentAssignments: map[string][]string{
+				"exec-1": {"s1", "s2", "s3"},
+				"exec-2": {},
+				"exec-3": {},
+			},
+			shardStats: map[string]store.ShardStatistics{
+				"s1": {SmoothedLoad: 6.0},
+				"s2": {SmoothedLoad: 5.0},
+				"s3": {SmoothedLoad: 4.0},
+			},
+			expectedAssignments: map[string][]string{
+				// each executor expected to have at least one shard after balancing
+				"exec-1": {"s3"},
+				"exec-2": {"s1"},
+				"exec-3": {"s2"},
+			},
+			expectedChanged: true,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assignments := make(map[string][]string, len(c.currentAssignments))
+			for k, v := range c.currentAssignments {
+				assignments[k] = slices.Clone(v)
+			}
+
+			ns := &store.NamespaceState{ShardStats: c.shardStats}
+
+			changed := assignShardsToEmptyExecutorsLoadAware(ns, assignments)
+			assert.Equal(t, c.expectedChanged, changed)
+
+			// Common invariants
+			allShards := map[string]bool{}
+			for _, v := range c.currentAssignments {
+				for _, s := range v {
+					allShards[s] = true
+				}
+			}
+
+			count := 0
+			for _, v := range assignments {
+				count += len(v)
+				for _, s := range v {
+					assert.True(t, allShards[s], "unknown shard %v", s)
+				}
+			}
+			assert.Equal(t, len(allShards), count, "shards lost or duplicated")
+
+			assert.Equal(t, c.expectedAssignments, assignments)
+		})
+	}
+}
+
 func TestAssignShardsToEmptyExecutors(t *testing.T) {
 	cases := []struct {
 		name                       string

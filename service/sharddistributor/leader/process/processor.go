@@ -300,7 +300,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 
 	// If there are deleted shards, we have removed them from the shard assignments, so the distribution has changed.
 	distributionChanged := len(deletedShards) > 0
-	distributionChanged = distributionChanged || assignShardsToEmptyExecutors(currentAssignments)
+	distributionChanged = distributionChanged || assignShardsToEmptyExecutorsLoadAware(namespaceState, currentAssignments)
 	distributionChanged = distributionChanged || p.updateAssignments(shardsToReassign, activeExecutors, currentAssignments)
 
 	if !distributionChanged {
@@ -416,6 +416,149 @@ func (*namespaceProcessor) getActiveExecutors(namespaceState *store.NamespaceSta
 
 	sort.Strings(activeExecutors)
 	return activeExecutors
+}
+
+// assignShardsToEmptyExecutors moves shards from loaded executors to empty ones
+func assignShardsToEmptyExecutorsLoadAware(
+	namespaceState *store.NamespaceState,
+	currentAssignments map[string][]string,
+) bool {
+	fmt.Printf("New call to assignShards\n")
+	emptyExecutors := make([]string, 0)
+	executorsWithShards := make([]string, 0)
+	averageLoad := 0.0
+	madeMoves := false
+
+	for executorID, shards := range currentAssignments {
+		if len(shards) == 0 {
+			emptyExecutors = append(emptyExecutors, executorID)
+		} else {
+			executorsWithShards = append(executorsWithShards, executorID)
+			//if minShardsCurrentlyAssigned == 0 || len(shards) < minShardsCurrentlyAssigned {
+			//	minShardsCurrentlyAssigned = len(shards)
+			//}
+		}
+	}
+
+	fmt.Printf("Length empty: %d\n", len(emptyExecutors))
+	if len(emptyExecutors) == 0 || len(executorsWithShards) == 0 {
+		return false
+	}
+
+	currentLoad := make(map[string]float64, len(currentAssignments))
+	for _, execID := range executorsWithShards {
+		executorShardStats := make(map[string]store.ShardStatistics)
+		for _, shardID := range currentAssignments[execID] {
+			executorShardStats[shardID] = namespaceState.ShardStats[shardID]
+		}
+
+		for _, shardStatistics := range executorShardStats {
+			currentLoad[execID] += shardStatistics.SmoothedLoad
+		}
+
+		averageLoad += currentLoad[execID]
+
+	}
+	averageLoad = averageLoad / float64(len(currentAssignments))
+	for _, execID := range emptyExecutors {
+		currentLoad[execID] = 0
+	}
+
+	// Helper: choose "donor" (executor to take from) as the executor with max current load that still has shards.
+	pickDonor := func() (string, bool) {
+		var donor string
+		var maxLoad float64
+		have := false
+
+		for _, id := range executorsWithShards {
+			if len(currentAssignments[id]) < 2 {
+				continue
+			}
+			l := currentLoad[id]
+			if !have || l > maxLoad { // If no donor found yet, or if load of current shard is greater than current max
+				have = true // Suitable donor has been found
+				maxLoad = l
+				donor = id
+			}
+		}
+		return donor, have
+	}
+
+	// Helper: pick the heaviest shard from a donor.
+	// Future addition: Maybe set target for load to pick
+	selectHeaviestShard := func(donor string) (string, int, float64, bool) {
+		shards := currentAssignments[donor]
+		if len(shards) == 0 {
+			return "", 0, 0.0, false
+		}
+
+		bestIdx := -1
+		var bestLoad float64
+		for idx, shardID := range shards {
+			l := namespaceState.ShardStats[shardID].SmoothedLoad
+			if bestIdx == -1 || l > bestLoad {
+				bestIdx = idx
+				bestLoad = l
+			}
+		}
+		return shards[bestIdx], bestIdx, bestLoad, true
+	}
+
+	// Distribute shards to empties. Iterate in deterministic empty ID order.
+	for {
+		madeAMoveInThisPass := false
+
+		// Keep track of which executors are still empty
+		stillEmptyExecutors := make([]string, 0, len(emptyExecutors))
+
+		for _, emptyID := range emptyExecutors {
+			donor, ok := pickDonor()
+			if !ok {
+				return madeMoves
+			}
+			if currentLoad[donor] <= averageLoad {
+				return madeMoves
+			}
+
+			// Secondary Check: If donor is no longer heavier than reciever
+			if currentLoad[donor] <= currentLoad[emptyID] {
+				stillEmptyExecutors = append(stillEmptyExecutors, emptyID)
+				continue // Try a different empty executor
+			}
+
+			// Pick the heaviest shard.
+			shardID, shardIndex, shardLoad, ok := selectHeaviestShard(donor)
+			if !ok {
+				continue
+			}
+
+			// Perform the move
+			fmt.Printf("Moving shard: %s, from %s, to %s.\n", shardID, donor, emptyID)
+			currentAssignments[emptyID] = append(currentAssignments[emptyID], shardID)
+			currentAssignments[donor] = slices.Delete(currentAssignments[donor], shardIndex, shardIndex+1)
+			currentLoad[emptyID] += shardLoad
+			currentLoad[donor] -= shardLoad
+
+			madeMoves = true
+			madeAMoveInThisPass = true
+
+			// Check if this receiver is still empty enough
+			if currentLoad[emptyID] < averageLoad {
+				stillEmptyExecutors = append(stillEmptyExecutors, emptyID)
+			}
+		}
+
+		// After a full pass, update the list of executors to fill
+		emptyExecutors = stillEmptyExecutors
+
+		// If we made a full pass and couldn't move anything,
+		// or if all empty executors are full, we are done.
+		if !madeAMoveInThisPass || len(emptyExecutors) == 0 {
+			break
+		}
+	}
+	fmt.Printf("Made any moves: %t\n", madeMoves)
+	return madeMoves
 }
 
 func assignShardsToEmptyExecutors(currentAssignments map[string][]string) bool {
