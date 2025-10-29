@@ -423,7 +423,6 @@ func assignShardsToEmptyExecutorsLoadAware(
 	namespaceState *store.NamespaceState,
 	currentAssignments map[string][]string,
 ) bool {
-	fmt.Printf("New call to assignShards\n")
 	emptyExecutors := make([]string, 0)
 	executorsWithShards := make([]string, 0)
 	averageLoad := 0.0
@@ -434,13 +433,10 @@ func assignShardsToEmptyExecutorsLoadAware(
 			emptyExecutors = append(emptyExecutors, executorID)
 		} else {
 			executorsWithShards = append(executorsWithShards, executorID)
-			//if minShardsCurrentlyAssigned == 0 || len(shards) < minShardsCurrentlyAssigned {
-			//	minShardsCurrentlyAssigned = len(shards)
-			//}
 		}
 	}
+	slices.Sort(emptyExecutors)
 
-	fmt.Printf("Length empty: %d\n", len(emptyExecutors))
 	if len(emptyExecutors) == 0 || len(executorsWithShards) == 0 {
 		return false
 	}
@@ -533,7 +529,6 @@ func assignShardsToEmptyExecutorsLoadAware(
 			}
 
 			// Perform the move
-			fmt.Printf("Moving shard: %s, from %s, to %s.\n", shardID, donor, emptyID)
 			currentAssignments[emptyID] = append(currentAssignments[emptyID], shardID)
 			currentAssignments[donor] = slices.Delete(currentAssignments[donor], shardIndex, shardIndex+1)
 			currentLoad[emptyID] += shardLoad
@@ -557,7 +552,6 @@ func assignShardsToEmptyExecutorsLoadAware(
 			break
 		}
 	}
-	fmt.Printf("Made any moves: %t\n", madeMoves)
 	return madeMoves
 }
 
