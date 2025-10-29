@@ -179,7 +179,7 @@ func TestHeartbeat(t *testing.T) {
 		}
 
 		state := &store.NamespaceState{
-			ShardMetrics: map[string]store.ShardMetrics{
+			ShardStats: map[string]store.ShardStatistics{
 				"shard-1": {SmoothedLoad: 0.4, LastUpdateTime: now.Unix() - 10},
 				"shard-2": {SmoothedLoad: 0.7, LastUpdateTime: now.Unix() - 10},
 			},
@@ -188,10 +188,10 @@ func TestHeartbeat(t *testing.T) {
 		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(&previousHeartbeat, assignedShards, nil)
 		mockStore.EXPECT().RecordHeartbeat(gomock.Any(), namespace, executorID, gomock.Any())
 		mockStore.EXPECT().GetState(gomock.Any(), namespace).Return(state, nil)
-		mockStore.EXPECT().UpdateShardMetrics(gomock.Any(), namespace, executorID, gomock.Any()).Do(func(_ context.Context, _, _ string, metrics map[string]store.ShardMetrics) {
-			require.Len(t, metrics, 1)
-			_, ok := metrics["shard-2"]
-			require.False(t, ok, "UpdateShardMetrics should not be called for unassigned shard")
+		mockStore.EXPECT().UpdateShardStatistics(gomock.Any(), namespace, executorID, gomock.Any()).Do(func(_ context.Context, _, _ string, statistics map[string]store.ShardStatistics) {
+			require.Len(t, statistics, 1)
+			_, ok := statistics["shard-2"]
+			require.False(t, ok, "UpdateShardStatistics should not be called for unassigned shard")
 		})
 
 		_, err := handler.Heartbeat(ctx, req)
@@ -226,7 +226,7 @@ func TestHeartbeat(t *testing.T) {
 		}
 
 		state := &store.NamespaceState{
-			ShardMetrics: map[string]store.ShardMetrics{
+			ShardStats: map[string]store.ShardStatistics{
 				"shard-1": {SmoothedLoad: 0.4, LastUpdateTime: now.Unix() - 10},
 			},
 		}
@@ -234,7 +234,7 @@ func TestHeartbeat(t *testing.T) {
 		mockStore.EXPECT().GetHeartbeat(gomock.Any(), namespace, executorID).Return(&previousHeartbeat, assignedShards, nil)
 		mockStore.EXPECT().RecordHeartbeat(gomock.Any(), namespace, executorID, gomock.Any())
 		mockStore.EXPECT().GetState(gomock.Any(), namespace).Return(state, nil)
-		mockStore.EXPECT().UpdateShardMetrics(gomock.Any(), namespace, executorID, gomock.Any()).Return(store.ErrVersionConflict)
+		mockStore.EXPECT().UpdateShardStatistics(gomock.Any(), namespace, executorID, gomock.Any()).Return(store.ErrVersionConflict)
 
 		_, err := handler.Heartbeat(ctx, req)
 		require.Error(t, err)
