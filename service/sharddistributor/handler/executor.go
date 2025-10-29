@@ -61,9 +61,14 @@ func (h *executor) Heartbeat(ctx context.Context, request *types.ExecutorHeartbe
 		return nil, fmt.Errorf("record heartbeat: %w", err)
 	}
 
-	err = h.updateShardload(ctx, request, request.ShardStatusReports, assignedShards)
+	newStatistics, err := h.prepareNewStatistics(ctx, request, request.ShardStatusReports, assignedShards)
 	if err != nil {
-		return nil, fmt.Errorf("update shardload: %w", err)
+		return nil, fmt.Errorf("prepare new statistics: %w", err)
+	}
+
+	err = h.storage.UpdateShardStatistics(ctx, request.Namespace, request.ExecutorID, newStatistics)
+	if err != nil {
+		return nil, err
 	}
 
 	return _convertResponse(assignedShards), nil
@@ -78,10 +83,10 @@ func _convertResponse(shards *store.AssignedState) *types.ExecutorHeartbeatRespo
 	return res
 }
 
-func (h *executor) updateShardload(ctx context.Context, request *types.ExecutorHeartbeatRequest, shardReports map[string]*types.ShardStatusReport, assignedState *store.AssignedState) error {
+func (h *executor) prepareNewStatistics(ctx context.Context, request *types.ExecutorHeartbeatRequest, shardReports map[string]*types.ShardStatusReport, assignedState *store.AssignedState) (map[string]store.ShardStatistics, error) {
 	state, err := h.storage.GetState(ctx, request.Namespace)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	newShardStatistics := make(map[string]store.ShardStatistics)
@@ -94,7 +99,7 @@ func (h *executor) updateShardload(ctx context.Context, request *types.ExecutorH
 
 		report, ok := shardReports[shardID]
 		if !ok {
-			return fmt.Errorf("Could not get report for assigned shard")
+			return nil, fmt.Errorf("Could not get report for assigned shard")
 		}
 		newShardStat.SmoothedLoad = _ewmaAlpha*report.ShardLoad + (1-_ewmaAlpha)*shardStat.SmoothedLoad
 		newShardStat.LastUpdateTime = h.timeSource.Now().Unix()
@@ -102,14 +107,5 @@ func (h *executor) updateShardload(ctx context.Context, request *types.ExecutorH
 		newShardStatistics[shardID] = newShardStat
 	}
 
-	if len(newShardStatistics) == 0 {
-		return nil
-	}
-
-	err = h.storage.UpdateShardStatistics(ctx, request.Namespace, request.ExecutorID, newShardStatistics)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return newShardStatistics, nil
 }
