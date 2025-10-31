@@ -304,7 +304,16 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	shardsForPlanning := make([]string, len(shardsToReassign))
 	copy(shardsForPlanning, shardsToReassign)
 
-	loadAwareAssignments := assignUnassignedShards(shardsForPlanning, loads, namespaceState.ShardStats, currentAssignments)
+	steals, updatedLoads := redistributeToEmptyExecutors(loads, namespaceState.ShardStats, currentAssignments)
+	for _, shards := range steals {
+		if len(shards) == 0 {
+			continue
+		}
+		shardsForPlanning = append(shardsForPlanning, shards...)
+		distributionChanged = true
+	}
+
+	loadAwareAssignments := assignUnassignedShards(shardsForPlanning, updatedLoads, namespaceState.ShardStats, currentAssignments)
 	for executorID, shards := range loadAwareAssignments {
 		if len(shards) == 0 {
 			continue
@@ -415,9 +424,10 @@ func (*namespaceProcessor) getActiveExecutors(namespaceState *store.NamespaceSta
 }
 
 func getShards(cfg config.Namespace, namespaceState *store.NamespaceState, deletedShards map[string]store.ShardState) []string {
-	if cfg.Type == config.NamespaceTypeFixed {
+	switch cfg.Type {
+	case config.NamespaceTypeFixed:
 		return makeShards(cfg.ShardNum)
-	} else if cfg.Type == config.NamespaceTypeEphemeral {
+	case config.NamespaceTypeEphemeral:
 		shards := make([]string, 0)
 		for _, state := range namespaceState.ShardAssignments {
 			for shardID := range state.AssignedShards {
@@ -428,8 +438,9 @@ func getShards(cfg config.Namespace, namespaceState *store.NamespaceState, delet
 		}
 
 		return shards
+	default:
+		return nil
 	}
-	return nil
 }
 
 func makeShards(num int64) []string {
