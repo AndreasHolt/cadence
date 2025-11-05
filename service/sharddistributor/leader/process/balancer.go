@@ -97,12 +97,12 @@ func (p *namespaceProcessor) redistributeToEmptyExecutors(
 		if len(shards) == 0 {
 			continue
 		}
-		elligbleShards, err := p.FindElligbleShards(shards, stats, Configuration{Cooldown: true, Sorting: None})
+		eligibleShards, err := p.FindEligibleShards(shards, stats, Configuration{Cooldown: true, Sorting: None})
 		if err != nil {
-			p.logger.Error(fmt.sprintf("error in find elligbleshards: %s", err.Error()))
+			p.logger.Error(fmt.Sprintf("error in find eligibleshards: %s", err.Error()))
 			return nil, loads
 		}
-		for _, shardID := range elligbleShards {
+		for _, shardID := range eligibleShards {
 			donors = append(donors, shardCandidate{
 				executor: executorID,
 				shardID:  shardID,
@@ -164,8 +164,8 @@ func (p *namespaceProcessor) redistributeToEmptyExecutors(
 	return steals, updatedLoads
 }
 
-func (p *namespaceProcessor) FindElligbleShards(shardIDs []string, stats map[string]store.ShardStatistics, config Configuration) ([]string, error) {
-	var elligbleShards []string
+func (p *namespaceProcessor) FindEligibleShards(shardIDs []string, stats map[string]store.ShardStatistics, config Configuration) ([]string, error) {
+	var eligibleShards []string
 	for _, shardID := range shardIDs {
 		stat, ok := stats[shardID]
 		if !ok {
@@ -173,10 +173,10 @@ func (p *namespaceProcessor) FindElligbleShards(shardIDs []string, stats map[str
 		}
 		delta := p.timeSource.Now().Unix() - stat.LastMoveTime
 		if delta > CoolDownTime {
-			elligbleShards = append(elligbleShards, shardID)
+			eligibleShards = append(eligibleShards, shardID)
 		}
 	}
-	return elligbleShards, nil
+	return eligibleShards, nil
 }
 
 func findLeastLoadedExecutor(loads map[string]float64, counts map[string]int) (string, error) {

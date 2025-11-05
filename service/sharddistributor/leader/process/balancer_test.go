@@ -131,4 +131,3 @@ func TestRedistributeToEmptyExecutors_WithCooldown(t *testing.T) {
 	assert.InDelta(t, 5, updated["exec-1"], 1e-9)
 	assert.InDelta(t, 2, updated["exec-2"], 1e-9)
 }
-
