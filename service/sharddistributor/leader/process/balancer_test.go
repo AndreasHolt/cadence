@@ -104,3 +104,31 @@ func TestRedistributeToEmptyExecutors(t *testing.T) {
 	assert.InDelta(t, 2, updated["exec-1"], 1e-9)
 	assert.InDelta(t, 5, updated["exec-2"], 1e-9)
 }
+
+func TestRedistributeToEmptyExecutors_WithCooldown(t *testing.T) {
+	p := &namespaceProcessor{
+		timeSource: clock.NewMockedTimeSource(),
+	}
+	stats := map[string]store.ShardStatistics{
+		"s1": {SmoothedLoad: 5, LastMoveTime: p.timeSource.Now().Unix()},
+		"s2": {SmoothedLoad: 2, LastMoveTime: p.timeSource.Now().Unix() - 100000},
+		"s3": {SmoothedLoad: 1, LastMoveTime: p.timeSource.Now().Unix() - 100000},
+	}
+	loads := map[string]float64{
+		"exec-1": 7,
+		"exec-2": 0,
+		"exec-3": 1,
+	}
+	assignments := map[string][]string{
+		"exec-1": {"s1", "s2"},
+		"exec-2": {},
+		"exec-3": {"s3"},
+	}
+
+	steals, updated := p.redistributeToEmptyExecutors(loads, stats, assignments)
+
+	assert.ElementsMatch(t, []string{"s2"}, steals["exec-2"])
+	assert.InDelta(t, 5, updated["exec-1"], 1e-9)
+	assert.InDelta(t, 2, updated["exec-2"], 1e-9)
+}
+
