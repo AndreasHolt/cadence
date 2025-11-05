@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/service/sharddistributor/store"
 )
 
@@ -78,10 +79,13 @@ func TestPlanLoadBasedAssignment_UsesCountTieBreaker(t *testing.T) {
 }
 
 func TestRedistributeToEmptyExecutors(t *testing.T) {
+	p := &namespaceProcessor{
+		timeSource: clock.NewMockedTimeSource(),
+	}
 	stats := map[string]store.ShardStatistics{
-		"s1": {SmoothedLoad: 5},
-		"s2": {SmoothedLoad: 2},
-		"s3": {SmoothedLoad: 1},
+		"s1": {SmoothedLoad: 5, LastMoveTime: p.timeSource.Now().Unix() - 100000},
+		"s2": {SmoothedLoad: 2, LastMoveTime: p.timeSource.Now().Unix() - 100000},
+		"s3": {SmoothedLoad: 1, LastMoveTime: p.timeSource.Now().Unix() - 100000},
 	}
 	loads := map[string]float64{
 		"exec-1": 7,
@@ -94,7 +98,7 @@ func TestRedistributeToEmptyExecutors(t *testing.T) {
 		"exec-3": {"s3"},
 	}
 
-	steals, updated := redistributeToEmptyExecutors(loads, stats, assignments)
+	steals, updated := p.redistributeToEmptyExecutors(loads, stats, assignments)
 
 	assert.ElementsMatch(t, []string{"s1"}, steals["exec-2"])
 	assert.InDelta(t, 2, updated["exec-1"], 1e-9)

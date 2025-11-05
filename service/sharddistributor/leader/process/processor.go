@@ -304,7 +304,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	shardsForPlanning := make([]string, len(shardsToReassign))
 	copy(shardsForPlanning, shardsToReassign)
 
-	steals, updatedLoads := redistributeToEmptyExecutors(loads, namespaceState.ShardStats, currentAssignments)
+	steals, updatedLoads := p.redistributeToEmptyExecutors(loads, namespaceState.ShardStats, currentAssignments)
 	for _, shards := range steals {
 		if len(shards) == 0 {
 			continue

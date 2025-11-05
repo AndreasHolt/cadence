@@ -8,6 +8,22 @@ import (
 	"github.com/uber/cadence/service/sharddistributor/store"
 )
 
+type SortCriteria int
+
+const CoolDownTime = 60
+
+const (
+	None SortCriteria = iota
+	LeastLoad
+	MostLoad
+	// ...
+)
+
+type Configuration struct {
+	Cooldown bool
+	Sorting  SortCriteria
+}
+
 // planLoadBasedAssignment assigns unassigned shards to executors based on current load
 func assignUnassignedShards(
 	unassignedShards []string,
@@ -52,7 +68,7 @@ func assignUnassignedShards(
 	return assignment
 }
 
-func redistributeToEmptyExecutors(
+func (p *namespaceProcessor) redistributeToEmptyExecutors(
 	loads map[string]float64,
 	stats map[string]store.ShardStatistics,
 	assignments map[string][]string,
@@ -81,7 +97,12 @@ func redistributeToEmptyExecutors(
 		if len(shards) == 0 {
 			continue
 		}
-		for _, shardID := range shards {
+		elligbleShards, err := p.FindElligbleShards(shards, stats, Configuration{Cooldown: true, Sorting: None})
+		if err != nil {
+			p.logger.Error(fmt.sprintf("error in find elligbleshards: %s", err.Error()))
+			return nil, loads
+		}
+		for _, shardID := range elligbleShards {
 			donors = append(donors, shardCandidate{
 				executor: executorID,
 				shardID:  shardID,
@@ -141,6 +162,21 @@ func redistributeToEmptyExecutors(
 	}
 
 	return steals, updatedLoads
+}
+
+func (p *namespaceProcessor) FindElligbleShards(shardIDs []string, stats map[string]store.ShardStatistics, config Configuration) ([]string, error) {
+	var elligbleShards []string
+	for _, shardID := range shardIDs {
+		stat, ok := stats[shardID]
+		if !ok {
+			return nil, fmt.Errorf("cound not find stats for shard id: %s", shardID)
+		}
+		delta := p.timeSource.Now().Unix() - stat.LastMoveTime
+		if delta > CoolDownTime {
+			elligbleShards = append(elligbleShards, shardID)
+		}
+	}
+	return elligbleShards, nil
 }
 
 func findLeastLoadedExecutor(loads map[string]float64, counts map[string]int) (string, error) {
