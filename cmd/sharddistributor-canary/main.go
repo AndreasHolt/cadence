@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
+	"github.com/uber-go/tally/prometheus"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/fx"
 	"go.uber.org/yarpc"
@@ -12,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/uber/cadence/common/clock"
+	cadenceConfig "github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/service/sharddistributor/canary"
 	"github.com/uber/cadence/service/sharddistributor/canary/executors"
@@ -59,18 +61,29 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string) fx.Option {
 		},
 	}
 
+	metricsConfig := cadenceConfig.Metrics{
+		Prometheus: &prometheus.Configuration{
+			ListenAddress: "127.0.0.1:8005", // update the port here if you are using a different port
+			TimerType:     "histogram",
+		},
+	}
+
+	logger, _ := zap.NewDevelopment()
+
+	metricsScope := metricsConfig.NewScope(log.NewLogger(logger), "shard-distributor-canary")
+
 	return fx.Options(
 		fx.Supply(
-			fx.Annotate(tally.NoopScope, fx.As(new(tally.Scope))),
+			fx.Annotate(metricsScope, fx.As(new(tally.Scope))),
 			fx.Annotate(clock.NewRealTimeSource(), fx.As(new(clock.TimeSource))),
 			yarpcConfig,
 			configuration,
+			logger,
 		),
 		fx.Provide(
 			yarpc.NewDispatcher,
 			func(d *yarpc.Dispatcher) yarpc.ClientConfig { return d }, // Reprovide the dispatcher as a client config
 		),
-		fx.Provide(zap.NewDevelopment),
 		fx.Provide(log.NewLogger),
 
 		// Start the YARPC dispatcher
