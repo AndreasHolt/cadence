@@ -7,6 +7,10 @@ import (
 	"github.com/uber/cadence/service/sharddistributor/store"
 )
 
+const (
+	imbalanceThreshold = 0.15
+)
+
 // planLoadBasedAssignment assigns unassigned shards to executors based on current load
 func planLoadBasedAssignment(
 	unassignedShards []string,
@@ -142,6 +146,58 @@ func redistributeToEmptyExecutors(
 	return steals, updatedLoads
 }
 
+func maybePlanImbalanceMove(
+	loads map[string]float64,
+	stats map[string]store.ShardStatistics,
+	assignments map[string][]string) (string, map[string]float64) {
+	if len(loads) < 2 || len(assignments) == 0 {
+		return "", loads
+	}
+
+	totalLoad := 0.0
+	for _, v := range loads {
+		totalLoad += v
+	}
+	if totalLoad == 0 {
+		return "", loads
+	}
+	avg := totalLoad / float64(len(loads))
+
+	donorID := findMostLoadedExecutor(loads, assignments)
+	if donorID == "" {
+		return "", loads
+	}
+
+	counts := make(map[string]int, len(assignments))
+	for exec, shards := range assignments {
+		counts[exec] = len(shards)
+	}
+	recipientID := findLeastLoadedExecutor(loads, counts)
+	if recipientID == "" || recipientID == donorID {
+		return "", loads
+	}
+
+	loadGap := loads[donorID] - loads[recipientID]
+	if loadGap <= avg*imbalanceThreshold {
+		return "", loads
+	}
+
+	shardID, weight := selectHeaviestShard(assignments[donorID], stats)
+	if shardID == "" || weight == 0 {
+		return "", loads
+	}
+
+	updatedLoads := make(map[string]float64, len(loads))
+	for k, v := range loads {
+		updatedLoads[k] = v
+	}
+	updatedLoads[donorID] -= weight
+
+	assignments[donorID] = removeShard(assignments[donorID], shardID)
+
+	return shardID, updatedLoads
+}
+
 func findLeastLoadedExecutor(loads map[string]float64, counts map[string]int) string {
 	if len(loads) == 0 {
 		return ""
@@ -170,6 +226,37 @@ func findLeastLoadedExecutor(loads map[string]float64, counts map[string]int) st
 		}
 	}
 	return minID
+}
+
+func findMostLoadedExecutor(loads map[string]float64, assignments map[string][]string) string {
+	if len(loads) == 0 {
+		return ""
+	}
+
+	ids := make([]string, 0, len(loads))
+	for id := range loads {
+		if len(assignments[id]) == 0 {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+
+	sort.Strings(ids)
+
+	maxID := ids[0]
+	maxLoad := loads[maxID]
+
+	for _, id := range ids[1:] {
+		load := loads[id]
+		if load > maxLoad || (load == maxLoad && id < maxID) {
+			maxLoad = load
+			maxID = id
+		}
+	}
+	return maxID
 }
 
 // currentAssignments already contain executor-shard mappings, so we don't need cache.
@@ -217,4 +304,24 @@ func removeShard(shards []string, target string) []string {
 		}
 	}
 	return shards
+}
+
+func selectHeaviestShard(shards []string, stats map[string]store.ShardStatistics) (string, float64) {
+	if len(shards) == 0 {
+		return "", 0
+	}
+
+	bestID := ""
+	bestWeight := -1.0
+	for _, shardID := range shards {
+		weight := shardLoad(stats, shardID)
+		if weight > bestWeight || (weight == bestWeight && (bestID == "" || shardID < bestID)) {
+			bestWeight = weight
+			bestID = shardID
+		}
+	}
+	if bestID == "" {
+		return "", 0
+	}
+	return bestID, bestWeight
 }
