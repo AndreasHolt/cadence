@@ -320,7 +320,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		distributionChanged = true
 	}
 
-	loadAwareAssignments := planLoadBasedAssignment(shardsForPlanning, updatedLoads, namespaceState.ShardStats, currentAssignments)
+	loadAwareAssignments := assignUnassignedShards(shardsForPlanning, updatedLoads, namespaceState.ShardStats, currentAssignments)
 	for executorID, shards := range loadAwareAssignments {
 		if len(shards) == 0 {
 			continue
