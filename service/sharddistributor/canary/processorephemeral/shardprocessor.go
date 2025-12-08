@@ -2,7 +2,11 @@ package processorephemeral
 
 import (
 	"context"
+	"hash/fnv"
+	"math"
 	"math/rand"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -27,12 +31,23 @@ const (
 
 // NewShardProcessor creates a new ShardProcessor.
 func NewShardProcessor(shardID string, timeSource clock.TimeSource, logger *zap.Logger) *ShardProcessor {
+	// Decide shard lifetime weight (heavy or light) deterministically
+	weight := 1.0
+	if ephHeavyProb > 0 {
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(shardID))
+		v := float64(h.Sum32()) / float64(math.MaxUint32)
+		if v < ephHeavyProb {
+			weight = ephHeavyMultiplier
+		}
+	}
 	return &ShardProcessor{
 		shardID:    shardID,
 		timeSource: timeSource,
 		logger:     logger,
 		stopChan:   make(chan struct{}),
 		status:     types.ShardStatusREADY,
+		weight:     weight,
 	}
 }
 
@@ -46,6 +61,7 @@ type ShardProcessor struct {
 	processSteps int
 
 	status types.ShardStatus
+	weight float64
 }
 
 var _ executorclient.ShardProcessor = (*ShardProcessor)(nil)
@@ -53,8 +69,8 @@ var _ executorclient.ShardProcessor = (*ShardProcessor)(nil)
 // GetShardReport implements executorclient.ShardProcessor.
 func (p *ShardProcessor) GetShardReport() executorclient.ShardReport {
 	return executorclient.ShardReport{
-		ShardLoad: 1.0,      // We return 1.0 for all shards for now.
-		Status:    p.status, // Report the status of the shard
+		ShardLoad: computeEphemeralLoad(p.shardID, p.weight, p.timeSource.Now()), // We return 1.0 for all shards for now.
+		Status:    p.status,                                                      // Report the status of the shard
 	}
 }
 
@@ -98,4 +114,44 @@ func (p *ShardProcessor) process(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// Our new synthetic load model (for dynamic hot shard simulation) //
+
+var (
+	// chance shardisheavy for its lifetime
+	ephHeavyProb = parseEnvFloatE("SD_EPH_HEAVY_PROB", 0.1) // chance shard is heavy for its lifetime
+	// if it's 'heavy', we multiply by this. We distinguish between 'hot' for fixed (it's a temporary burst),
+	// and 'heavy' for ephemeral, since it's tied to its lifetime
+	ephHeavyMultiplier = parseEnvFloatE("SD_EPH_HEAVY_MULTIPLIER", 6.0)
+	// Adds a small jitter to the reported load to not have it be perfectly flat (e.g., 0.1 = +-10% multiplicative noise )
+	// ... this is mainly for the shards that are not marked as 'hot', to have them vary a little bit
+	ephNoisePct = parseEnvFloatE("SD_EPH_LOAD_NOISE_PCT", 0.1)
+	// A per-process scale factor to emulate different host capacities/compute
+	// ... and in the future look into gRPC ORCA, to not having to emulate it
+	ephExecScale = parseEnvFloatE("SD_EXEC_LOAD_SCALE", 1.0)
+)
+
+func computeEphemeralLoad(shardID string, weight float64, now time.Time) float64 {
+	base := weight
+	if ephNoisePct > 0 {
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(shardID))
+		_, _ = h.Write([]byte(strconv.FormatInt(now.Unix()/10, 10))) // change slowly
+		v := float64(h.Sum32())/float64(math.MaxUint32) - 0.5
+		base *= 1.0 + (2.0 * ephNoisePct * v)
+	}
+	if base < 0 {
+		base = 0
+	}
+	return base * ephExecScale
+}
+
+func parseEnvFloatE(key string, def float64) float64 {
+	if s := os.Getenv(key); s != "" {
+		if v, err := strconv.ParseFloat(s, 64); err == nil {
+			return v
+		}
+	}
+	return def
 }
