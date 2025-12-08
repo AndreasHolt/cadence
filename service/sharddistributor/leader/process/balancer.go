@@ -1,6 +1,7 @@
 package process
 
 import (
+	"fmt"
 	"math"
 	"sort"
 
@@ -12,7 +13,7 @@ const (
 )
 
 // planLoadBasedAssignment assigns unassigned shards to executors based on current load
-func planLoadBasedAssignment(
+func assignUnassignedShards(
 	unassignedShards []string,
 	loads map[string]float64,
 	stats map[string]store.ShardStatistics,
@@ -43,8 +44,8 @@ func planLoadBasedAssignment(
 
 	// Assign each shard to executor with lowest current load
 	for _, shardID := range shards {
-		executorID := findLeastLoadedExecutor(currentLoads, currentCounts)
-		if executorID == "" {
+		executorID, err := findLeastLoadedExecutor(currentLoads, currentCounts)
+		if err != nil {
 			continue
 		}
 		assignment[executorID] = append(assignment[executorID], shardID)
@@ -172,7 +173,11 @@ func maybePlanImbalanceMove(
 	for exec, shards := range assignments {
 		counts[exec] = len(shards)
 	}
-	recipientID := findLeastLoadedExecutor(loads, counts)
+	recipientID, err := findLeastLoadedExecutor(loads, counts)
+	if err != nil {
+		return "", loads
+	}
+
 	if recipientID == "" || recipientID == donorID {
 		return "", loads
 	}
@@ -198,9 +203,9 @@ func maybePlanImbalanceMove(
 	return shardID, updatedLoads
 }
 
-func findLeastLoadedExecutor(loads map[string]float64, counts map[string]int) string {
+func findLeastLoadedExecutor(loads map[string]float64, counts map[string]int) (string, error) {
 	if len(loads) == 0 {
-		return ""
+		return "", fmt.Errorf("empty loads array")
 	}
 
 	ids := make([]string, 0, len(loads))
@@ -225,7 +230,7 @@ func findLeastLoadedExecutor(loads map[string]float64, counts map[string]int) st
 			}
 		}
 	}
-	return minID
+	return minID, nil
 }
 
 func findMostLoadedExecutor(loads map[string]float64, assignments map[string][]string) string {
@@ -269,9 +274,7 @@ func computeExecutorLoads(
 	for executorID, shardIDs := range assignments {
 		load := 0.0
 		for _, shardID := range shardIDs {
-			if stat, ok := stats[shardID]; ok {
-				load += safeLoad(stat.SmoothedLoad)
-			}
+			load += shardLoad(stats, shardID)
 		}
 		loads[executorID] = load
 	}

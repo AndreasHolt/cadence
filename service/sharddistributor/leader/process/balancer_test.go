@@ -9,7 +9,7 @@ import (
 )
 
 func TestPlanLoadBasedAssignment_EmptyInputs(t *testing.T) {
-	result := planLoadBasedAssignment(nil, nil, nil, nil)
+	result := assignUnassignedShards(nil, nil, nil, nil)
 	assert.Empty(t, result)
 }
 
@@ -27,7 +27,7 @@ func TestPlanLoadBasedAssignment_BalancesByWeight(t *testing.T) {
 		"exec-2": nil,
 	}
 
-	result := planLoadBasedAssignment([]string{"sA", "sB"}, loads, stats, current)
+	result := assignUnassignedShards([]string{"sA", "sB"}, loads, stats, current)
 
 	assert.Len(t, result, 2)
 	assert.ElementsMatch(t, []string{"sA"}, result["exec-1"])
@@ -50,7 +50,7 @@ func TestPlanLoadBasedAssignment_RespectsExistingLoad(t *testing.T) {
 		"exec-3": {"existing"},
 	}
 
-	assignments := planLoadBasedAssignment([]string{"s1", "s2"}, loads, stats, current)
+	assignments := assignUnassignedShards([]string{"s1", "s2"}, loads, stats, current)
 
 	assert.ElementsMatch(t, []string{"s1", "s2"}, assignments["exec-2"])
 	assert.Empty(t, assignments["exec-1"])
@@ -71,7 +71,7 @@ func TestPlanLoadBasedAssignment_UsesCountTieBreaker(t *testing.T) {
 		"exec-2": {},
 	}
 
-	assignments := planLoadBasedAssignment([]string{"s1", "s2"}, loads, stats, current)
+	assignments := assignUnassignedShards([]string{"s1", "s2"}, loads, stats, current)
 
 	assert.Len(t, assignments["exec-2"], 1)
 	assert.Len(t, assignments["exec-1"], 1)
