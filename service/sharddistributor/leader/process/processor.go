@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"math/rand"
 	"slices"
 	"sort"
@@ -384,6 +385,8 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	assignedToEmptyExecutors := assignShardsToEmptyExecutors(currentAssignments)
 	updatedAssignments := p.updateAssignments(shardsToReassign, activeExecutors, currentAssignments)
 
+	p.emitAssignmentLoadCV(metricsLoopScope, currentAssignments, namespaceState)
+
 	distributionChanged := len(deletedShards) > 0 || len(staleExecutors) > 0 || assignedToEmptyExecutors || updatedAssignments
 	if !distributionChanged {
 		p.logger.Info("No changes to distribution detected. Skipping rebalance.")
@@ -673,4 +676,66 @@ func makeShards(num int64) []string {
 		shards[i] = strconv.FormatInt(i, 10)
 	}
 	return shards
+}
+
+func (p *namespaceProcessor) emitAssignmentLoadCV(
+	metricsLoopScope metrics.Scope,
+	assignments map[string][]string,
+	namespaceState *store.NamespaceState,
+) {
+	if metricsLoopScope == nil {
+		return
+	}
+	cv := computeExecutorLoadCV(assignments, namespaceState)
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentLoadCV, cv)
+}
+
+func computeExecutorLoadCV(assignments map[string][]string, namespaceState *store.NamespaceState) float64 {
+	if len(assignments) == 0 || namespaceState == nil || len(namespaceState.Executors) == 0 {
+		return 0
+	}
+
+	loads := make([]float64, 0, len(assignments))
+	for executorID, shards := range assignments {
+		load := 0.0
+		heartbeat, ok := namespaceState.Executors[executorID]
+		for _, shardID := range shards {
+			if !ok || heartbeat.ReportedShards == nil {
+				continue
+			}
+			if shardReport, exists := heartbeat.ReportedShards[shardID]; exists && shardReport != nil {
+				load += shardReport.ShardLoad
+			}
+		}
+		loads = append(loads, load)
+	}
+
+	return coefficientOfVariation(loads)
+}
+
+func coefficientOfVariation(values []float64) float64 {
+	if len(values) <= 1 {
+		return 0
+	}
+
+	total := 0.0
+	for _, value := range values {
+		total += value
+	}
+	mean := total / float64(len(values))
+	if mean == 0 {
+		return 0
+	}
+
+	variance := 0.0
+	for _, value := range values {
+		diff := value - mean
+		variance += diff * diff
+	}
+	variance /= float64(len(values))
+	if variance == 0 {
+		return 0
+	}
+
+	return math.Sqrt(variance) / mean
 }
