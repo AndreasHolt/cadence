@@ -375,6 +375,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		return nil
 	}
 	p.logger.Info("Active executors", tag.ShardExecutors(activeExecutors))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorActiveExecutors, float64(len(activeExecutors)))
 
 	deletedShards := p.findDeletedShards(namespaceState)
 	shardsToReassign, currentAssignments := p.findShardsToReassign(activeExecutors, namespaceState, deletedShards, staleExecutors)
