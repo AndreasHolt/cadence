@@ -100,6 +100,7 @@ const (
 	FlagForce                          = "force"
 	FlagPageID                         = "page_id"
 	FlagPageSize                       = "pagesize"
+	FlagLimit                          = "limit"
 	FlagEarliestTime                   = "earliest_time"
 	FlagLatestTime                     = "latest_time"
 	FlagPrintEventVersion              = "print_event_version"
@@ -126,6 +127,7 @@ const (
 	FlagShowDetail                     = "show_detail"
 	FlagActiveClusterName              = "active_cluster"
 	FlagActiveClusters                 = "active_clusters"
+	FlagActiveClustersJSON             = "active_clusters_json"
 	FlagClusters                       = "clusters"
 	FlagIsGlobalDomain                 = "global_domain" // active-passive domain
 	FlagDomainData                     = "domain_data"
@@ -224,6 +226,8 @@ const (
 	FlagNumReadPartitions              = "num_read_partitions"
 	FlagNumWritePartitions             = "num_write_partitions"
 	FlagCronOverlapPolicy              = "cron_overlap_policy"
+	FlagClusterAttributeScope          = "cluster_attribute_scope"
+	FlagClusterAttributeName           = "cluster_attribute_name"
 
 	FlagClustersUsage = "Clusters (example: --clusters clusterA,clusterB or --cl clusterA --cl clusterB)"
 )
@@ -442,6 +446,16 @@ func getFlagsForStart() []cli.Flag {
 		&cli.StringFlag{
 			Name:  FirstRunAtTime,
 			Usage: "Optional workflow's first run start time in RFC3339 format, like \"1970-01-01T00:00:00Z\". If set, first run of the workflow will start at the specified time.",
+		},
+		&cli.StringFlag{
+			Name:    FlagClusterAttributeScope,
+			Usage:   "Optional cluster attribute to specify how to select the active cluster. Examples might be 'region' or 'location'",
+			Aliases: []string{"cascope"},
+		},
+		&cli.StringFlag{
+			Name:    FlagClusterAttributeName,
+			Usage:   "Optional cluster attribute name, paired with a cluster attribute scope, to specify how to select the active cluster. This specifies which attribute to tie the workflow to, for example, if the scope is 'region' and the name is 'Lisbon' or 'San Francisco'",
+			Aliases: []string{"caname"},
 		},
 	}
 }

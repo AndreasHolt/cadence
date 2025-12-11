@@ -78,6 +78,7 @@ func (s *WorkflowIDRateLimitIntegrationSuite) SetupSuite() {
 		ReadNoSQLHistoryTaskFromDataBlob:         dynamicproperties.GetBoolPropertyFn(false),
 		SerializationEncoding:                    dynamicproperties.GetStringPropertyFn(string(constants.EncodingTypeThriftRW)),
 		ReadNoSQLShardFromDataBlob:               dynamicproperties.GetBoolPropertyFn(true),
+		HistoryNodeDeleteBatchSize:               dynamicproperties.GetIntPropertyFn(1000),
 	}
 	params := pt.TestBaseParams{
 		DefaultTestCluster:    s.DefaultTestCluster,
@@ -92,7 +93,7 @@ func (s *WorkflowIDRateLimitIntegrationSuite) SetupSuite() {
 	s.AdminClient = s.TestCluster.GetAdminClient()
 
 	s.DomainName = s.RandomizeStr("integration-test-domain")
-	s.Require().NoError(s.RegisterDomain(s.DomainName, 1, types.ArchivalStatusDisabled, "", types.ArchivalStatusDisabled, ""))
+	s.Require().NoError(s.RegisterDomain(s.DomainName, 1, types.ArchivalStatusDisabled, "", types.ArchivalStatusDisabled, "", nil))
 
 	s.domainCacheRefresh()
 }

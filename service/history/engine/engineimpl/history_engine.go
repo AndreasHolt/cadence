@@ -159,6 +159,8 @@ func NewEngineWithShardContext(
 		shard.GetMetricsClient(),
 		shard.GetLogger(),
 		replicationHydrator,
+		shard.GetReplicationBudgetManager(),
+		shard.GetShardID(),
 	)
 	replicationDynamicTaskBatchSizer := replication.NewDynamicTaskBatchSizer(shard.GetShardID(), logger, config, shard.GetMetricsClient())
 	replicationReader := replication.NewTaskReader(shard.GetShardID(), executionManager)
@@ -423,10 +425,6 @@ func getScheduleID(activityID string, mutableState execution.MutableState) (int6
 		return 0, &types.BadRequestError{Message: "Cannot locate Activity ScheduleID"}
 	}
 	return activityInfo.ScheduleID, nil
-}
-
-func (e *historyEngineImpl) getActiveDomainByID(id string) (*cache.DomainCacheEntry, error) {
-	return cache.GetActiveDomainByID(e.shard.GetDomainCache(), e.clusterMetadata.GetCurrentClusterName(), id)
 }
 
 func (e *historyEngineImpl) getActiveDomainByWorkflow(ctx context.Context, domainID, workflowID, runID string) (*cache.DomainCacheEntry, error) {

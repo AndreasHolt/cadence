@@ -97,6 +97,7 @@ type (
 		mockVisibilityArchiver *archiver.VisibilityArchiverMock
 		mockVersionChecker     *client.MockVersionChecker
 		mockTokenSerializer    *common.MockTaskTokenSerializer
+		mockDomainAuditManager *persistence.MockDomainAuditManager
 
 		testDomain   string
 		testDomainID string
@@ -137,6 +138,7 @@ func (s *workflowHandlerSuite) SetupTest() {
 	s.mockHistoryArchiver = &archiver.HistoryArchiverMock{}
 	s.mockVisibilityArchiver = &archiver.VisibilityArchiverMock{}
 	s.mockVersionChecker = client.NewMockVersionChecker(s.controller)
+	s.mockDomainAuditManager = persistence.NewMockDomainAuditManager(s.controller)
 
 	// these tests don't mock the domain handler
 	config := s.newConfig(dc.NewInMemoryClient())
@@ -144,6 +146,7 @@ func (s *workflowHandlerSuite) SetupTest() {
 		config.DomainConfig,
 		s.mockResource.GetLogger(),
 		s.mockResource.GetDomainManager(),
+		s.mockDomainAuditManager,
 		s.mockResource.GetClusterMetadata(),
 		domain.NewDomainReplicator(s.mockProducer, s.mockResource.GetLogger()),
 		s.mockResource.GetArchivalMetadata(),
@@ -1565,6 +1568,7 @@ func (s *workflowHandlerSuite) TestUpdateDomain_Success_FailOver() {
 		s.newConfig(dc.NewInMemoryClient()).DomainConfig,
 		s.mockResource.GetLogger(),
 		s.mockResource.GetDomainManager(),
+		s.mockDomainAuditManager,
 		s.mockResource.GetClusterMetadata(),
 		domain.NewDomainReplicator(s.mockProducer, s.mockResource.GetLogger()),
 		s.mockResource.GetArchivalMetadata(),
@@ -1574,8 +1578,6 @@ func (s *workflowHandlerSuite) TestUpdateDomain_Success_FailOver() {
 
 	s.mockMetadataMgr.On("GetDomain", mock.Anything, mock.Anything).Return(getDomainResp, nil)
 	s.mockMetadataMgr.On("UpdateDomain", mock.Anything, mock.Anything).Return(nil)
-	s.mockArchivalMetadata.On("GetHistoryConfig").Return(archiver.NewArchivalConfig("enabled", dynamicproperties.GetStringPropertyFn("disabled"), false, dynamicproperties.GetBoolPropertyFn(false), "disabled", "some random URI"))
-	s.mockArchivalMetadata.On("GetVisibilityConfig").Return(archiver.NewArchivalConfig("enabled", dynamicproperties.GetStringPropertyFn("disabled"), false, dynamicproperties.GetBoolPropertyFn(false), "disabled", "some random URI"))
 	s.mockProducer.On("Publish", mock.Anything, mock.Anything).Return(nil).Once()
 	s.mockResource.RemoteFrontendClient.EXPECT().DescribeDomain(gomock.Any(), gomock.Any()).
 		Return(describeDomainResponseServer, nil).AnyTimes()

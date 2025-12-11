@@ -27,6 +27,7 @@ import (
 	"fmt"
 
 	"github.com/uber/cadence/common/log/tag"
+	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/frontend/validate"
 )
@@ -217,4 +218,55 @@ func (wh *WorkflowHandler) FailoverDomain(ctx context.Context, failoverRequest *
 
 	logger.Info("Failover domain operation succeeded.")
 	return failoverResp, nil
+}
+
+func (wh *WorkflowHandler) ListFailoverHistory(ctx context.Context, request *types.ListFailoverHistoryRequest) (*types.ListFailoverHistoryResponse, error) {
+	if wh.isShuttingDown() {
+		return nil, validate.ErrShuttingDown
+	}
+
+	logger := wh.GetLogger().WithTags(
+		tag.OperationName("ListFailoverHistory"))
+
+	logger.Info("List failover history request received.")
+
+	domainAuditManager := wh.GetPersistenceBean().GetDomainAuditManager()
+	if domainAuditManager == nil {
+		return nil, &types.InternalServiceError{Message: "DomainAuditManager not available"}
+	}
+
+	filters := request.GetFilters()
+	if filters == nil || filters.DomainID == "" {
+		return nil, &types.BadRequestError{Message: "DomainID is required in filters"}
+	}
+
+	pageSize := 50
+	if request.GetPagination() != nil && request.GetPagination().PageSize != nil {
+		pageSize = int(*request.GetPagination().PageSize)
+	}
+
+	auditLogsResp, err := domainAuditManager.GetDomainAuditLogs(ctx, &persistence.GetDomainAuditLogsRequest{
+		DomainID:      filters.DomainID,
+		OperationType: persistence.DomainAuditOperationTypeFailover,
+		PageSize:      pageSize,
+		NextPageToken: request.GetPagination().GetNextPageToken(),
+	})
+
+	if err != nil {
+		logger.Error("Failed to get domain audit logs", tag.Error(err))
+		return nil, err
+	}
+
+	failoverEvents := make([]*types.FailoverEvent, 0, len(auditLogsResp.AuditLogs))
+	for _, auditLog := range auditLogsResp.AuditLogs {
+		event := auditLog.ToFailoverEvents()
+		if event != nil && event.ClusterFailovers != nil {
+			failoverEvents = append(failoverEvents, event)
+		}
+	}
+
+	return &types.ListFailoverHistoryResponse{
+		FailoverEvents: failoverEvents,
+		NextPageToken:  auditLogsResp.NextPageToken,
+	}, nil
 }

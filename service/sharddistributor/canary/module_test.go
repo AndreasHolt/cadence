@@ -9,6 +9,7 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxtest"
 	"go.uber.org/yarpc"
+	"go.uber.org/yarpc/api/peer"
 	"go.uber.org/yarpc/api/transport/transporttest"
 	"go.uber.org/yarpc/transport/grpc"
 	"go.uber.org/yarpc/yarpctest"
@@ -16,14 +17,15 @@ import (
 
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/log"
-	"github.com/uber/cadence/service/sharddistributor/executorclient"
+	"github.com/uber/cadence/service/sharddistributor/client/clientcommon"
 )
 
 func TestModule(t *testing.T) {
 	// Create mocks
 	ctrl := gomock.NewController(t)
 	mockClientConfig := transporttest.NewMockClientConfig(ctrl)
-	outbound := grpc.NewTransport().NewOutbound(yarpctest.NewFakePeerList())
+	transport := grpc.NewTransport()
+	outbound := transport.NewOutbound(yarpctest.NewFakePeerList())
 
 	mockClientConfig.EXPECT().Caller().Return("test-executor").Times(2)
 	mockClientConfig.EXPECT().Service().Return("shard-distributor").Times(2)
@@ -32,12 +34,26 @@ func TestModule(t *testing.T) {
 	mockClientConfigProvider := transporttest.NewMockClientConfigProvider(ctrl)
 	mockClientConfigProvider.EXPECT().ClientConfig("cadence-shard-distributor").Return(mockClientConfig).Times(2)
 
-	config := executorclient.Config{
-		Namespaces: []executorclient.NamespaceConfig{
-			{Namespace: "test-fixed", HeartBeatInterval: 5 * time.Second},
-			{Namespace: "test-ephemeral", HeartBeatInterval: 5 * time.Second},
+	config := clientcommon.Config{
+		Namespaces: []clientcommon.NamespaceConfig{
+			{Namespace: "shard-distributor-canary", HeartBeatInterval: 5 * time.Second, MigrationMode: "onboarded"},
+			{Namespace: "shard-distributor-canary-ephemeral", HeartBeatInterval: 5 * time.Second, MigrationMode: "onboarded"},
+			{Namespace: "test-local-passthrough", HeartBeatInterval: 1 * time.Second, MigrationMode: "local_pass"},
+			{Namespace: "test-local-passthrough-shadow", HeartBeatInterval: 1 * time.Second, MigrationMode: "local_pass_shadow"},
+			{Namespace: "test-distributed-passthrough", HeartBeatInterval: 1 * time.Second, MigrationMode: "distributed_pass"},
+			{Namespace: "test-external-assignment", HeartBeatInterval: 1 * time.Second, MigrationMode: "distributed_pass"},
 		},
 	}
+
+	// Create a mock dispatcher with the required outbound
+	dispatcher := yarpc.NewDispatcher(yarpc.Config{
+		Name: "test-canary",
+		Outbounds: yarpc.Outbounds{
+			"shard-distributor-canary": {
+				Unary: outbound,
+			},
+		},
+	})
 
 	// Create a test app with the library, check that it starts and stops
 	fxtest.New(t,
@@ -46,10 +62,11 @@ func TestModule(t *testing.T) {
 			fx.Annotate(clock.NewMockedTimeSource(), fx.As(new(clock.TimeSource))),
 			fx.Annotate(log.NewNoop(), fx.As(new(log.Logger))),
 			fx.Annotate(mockClientConfigProvider, fx.As(new(yarpc.ClientConfig))),
+			fx.Annotate(transport, fx.As(new(peer.Transport))),
 			zaptest.NewLogger(t),
 			config,
+			dispatcher,
 		),
-
-		Module("test-fixed", "test-ephemeral", "cadence-shard-distributor"),
+		Module(NamespacesNames{FixedNamespace: "shard-distributor-canary", EphemeralNamespace: "shard-distributor-canary-ephemeral", ExternalAssignmentNamespace: "test-external-assignment", SharddistributorServiceName: "cadence-shard-distributor"}),
 	).RequireStart().RequireStop()
 }

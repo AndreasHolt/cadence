@@ -386,6 +386,7 @@ var (
 	FrontendClientOperationTerminateWorkflowExecution            = clientOperation("frontend-terminate-wf-execution")
 	FrontendClientOperationUpdateDomain                          = clientOperation("frontend-update-domain")
 	FrontendClientOperationFailoverDomain                        = clientOperation("frontend-failover-domain")
+	FrontendClientOperationListFailoverHistory                   = clientOperation("frontend-list-failover-history")
 	FrontendClientOperationGetClusterInfo                        = clientOperation("frontend-get-cluster-info")
 	FrontendClientOperationListTaskListPartitions                = clientOperation("frontend-list-task-list-partitions")
 	FrontendClientOperationGetTaskListsByDomain                  = clientOperation("frontend-get-task-list-for-domain")
@@ -454,8 +455,9 @@ var (
 	MatchingClientOperationUpdateTaskListPartitionConfig  = clientOperation("matching-update-task-list-partition-config")
 	MatchingClientOperationRefreshTaskListPartitionConfig = clientOperation("matching-refresh-task-list-partition-config")
 
-	ShardDistributorClientOperationGetShardOwner     = clientOperation("shard-distributor-get-shard-owner")
-	ShardDistributorExecutorClientOperationHeartbeat = clientOperation("shard-distributor-executor-heartbeat")
+	ShardDistributorClientOperationGetShardOwner       = clientOperation("shard-distributor-get-shard-owner")
+	ShardDistributorClientOperationWatchNamespaceState = clientOperation("shard-distributor-watch-namespace-state")
+	ShardDistributorExecutorClientOperationHeartbeat   = clientOperation("shard-distributor-executor-heartbeat")
 )
 
 // Pre-defined values for TagIDType

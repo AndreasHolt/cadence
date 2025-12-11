@@ -149,7 +149,7 @@ func NewTaskProcessor(
 		taskRetryPolicy:        taskRetryPolicy,
 		dlqRetryPolicy:         dlqRetryPolicy,
 		noTaskRetrier:          noTaskRetrier,
-		requestChan:            taskFetcher.GetRequestChan(),
+		requestChan:            taskFetcher.GetRequestChan(shardID),
 		syncShardChan:          make(chan *types.SyncShardStatus, 1),
 		done:                   make(chan struct{}),
 		lastProcessedMessageID: constants.EmptyMessageID,
@@ -301,6 +301,13 @@ func (p *taskProcessorImpl) cleanupAckedReplicationTasks() error {
 }
 
 func (p *taskProcessorImpl) processResponse(response *types.ReplicationMessages) {
+	defer func() {
+		if r := recover(); r != nil {
+			p.logger.Error("processResponse encountered panic.", tag.Value(r))
+			panic(r)
+		}
+	}()
+
 	select {
 	case p.syncShardChan <- response.GetSyncShardStatus():
 	default:

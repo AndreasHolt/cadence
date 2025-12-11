@@ -327,9 +327,13 @@ func (s *failoverWorkflowTestSuite) TestShouldFailover() {
 					ActiveClusterName: "c2",
 					Clusters:          clusters,
 					ActiveClusters: &types.ActiveClusters{
-						ActiveClustersByRegion: map[string]types.ActiveClusterInfo{
-							"c1": {
-								ActiveClusterName: "c1",
+						AttributeScopes: map[string]types.ClusterAttributeScope{
+							"region": {
+								ClusterAttributes: map[string]types.ActiveClusterInfo{
+									"c1": {
+										ActiveClusterName: "c1",
+									},
+								},
 							},
 						},
 					},
@@ -350,7 +354,11 @@ func (s *failoverWorkflowTestSuite) TestShouldFailover() {
 					ActiveClusterName: "c2",
 					Clusters:          clusters,
 					ActiveClusters: &types.ActiveClusters{
-						ActiveClustersByRegion: map[string]types.ActiveClusterInfo{},
+						AttributeScopes: map[string]types.ClusterAttributeScope{
+							"region": {
+								ClusterAttributes: map[string]types.ActiveClusterInfo{},
+							},
+						},
 					},
 				},
 				DomainInfo: &types.DomainInfo{
@@ -360,7 +368,7 @@ func (s *failoverWorkflowTestSuite) TestShouldFailover() {
 				},
 			},
 			sourceCluster: "c2",
-			expected:      true,
+			expected:      false,
 		},
 	}
 	for _, t := range tests {
@@ -477,9 +485,13 @@ func (s *failoverWorkflowTestSuite) TestGetDomainsActivity_FiltersActiveActiveDo
 					ActiveClusterName: "c1",
 					Clusters:          clusters,
 					ActiveClusters: &types.ActiveClusters{
-						ActiveClustersByRegion: map[string]types.ActiveClusterInfo{
-							"region1": {
-								ActiveClusterName: "c1",
+						AttributeScopes: map[string]types.ClusterAttributeScope{
+							"region": {
+								ClusterAttributes: map[string]types.ActiveClusterInfo{
+									"region1": {
+										ActiveClusterName: "c1",
+									},
+								},
 							},
 						},
 					},
@@ -495,7 +507,11 @@ func (s *failoverWorkflowTestSuite) TestGetDomainsActivity_FiltersActiveActiveDo
 					ActiveClusterName: "c1",
 					Clusters:          clusters,
 					ActiveClusters: &types.ActiveClusters{
-						ActiveClustersByRegion: map[string]types.ActiveClusterInfo{},
+						AttributeScopes: map[string]types.ClusterAttributeScope{
+							"region": {
+								ClusterAttributes: map[string]types.ActiveClusterInfo{},
+							},
+						},
 					},
 				},
 				IsGlobalDomain: true,
@@ -512,7 +528,7 @@ func (s *failoverWorkflowTestSuite) TestGetDomainsActivity_FiltersActiveActiveDo
 	s.NoError(err)
 	var result []string
 	s.NoError(actResult.Get(&result))
-	s.Equal([]string{"regular-domain", "empty-active-clusters-domain"}, result)
+	s.Equal([]string{"regular-domain"}, result)
 }
 
 func (s *failoverWorkflowTestSuite) TestGetDomainsActivity_WithActiveActiveTargetDomains() {
@@ -540,12 +556,16 @@ func (s *failoverWorkflowTestSuite) TestGetDomainsActivity_WithActiveActiveTarge
 					ActiveClusterName: "c1",
 					Clusters:          clusters,
 					ActiveClusters: &types.ActiveClusters{
-						ActiveClustersByRegion: map[string]types.ActiveClusterInfo{
-							"region1": {
-								ActiveClusterName: "c1",
-							},
-							"region2": {
-								ActiveClusterName: "c2",
+						AttributeScopes: map[string]types.ClusterAttributeScope{
+							"region": {
+								ClusterAttributes: map[string]types.ActiveClusterInfo{
+									"region1": {
+										ActiveClusterName: "c1",
+									},
+									"region2": {
+										ActiveClusterName: "c2",
+									},
+								},
 							},
 						},
 					},
@@ -759,6 +779,52 @@ func (s *failoverWorkflowTestSuite) TestGetOperator() {
 	s.NoError(queryResult.Get(&res))
 
 	s.Equal(operator, res.Operator)
+}
+
+func (s *failoverWorkflowTestSuite) TestShouldFailover_DeprecatedDomain() {
+	deprecatedDomain := &types.DescribeDomainResponse{
+		DomainInfo: &types.DomainInfo{
+			Name:   "test-deprecated-domain",
+			Status: types.DomainStatusDeprecated.Ptr(),
+			Data: map[string]string{
+				constants.DomainDataKeyForManagedFailover: "true",
+			},
+		},
+		IsGlobalDomain: true,
+		ReplicationConfiguration: &types.DomainReplicationConfiguration{
+			ActiveClusterName: "cluster1",
+			Clusters: []*types.ClusterReplicationConfiguration{
+				{ClusterName: "cluster1"},
+				{ClusterName: "cluster2"},
+			},
+		},
+	}
+
+	result := shouldFailover(deprecatedDomain, "cluster1")
+	s.False(result, "Deprecated domains should not be included in failover")
+}
+
+func (s *failoverWorkflowTestSuite) TestShouldFailover_DeletedDomain() {
+	deletedDomain := &types.DescribeDomainResponse{
+		DomainInfo: &types.DomainInfo{
+			Name:   "test-deleted-domain",
+			Status: types.DomainStatusDeleted.Ptr(),
+			Data: map[string]string{
+				constants.DomainDataKeyForManagedFailover: "true",
+			},
+		},
+		IsGlobalDomain: true,
+		ReplicationConfiguration: &types.DomainReplicationConfiguration{
+			ActiveClusterName: "cluster1",
+			Clusters: []*types.ClusterReplicationConfiguration{
+				{ClusterName: "cluster1"},
+				{ClusterName: "cluster2"},
+			},
+		},
+	}
+
+	result := shouldFailover(deletedDomain, "cluster1")
+	s.False(result, "Deleted domains should not be included in failover")
 }
 
 func (s *failoverWorkflowTestSuite) assertQueryState(env *testsuite.TestWorkflowEnvironment, expectedState string) {

@@ -79,10 +79,6 @@ func (h *handlerImpl) Health(ctx context.Context) (*types.HealthStatus, error) {
 func (h *handlerImpl) GetShardOwner(ctx context.Context, request *types.GetShardOwnerRequest) (resp *types.GetShardOwnerResponse, retError error) {
 	defer func() { log.CapturePanic(recover(), h.logger, &retError) }()
 
-	if !h.shardDistributionCfg.Enabled {
-		return nil, fmt.Errorf("shard distributor disabled")
-	}
-
 	namespaceIdx := slices.IndexFunc(h.shardDistributionCfg.Namespaces, func(namespace config.Namespace) bool {
 		return namespace.Name == request.Namespace
 	})
@@ -92,7 +88,7 @@ func (h *handlerImpl) GetShardOwner(ctx context.Context, request *types.GetShard
 		}
 	}
 
-	executorID, err := h.storage.GetShardOwner(ctx, request.Namespace, request.ShardKey)
+	shardOwner, err := h.storage.GetShardOwner(ctx, request.Namespace, request.ShardKey)
 	if errors.Is(err, store.ErrShardNotFound) {
 		if h.shardDistributionCfg.Namespaces[namespaceIdx].Type == config.NamespaceTypeEphemeral {
 			return h.assignEphemeralShard(ctx, request.Namespace, request.ShardKey)
@@ -104,11 +100,12 @@ func (h *handlerImpl) GetShardOwner(ctx context.Context, request *types.GetShard
 		}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get shard owner: %w", err)
+		return nil, &types.InternalServiceError{Message: fmt.Sprintf("failed to get shard owner: %v", err)}
 	}
 
 	resp = &types.GetShardOwnerResponse{
-		Owner:     executorID,
+		Owner:     shardOwner.ExecutorID,
+		Metadata:  shardOwner.Metadata,
 		Namespace: request.Namespace,
 	}
 
@@ -120,7 +117,7 @@ func (h *handlerImpl) assignEphemeralShard(ctx context.Context, namespace string
 	// Get the current state of the namespace and evaluate executor load to choose a placement target.
 	state, err := h.storage.GetState(ctx, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("get state: %w", err)
+		return nil, &types.InternalServiceError{Message: fmt.Sprintf("get namespace state: %v", err)}
 	}
 
 	executorID, aggregatedLoad, assignedCount, err := pickLeastLoadedExecutor(state)
@@ -153,29 +150,41 @@ func (h *handlerImpl) assignEphemeralShard(ctx context.Context, namespace string
 			tag.ShardExecutor(executorID),
 			tag.Error(err),
 		)
-		return nil, fmt.Errorf("assign ephemeral shard: %w", err)
+		return nil, &types.InternalServiceError{Message: fmt.Sprintf("assign ephemeral shard: %v", err)}
+	}
+
+	executor, err := h.storage.GetExecutor(ctx, namespace, executorID)
+	if err != nil {
+		return nil, &types.InternalServiceError{Message: fmt.Sprintf("get executor: %v", err)}
 	}
 
 	return &types.GetShardOwnerResponse{
-		Owner:     executorID,
+		Owner:     executor.ExecutorID,
 		Namespace: namespace,
+		Metadata:  executor.Metadata,
 	}, nil
 }
 
-// pickLeastLoadedExecutor returns the executor with the minimal aggregated smoothed load.
+// pickLeastLoadedExecutor returns the ACTIVE executor with the minimal aggregated smoothed load.
 // Ties are broken by fewer assigned shards.
 func pickLeastLoadedExecutor(state *store.NamespaceState) (executorID string, aggregatedLoad float64, assignedCount int, err error) {
-	if state == nil || len(state.ShardAssignments) == 0 {
-		return "", 0, 0, fmt.Errorf("namespace state is nil or has no executors")
+	if state == nil {
+		return "", 0, 0, fmt.Errorf("namespace state is nil")
+	}
+	if len(state.ShardAssignments) == 0 {
+		return "", 0, 0, fmt.Errorf("namespace state has no executors")
 	}
 
 	var chosenID string
-	var chosenAggregatedLoad float64
-	var chosenAssignedCount int
 	minAggregatedLoad := math.MaxFloat64
 	minAssignedShards := math.MaxInt
 
 	for candidate, assignment := range state.ShardAssignments {
+		executorState, ok := state.Executors[candidate]
+		if !ok || executorState.Status != types.ExecutorStatusACTIVE {
+			continue
+		}
+
 		aggregated := 0.0
 		for shard := range assignment.AssignedShards {
 			if stats, ok := state.ShardStats[shard]; ok {
@@ -190,14 +199,58 @@ func pickLeastLoadedExecutor(state *store.NamespaceState) (executorID string, ag
 			minAggregatedLoad = aggregated
 			minAssignedShards = count
 			chosenID = candidate
-			chosenAggregatedLoad = aggregated
-			chosenAssignedCount = count
 		}
 	}
 
 	if chosenID == "" {
-		return "", 0, 0, fmt.Errorf("no executors in namespace state")
+		return "", 0, 0, fmt.Errorf("no active executors available")
 	}
 
-	return chosenID, chosenAggregatedLoad, chosenAssignedCount, nil
+	return chosenID, minAggregatedLoad, minAssignedShards, nil
+}
+
+func (h *handlerImpl) WatchNamespaceState(request *types.WatchNamespaceStateRequest, server WatchNamespaceStateServer) error {
+	h.startWG.Wait()
+
+	// Subscribe to state changes from storage
+	assignmentChangesChan, unSubscribe, err := h.storage.SubscribeToAssignmentChanges(server.Context(), request.Namespace)
+	defer unSubscribe()
+	if err != nil {
+		return &types.InternalServiceError{Message: fmt.Sprintf("failed to subscribe to namespace state: %v", err)}
+	}
+
+	// Stream subsequent updates
+	for {
+		select {
+		case <-server.Context().Done():
+			return server.Context().Err()
+		case assignmentChanges, ok := <-assignmentChangesChan:
+			if !ok {
+				return fmt.Errorf("unexpected close of updates channel")
+			}
+			response := &types.WatchNamespaceStateResponse{
+				Executors: make([]*types.ExecutorShardAssignment, 0, len(assignmentChanges)),
+			}
+			for executor, shardIDs := range assignmentChanges {
+				response.Executors = append(response.Executors, &types.ExecutorShardAssignment{
+					ExecutorID:     executor.ExecutorID,
+					AssignedShards: WrapShards(shardIDs),
+					Metadata:       executor.Metadata,
+				})
+			}
+
+			err = server.Send(response)
+			if err != nil {
+				return fmt.Errorf("send response: %w", err)
+			}
+		}
+	}
+}
+
+func WrapShards(shardIDs []string) []*types.Shard {
+	shards := make([]*types.Shard, 0, len(shardIDs))
+	for _, shardID := range shardIDs {
+		shards = append(shards, &types.Shard{ShardKey: shardID})
+	}
+	return shards
 }

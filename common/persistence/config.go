@@ -36,6 +36,8 @@ type (
 		ReadNoSQLHistoryTaskFromDataBlob         dynamicproperties.BoolPropertyFn
 		ReadNoSQLShardFromDataBlob               dynamicproperties.BoolPropertyFn
 		SerializationEncoding                    dynamicproperties.StringPropertyFn
+		DomainAuditLogTTL                        dynamicproperties.DurationPropertyFnWithDomainIDFilter
+		HistoryNodeDeleteBatchSize               dynamicproperties.IntPropertyFn
 	}
 )
 
@@ -50,5 +52,7 @@ func NewDynamicConfiguration(dc *dynamicconfig.Collection) *DynamicConfiguration
 		ReadNoSQLHistoryTaskFromDataBlob:         dc.GetBoolProperty(dynamicproperties.ReadNoSQLHistoryTaskFromDataBlob),
 		ReadNoSQLShardFromDataBlob:               dc.GetBoolProperty(dynamicproperties.ReadNoSQLShardFromDataBlob),
 		SerializationEncoding:                    dc.GetStringProperty(dynamicproperties.SerializationEncoding),
+		DomainAuditLogTTL:                        dc.GetDurationPropertyFilteredByDomainID(dynamicproperties.DomainAuditLogTTL),
+		HistoryNodeDeleteBatchSize:               dc.GetIntProperty(dynamicproperties.HistoryNodeDeleteBatchSize),
 	}
 }

@@ -20,7 +20,7 @@
 // THE SOFTWARE.
 
 // Generate rate limiter wrappers.
-//go:generate mockgen -package $GOPACKAGE -destination data_manager_interfaces_mock.go github.com/uber/cadence/common/persistence Task,ShardManager,ExecutionManager,ExecutionManagerFactory,TaskManager,HistoryManager,DomainManager,QueueManager,ConfigStoreManager
+//go:generate mockgen -package $GOPACKAGE -destination data_manager_interfaces_mock.go github.com/uber/cadence/common/persistence Task,ShardManager,ExecutionManager,ExecutionManagerFactory,TaskManager,HistoryManager,DomainManager,DomainAuditManager,QueueManager,ConfigStoreManager
 //go:generate gowrap gen -g -p . -i ConfigStoreManager -t ./wrappers/templates/ratelimited.tmpl -o wrappers/ratelimited/configstore_generated.go
 //go:generate gowrap gen -g -p . -i DomainManager -t ./wrappers/templates/ratelimited.tmpl -o wrappers/ratelimited/domain_generated.go
 //go:generate gowrap gen -g -p . -i HistoryManager -t ./wrappers/templates/ratelimited.tmpl -o wrappers/ratelimited/history_generated.go
@@ -270,6 +270,32 @@ const (
 	WorkflowRequestTypeCancel
 	WorkflowRequestTypeReset
 )
+
+const (
+	DomainAuditOperationTypeInvalid DomainAuditOperationType = iota
+	DomainAuditOperationTypeCreate
+	DomainAuditOperationTypeUpdate
+	DomainAuditOperationTypeDeprecate
+	DomainAuditOperationTypeDelete
+	DomainAuditOperationTypeFailover
+)
+
+func (d DomainAuditOperationType) String() string {
+	switch d {
+	case DomainAuditOperationTypeCreate:
+		return "Create"
+	case DomainAuditOperationTypeUpdate:
+		return "Update"
+	case DomainAuditOperationTypeFailover:
+		return "Failover"
+	case DomainAuditOperationTypeDeprecate:
+		return "Deprecate"
+	case DomainAuditOperationTypeDelete:
+		return "Delete"
+	default:
+		return "Invalid"
+	}
+}
 
 // CreateWorkflowRequestMode is the mode of create workflow request
 type CreateWorkflowRequestMode int
@@ -1244,6 +1270,54 @@ type (
 		NotificationVersion int64
 	}
 
+	// CreateDomainAuditLogRequest is used to create a domain audit log entry
+	CreateDomainAuditLogRequest struct {
+		DomainID      string
+		EventID       string // must be a UUID v7
+		StateBefore   *GetDomainResponse
+		StateAfter    *GetDomainResponse
+		OperationType DomainAuditOperationType
+		CreatedTime   time.Time
+		Identity      string
+		IdentityType  string
+		Comment       string
+	}
+
+	// CreateDomainAuditLogResponse is the response for CreateDomainAuditLog
+	CreateDomainAuditLogResponse struct {
+		EventID string
+	}
+
+	// GetDomainAuditLogsRequest is used to get domain audit logs
+	GetDomainAuditLogsRequest struct {
+		DomainID       string
+		OperationType  DomainAuditOperationType
+		MinCreatedTime *time.Time
+		MaxCreatedTime *time.Time
+		PageSize       int
+		NextPageToken  []byte
+	}
+
+	// GetDomainAuditLogsResponse is the response for GetDomainAuditLogs
+	GetDomainAuditLogsResponse struct {
+		AuditLogs     []*DomainAuditLog
+		NextPageToken []byte
+	}
+
+	// DomainAuditLog represents a single domain audit log entry
+	DomainAuditLog struct {
+		EventID         string
+		DomainID        string
+		StateBefore     *GetDomainResponse
+		StateAfter      *GetDomainResponse
+		OperationType   DomainAuditOperationType
+		CreatedTime     time.Time
+		LastUpdatedTime time.Time
+		Identity        string
+		IdentityType    string
+		Comment         string
+	}
+
 	// MutableStateStats is the size stats for MutableState
 	MutableStateStats struct {
 		// Total size of mutable state
@@ -1613,6 +1687,14 @@ type (
 		GetMetadata(ctx context.Context) (*GetMetadataResponse, error)
 	}
 
+	// DomainAuditManager is used to manage domain audit logs
+	DomainAuditManager interface {
+		Closeable
+		GetName() string
+		CreateDomainAuditLog(ctx context.Context, request *CreateDomainAuditLogRequest) (*CreateDomainAuditLogResponse, error)
+		GetDomainAuditLogs(ctx context.Context, request *GetDomainAuditLogsRequest) (*GetDomainAuditLogsResponse, error)
+	}
+
 	// QueueManager is used to manage queue store
 	QueueManager interface {
 		Closeable
@@ -1793,6 +1875,13 @@ func (t *TransferTaskInfo) ToTask() (Task, error) {
 	}
 }
 
+func (r *GetDomainResponse) GetFailoverVersion() int64 {
+	if r == nil {
+		return types.UndefinedFailoverVersion
+	}
+	return r.FailoverVersion
+}
+
 // GetTaskID returns the task ID for replication task
 func (t *ReplicationTaskInfo) GetTaskID() int64 {
 	return t.TaskID
@@ -1933,6 +2022,35 @@ func (t *TimerTaskInfo) ToTask() (Task, error) {
 	}
 }
 
+func (c *DomainReplicationConfig) GetActiveClusters() *types.ActiveClusters {
+	if c != nil && c.ActiveClusters != nil {
+		return c.ActiveClusters
+	}
+	return nil
+}
+
+func (c *DomainReplicationConfig) GetActiveClusterName() string {
+	if c == nil {
+		return ""
+	}
+	return c.ActiveClusterName
+}
+
+func (c *DomainReplicationConfig) GetClusterAttributeScopes() map[string]types.ClusterAttributeScope {
+	if c == nil || c.ActiveClusters == nil {
+		return nil
+	}
+	return c.ActiveClusters.AttributeScopes
+}
+
+// GetID returns the ID from DomainInfo
+func (d *DomainInfo) GetID() string {
+	if d == nil {
+		return ""
+	}
+	return d.ID
+}
+
 // ToNilSafeCopy
 // TODO: it seems that we just need a nil safe shardInfo, deep copy is not necessary
 func (s *ShardInfo) ToNilSafeCopy() *ShardInfo {
@@ -2070,6 +2188,102 @@ func (config *ClusterReplicationConfig) GetCopy() *ClusterReplicationConfig {
 	return &res
 }
 
+func (r *GetDomainResponse) GetReplicationConfig() *DomainReplicationConfig {
+	if r == nil || r.ReplicationConfig == nil {
+		return nil
+	}
+	return r.ReplicationConfig
+}
+
+// DeepCopy returns a deep copy of GetDomainResponse
+// todo (david.porter) delete this manual deepcopying since it's annoying to maintain and
+// use codegen for generating them instead
+func (r *GetDomainResponse) DeepCopy() *GetDomainResponse {
+	if r == nil {
+		return nil
+	}
+
+	result := &GetDomainResponse{
+		IsGlobalDomain:              r.IsGlobalDomain,
+		ConfigVersion:               r.ConfigVersion,
+		FailoverVersion:             r.FailoverVersion,
+		FailoverNotificationVersion: r.FailoverNotificationVersion,
+		PreviousFailoverVersion:     r.PreviousFailoverVersion,
+		LastUpdatedTime:             r.LastUpdatedTime,
+		NotificationVersion:         r.NotificationVersion,
+	}
+
+	// Deep copy FailoverEndTime
+	if r.FailoverEndTime != nil {
+		failoverEndTime := *r.FailoverEndTime
+		result.FailoverEndTime = &failoverEndTime
+	}
+	// Deep copy DomainInfo
+	if r.Info != nil {
+		result.Info = &DomainInfo{
+			ID:          r.Info.ID,
+			Name:        r.Info.Name,
+			Status:      r.Info.Status,
+			Description: r.Info.Description,
+			OwnerEmail:  r.Info.OwnerEmail,
+		}
+		if r.Info.Data != nil {
+			result.Info.Data = make(map[string]string, len(r.Info.Data))
+			for k, v := range r.Info.Data {
+				result.Info.Data[k] = v
+			}
+		}
+	}
+
+	// Deep copy DomainConfig
+	if r.Config != nil {
+		result.Config = &DomainConfig{
+			Retention:                r.Config.Retention,
+			EmitMetric:               r.Config.EmitMetric,
+			HistoryArchivalStatus:    r.Config.HistoryArchivalStatus,
+			HistoryArchivalURI:       r.Config.HistoryArchivalURI,
+			VisibilityArchivalStatus: r.Config.VisibilityArchivalStatus,
+			VisibilityArchivalURI:    r.Config.VisibilityArchivalURI,
+		}
+		// Deep copy BadBinaries
+		result.Config.BadBinaries = r.Config.BadBinaries.DeepCopy()
+		// Deep copy IsolationGroups
+		result.Config.IsolationGroups = r.Config.IsolationGroups.DeepCopy()
+		// Deep copy AsyncWorkflowConfig
+		result.Config.AsyncWorkflowConfig = r.Config.AsyncWorkflowConfig.DeepCopy()
+	}
+
+	// Deep copy DomainReplicationConfig
+	if r.ReplicationConfig != nil {
+		result.ReplicationConfig = &DomainReplicationConfig{
+			ActiveClusterName: r.ReplicationConfig.ActiveClusterName,
+		}
+		// Deep copy Clusters
+		if r.ReplicationConfig.Clusters != nil {
+			result.ReplicationConfig.Clusters = make([]*ClusterReplicationConfig, len(r.ReplicationConfig.Clusters))
+			for i, cluster := range r.ReplicationConfig.Clusters {
+				if cluster != nil {
+					result.ReplicationConfig.Clusters[i] = cluster.GetCopy()
+				}
+			}
+		}
+		// Deep copy ActiveClusters
+		if r.ReplicationConfig.ActiveClusters != nil {
+			result.ReplicationConfig.ActiveClusters = r.ReplicationConfig.ActiveClusters.DeepCopy()
+		}
+	}
+
+	return result
+}
+
+// GetInfo returns the DomainInfo from GetDomainResponse
+func (r *GetDomainResponse) GetInfo() *DomainInfo {
+	if r == nil {
+		return nil
+	}
+	return r.Info
+}
+
 // DBTimestampToUnixNano converts Milliseconds timestamp to UnixNano
 func DBTimestampToUnixNano(milliseconds int64) int64 {
 	return milliseconds * 1000 * 1000 // Milliseconds are 10⁻³, nanoseconds are 10⁻⁹, (-3) - (-9) = 6, so multiply by 10⁶
@@ -2196,7 +2410,8 @@ func IsBackgroundTransientError(err error) bool {
 func HasMoreRowsToDelete(rowsDeleted, batchSize int) bool {
 	if rowsDeleted < batchSize || // all target tasks are deleted
 		rowsDeleted == UnknownNumRowsAffected || // underlying database does not support rows affected, so pageSize is not honored and all target tasks are deleted
-		rowsDeleted > batchSize { // pageSize is not honored and all tasks are deleted
+		rowsDeleted > batchSize ||
+		batchSize <= 0 { // if batchSize is <= 0 the attempt is for the request to be unbounded and remove all rows from min to max
 		return false
 	}
 	return true
@@ -2302,6 +2517,9 @@ func (c *DomainReplicationConfig) IsActiveActive() bool {
 		}
 	}
 
-	// TODO(active-active): Remove this once we have completely migrated to ClusterAttributes
-	return len(c.ActiveClusters.ActiveClustersByRegion) > 0
+	return false
+}
+
+func IsWorkflowRunning(state int) bool {
+	return state == WorkflowStateRunning || state == WorkflowStateCreated
 }

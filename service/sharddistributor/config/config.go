@@ -28,6 +28,7 @@ import (
 	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/dynamicconfig/dynamicproperties"
+	"github.com/uber/cadence/common/types"
 )
 
 type (
@@ -36,9 +37,12 @@ type (
 		PersistenceMaxQPS       dynamicproperties.IntPropertyFn
 		PersistenceGlobalMaxQPS dynamicproperties.IntPropertyFn
 		ThrottledLogRPS         dynamicproperties.IntPropertyFn
-
 		// hostname info
 		HostName string
+	}
+
+	MigrationConfig struct {
+		MigrationMode dynamicproperties.StringPropertyFnWithNamespaceFilters
 	}
 
 	StaticConfig struct {
@@ -48,7 +52,6 @@ type (
 
 	// ShardDistribution is a configuration for leader election running.
 	ShardDistribution struct {
-		Enabled     bool          `yaml:"enabled"`
 		LeaderStore Store         `yaml:"leaderStore"`
 		Election    Election      `yaml:"election"`
 		Namespaces  []Namespace   `yaml:"namespaces"`
@@ -76,7 +79,17 @@ type (
 	}
 
 	LeaderProcess struct {
-		Period       time.Duration `yaml:"period"`
+		// Period is the maximum duration between shard rebalance operations
+		// Default: 1 second
+		Period time.Duration `yaml:"period"`
+
+		// Timeout is the maximum duration of a single shard rebalance operation
+		// Default: 1 second
+		Timeout time.Duration `yaml:"timeout"`
+
+		// HeartbeatTTL is the duration after which, if no heartbeat is received from an executor,
+		// the executor is considered stale and its shards are eligible for redistribution.
+		// Default: 10 seconds
 		HeartbeatTTL time.Duration `yaml:"heartbeatTTL"`
 	}
 )
@@ -85,6 +98,33 @@ const (
 	NamespaceTypeFixed     = "fixed"
 	NamespaceTypeEphemeral = "ephemeral"
 )
+
+const (
+	MigrationModeINVALID                = "invalid"
+	MigrationModeLOCALPASSTHROUGH       = "local_pass"
+	MigrationModeLOCALPASSTHROUGHSHADOW = "local_pass_shadow"
+	MigrationModeDISTRIBUTEDPASSTHROUGH = "distributed_pass"
+	MigrationModeONBOARDED              = "onboarded"
+)
+
+// ConfigMode maps string migration mode values to types.MigrationMode
+var ConfigMode = map[string]types.MigrationMode{
+	MigrationModeINVALID:                types.MigrationModeINVALID,
+	MigrationModeLOCALPASSTHROUGH:       types.MigrationModeLOCALPASSTHROUGH,
+	MigrationModeLOCALPASSTHROUGHSHADOW: types.MigrationModeLOCALPASSTHROUGHSHADOW,
+	MigrationModeDISTRIBUTEDPASSTHROUGH: types.MigrationModeDISTRIBUTEDPASSTHROUGH,
+	MigrationModeONBOARDED:              types.MigrationModeONBOARDED,
+}
+
+func (s *ShardDistribution) GetMigrationMode(namespace string) types.MigrationMode {
+	for _, ns := range s.Namespaces {
+		if ns.Name == namespace {
+			return ConfigMode[ns.Mode]
+		}
+	}
+	// TODO in the dynamic configuration I will setup a default value
+	return ConfigMode[MigrationModeONBOARDED]
+}
 
 // NewConfig returns new service config with default values
 func NewConfig(dc *dynamicconfig.Collection, hostName string) *Config {
@@ -96,6 +136,21 @@ func NewConfig(dc *dynamicconfig.Collection, hostName string) *Config {
 	}
 }
 
+// NewMigrationConfig returns new dynamic config with onboarding info
+func NewMigrationConfig(dc *dynamicconfig.Collection) *MigrationConfig {
+	return &MigrationConfig{
+		MigrationMode: dc.GetStringPropertyFilteredByNamespace(dynamicproperties.MigrationMode),
+	}
+}
+
+func (c *MigrationConfig) GetMigrationMode(namespace string) types.MigrationMode {
+	mode, ok := ConfigMode[c.MigrationMode(namespace)]
+	if !ok {
+		return ConfigMode[MigrationModeONBOARDED]
+	}
+	return mode
+}
+
 // GetShardDistributionFromExternal converts other configs to an internal one.
 func GetShardDistributionFromExternal(in config.ShardDistribution) ShardDistribution {
 
@@ -105,7 +160,6 @@ func GetShardDistributionFromExternal(in config.ShardDistribution) ShardDistribu
 	}
 
 	return ShardDistribution{
-		Enabled:     in.Enabled,
 		LeaderStore: Store(in.LeaderStore),
 		Store:       Store(in.Store),
 		Election:    Election(in.Election),

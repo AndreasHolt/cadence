@@ -88,8 +88,7 @@ func setupMocksForTaskListManager(t *testing.T, taskListID *Identifier, taskList
 	deps.mockDomainCache.EXPECT().GetDomainName(gomock.Any()).Return("domainName", nil).Times(1)
 	config := config.NewConfig(dynamicconfig.NewCollection(dynamicClient, logger), "hostname", getIsolationgroupsHelper)
 	mockHistoryService := history.NewMockClient(ctrl)
-
-	tlm, err := NewManager(
+	params := ManagerParams{
 		deps.mockDomainCache,
 		logger,
 		metricsClient,
@@ -97,14 +96,15 @@ func setupMocksForTaskListManager(t *testing.T, taskListID *Identifier, taskList
 		clusterMetadata,
 		deps.mockIsolationState,
 		deps.mockMatchingClient,
-		func(Manager) {},
+		func(ShardProcessor) {},
 		taskListID,
 		taskListKind,
 		config,
 		deps.mockTimeSource,
 		deps.mockTimeSource.Now(),
 		mockHistoryService,
-	)
+	}
+	tlm, err := NewManager(params)
 	require.NoError(t, err)
 	return tlm.(*taskListManagerImpl), deps
 }
@@ -231,6 +231,8 @@ func createTestTaskListManagerWithConfig(t *testing.T, logger log.Logger, contro
 	mockDomainCache := cache.NewMockDomainCache(controller)
 	mockDomainCache.EXPECT().GetDomainByID(gomock.Any()).Return(cache.CreateDomainCacheEntry("domainName"), nil).AnyTimes()
 	mockDomainCache.EXPECT().GetDomainName(gomock.Any()).Return("domainName", nil).AnyTimes()
+	mockMatchingClient := matching.NewMockClient(controller)
+	mockMatchingClient.EXPECT().RefreshTaskListPartitionConfig(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 	mockHistoryService := history.NewMockClient(controller)
 	tl := "tl"
 	dID := "domain"
@@ -238,22 +240,23 @@ func createTestTaskListManagerWithConfig(t *testing.T, logger log.Logger, contro
 	if err != nil {
 		panic(err)
 	}
-	tlMgr, err := NewManager(
+	params := ManagerParams{
 		mockDomainCache,
 		logger,
 		metrics.NewClient(tally.NoopScope, metrics.Matching, metrics.HistogramMigration{}),
 		tm,
 		cluster.GetTestClusterMetadata(true),
 		mockIsolationState,
-		nil,
-		func(Manager) {},
+		mockMatchingClient,
+		func(ShardProcessor) {},
 		tlID,
 		types.TaskListKindNormal,
 		cfg,
 		timeSource,
 		timeSource.Now(),
 		mockHistoryService,
-	)
+	}
+	tlMgr, err := NewManager(params)
 	if err != nil {
 		logger.Fatal("error when createTestTaskListManager", tag.Error(err))
 	}
@@ -421,7 +424,7 @@ func TestCheckIdleTaskList(t *testing.T) {
 	t.Run("Idle task-list", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		tlm := createTestTaskListManagerWithConfig(t, testlogger.New(t), ctrl, cfg, clock.NewRealTimeSource())
-		require.NoError(t, tlm.Start())
+		require.NoError(t, tlm.Start(context.Background()))
 
 		require.EqualValues(t, 0, atomic.LoadInt32(&tlm.stopped), "idle check interval had not passed yet")
 		time.Sleep(20 * time.Millisecond)
@@ -431,7 +434,7 @@ func TestCheckIdleTaskList(t *testing.T) {
 	t.Run("Active poll-er", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		tlm := createTestTaskListManagerWithConfig(t, testlogger.New(t), ctrl, cfg, clock.NewRealTimeSource())
-		require.NoError(t, tlm.Start())
+		require.NoError(t, tlm.Start(context.Background()))
 
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		_, _ = tlm.GetTask(ctx, nil)
@@ -464,7 +467,7 @@ func TestCheckIdleTaskList(t *testing.T) {
 
 		ctrl := gomock.NewController(t)
 		tlm := createTestTaskListManagerWithConfig(t, testlogger.New(t), ctrl, cfg, clock.NewRealTimeSource())
-		require.NoError(t, tlm.Start())
+		require.NoError(t, tlm.Start(context.Background()))
 
 		time.Sleep(8 * time.Millisecond)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -490,7 +493,7 @@ func TestAddTaskStandby(t *testing.T) {
 	cfg.IdleTasklistCheckInterval = dynamicproperties.GetDurationPropertyFnFilteredByTaskListInfo(10 * time.Millisecond)
 
 	tlm := createTestTaskListManagerWithConfig(t, logger, controller, cfg, clock.NewMockedTimeSource())
-	require.NoError(t, tlm.Start())
+	require.NoError(t, tlm.Start(context.Background()))
 
 	// stop taskWriter so that we can check if there's any call to it
 	// otherwise the task persist process is async and hard to test
@@ -839,7 +842,7 @@ func TestTaskWriterShutdown(t *testing.T) {
 	controller := gomock.NewController(t)
 	logger := testlogger.New(t)
 	tlm := createTestTaskListManager(t, logger, controller)
-	err := tlm.Start()
+	err := tlm.Start(context.Background())
 	assert.NoError(t, err)
 
 	// stop the task writer explicitly
@@ -883,25 +886,26 @@ func TestTaskListManagerGetTaskBatch(t *testing.T) {
 	cfg := defaultTestConfig()
 	cfg.RangeSize = rangeSize
 	cfg.ReadRangeSize = dynamicproperties.GetIntPropertyFn(rangeSize / 2)
-	tlMgr, err := NewManager(
+	params := ManagerParams{
 		mockDomainCache,
 		logger,
 		metrics.NewClient(tally.NoopScope, metrics.Matching, metrics.HistogramMigration{}),
 		tm,
 		cluster.GetTestClusterMetadata(true),
 		mockIsolationState,
-		nil,
-		func(Manager) {},
+		matching.NewMockClient(controller),
+		func(ShardProcessor) {},
 		taskListID,
 		types.TaskListKindNormal,
 		cfg,
 		timeSource,
 		timeSource.Now(),
 		mockHistoryService,
-	)
+	}
+	tlMgr, err := NewManager(params)
 	assert.NoError(t, err)
 	tlm := tlMgr.(*taskListManagerImpl)
-	err = tlm.Start()
+	err = tlm.Start(context.Background())
 	assert.NoError(t, err)
 
 	// add taskCount tasks
@@ -954,25 +958,26 @@ func TestTaskListManagerGetTaskBatch(t *testing.T) {
 	tlm.taskAckManager.SetReadLevel(int64(expectedBufSize))
 
 	// complete rangeSize events
-	tlMgr, err = NewManager(
+	newParams := ManagerParams{
 		mockDomainCache,
 		logger,
 		metrics.NewClient(tally.NoopScope, metrics.Matching, metrics.HistogramMigration{}),
 		tm,
 		cluster.GetTestClusterMetadata(true),
 		mockIsolationState,
-		nil,
-		func(Manager) {},
+		matching.NewMockClient(controller),
+		func(ShardProcessor) {},
 		taskListID,
 		types.TaskListKindNormal,
 		cfg,
 		timeSource,
 		timeSource.Now(),
 		mockHistoryService,
-	)
+	}
+	tlMgr, err = NewManager(newParams)
 	assert.NoError(t, err)
 	tlm = tlMgr.(*taskListManagerImpl)
-	err = tlm.Start()
+	err = tlm.Start(context.Background())
 	assert.NoError(t, err)
 	for i := int64(0); i < rangeSize; i++ {
 		task, err := tlm.GetTask(context.Background(), nil)
@@ -1013,22 +1018,23 @@ func TestTaskListReaderPumpAdvancesAckLevelAfterEmptyReads(t *testing.T) {
 	cfg.RangeSize = rangeSize
 	cfg.ReadRangeSize = dynamicproperties.GetIntPropertyFn(rangeSize / 2)
 
-	tlMgr, err := NewManager(
+	params := ManagerParams{
 		mockDomainCache,
 		logger,
 		metrics.NewClient(tally.NoopScope, metrics.Matching, metrics.HistogramMigration{}),
 		tm,
 		cluster.GetTestClusterMetadata(true),
 		mockIsolationState,
-		nil,
-		func(Manager) {},
+		matching.NewMockClient(controller),
+		func(ShardProcessor) {},
 		taskListID,
 		types.TaskListKindNormal,
 		cfg,
 		timeSource,
 		timeSource.Now(),
 		mockHistoryService,
-	)
+	}
+	tlMgr, err := NewManager(params)
 	require.NoError(t, err)
 	tlm := tlMgr.(*taskListManagerImpl)
 
@@ -1037,7 +1043,7 @@ func TestTaskListReaderPumpAdvancesAckLevelAfterEmptyReads(t *testing.T) {
 		tlm.taskWriter.renewLeaseWithRetry()
 	}
 
-	err = tlm.Start() // this call will also renew lease
+	err = tlm.Start(context.Background()) // this call will also renew lease
 	require.NoError(t, err)
 	defer tlm.Stop()
 
@@ -1160,25 +1166,26 @@ func TestTaskExpiryAndCompletion(t *testing.T) {
 			// set idle timer check to a really small value to assert that we don't accidentally drop tasks while blocking
 			// on enqueuing a task to task buffer
 			cfg.IdleTasklistCheckInterval = dynamicproperties.GetDurationPropertyFnFilteredByTaskListInfo(20 * time.Millisecond)
-			tlMgr, err := NewManager(
+			params := ManagerParams{
 				mockDomainCache,
 				logger,
 				metrics.NewClient(tally.NoopScope, metrics.Matching, metrics.HistogramMigration{}),
 				tm,
 				cluster.GetTestClusterMetadata(true),
 				mockIsolationState,
-				nil,
-				func(Manager) {},
+				matching.NewMockClient(controller),
+				func(ShardProcessor) {},
 				taskListID,
 				types.TaskListKindNormal,
 				cfg,
 				timeSource,
 				timeSource.Now(),
 				mockHistoryService,
-			)
+			}
+			tlMgr, err := NewManager(params)
 			assert.NoError(t, err)
 			tlm := tlMgr.(*taskListManagerImpl)
-			err = tlm.Start()
+			err = tlm.Start(context.Background())
 			assert.NoError(t, err)
 			for i := int64(0); i < taskCount; i++ {
 				scheduleID := i * 3
@@ -1246,7 +1253,7 @@ func TestTaskListManagerImpl_HasPollerAfter(t *testing.T) {
 			controller := gomock.NewController(t)
 			logger := testlogger.New(t)
 			tlm := createTestTaskListManager(t, logger, controller)
-			err := tlm.Start()
+			err := tlm.Start(context.Background())
 			assert.NoError(t, err)
 
 			if tc.prepareManager != nil {
@@ -1654,7 +1661,7 @@ func TestManagerStart_RootPartition(t *testing.T) {
 			WritePartitions: partitions(2),
 		},
 	}).Return(&types.MatchingRefreshTaskListPartitionConfigResponse{}, nil)
-	assert.NoError(t, tlm.Start())
+	assert.NoError(t, tlm.Start(context.Background()))
 	assert.Equal(t, &types.TaskListPartitionConfig{Version: 1, ReadPartitions: partitions(2), WritePartitions: partitions(2)}, tlm.TaskListPartitionConfig())
 	tlm.stopWG.Wait()
 }
@@ -1696,7 +1703,7 @@ func TestManagerStart_NonRootPartition(t *testing.T) {
 			RangeID:  0,
 		},
 	}, nil)
-	assert.NoError(t, tlm.Start())
+	assert.NoError(t, tlm.Start(context.Background()))
 	assert.Equal(t, &types.TaskListPartitionConfig{
 		Version:         1,
 		ReadPartitions:  partitions(3),

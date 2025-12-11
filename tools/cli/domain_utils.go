@@ -270,6 +270,30 @@ var (
 			Aliases: []string{"ac"},
 			Usage:   "Active cluster name",
 		},
+		&cli.StringSliceFlag{
+			Name:    FlagActiveClusters,
+			Aliases: []string{"acs"},
+			Usage:   "Active clusters by cluster attribute in the format '<cluster-attr>.<scope>:<name> ie: region.manilla:cluster0,region.newyork:cluster1'",
+		},
+		&cli.StringFlag{
+			Name:    FlagActiveClustersJSON,
+			Aliases: []string{"acs-json"},
+			Usage:   `Active clusters by cluster attribute in JSON format. Eg {"attributeScopes":{"region-us-east1":{"clusterAttributes":{"new-york":{"activeClusterName":"cluster1"}}}}}`,
+		},
+	}
+
+	listFailoverHistoryFlags = []cli.Flag{
+		&cli.BoolFlag{
+			Name:    FlagAll,
+			Aliases: []string{"a"},
+			Usage:   "List all failover history events",
+		},
+		&cli.BoolFlag{
+			Name:    FlagPrintJSON,
+			Aliases: []string{"pjson"},
+			Usage:   "Print in raw JSON format",
+		},
+		getFormatFlag(),
 	}
 
 	adminDomainCommonFlags = getDBFlags()
@@ -376,6 +400,7 @@ func initializeDomainHandler(
 		domainConfig,
 		logger,
 		domainManager,
+		nil, // domainAuditManager not needed for CLI tools
 		clusterMetadata,
 		initializeDomainReplicator(logger),
 		archivalMetadata,

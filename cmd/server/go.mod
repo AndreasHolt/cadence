@@ -13,8 +13,6 @@ replace github.com/uber/cadence => ../..
 
 replace github.com/uber/cadence/common/archiver/gcloud => ../../common/archiver/gcloud
 
-replace github.com/uber/cadence/service/sharddistributor/store/etcd => ../../service/sharddistributor/store/etcd
-
 require (
 	github.com/VividCortex/mysqlerr v1.0.0 // indirect
 	github.com/aws/aws-sdk-go v1.54.12 // indirect
@@ -42,7 +40,7 @@ require (
 	github.com/startreedata/pinot-client-go v0.2.0 // latest release supports pinot v0.12.0 which is also internal version
 	github.com/stretchr/testify v1.10.0
 	github.com/uber-go/tally v3.3.15+incompatible
-	github.com/uber/cadence-idl v0.0.0-20251002070144-16af6755557f
+	github.com/uber/cadence-idl v0.0.0-20251027162905-7b9d8a31de8c
 	github.com/uber/ringpop-go v0.8.5 // indirect
 	github.com/uber/tchannel-go v1.22.2 // indirect
 	github.com/valyala/fastjson v1.4.1 // indirect
@@ -69,7 +67,6 @@ require (
 require (
 	github.com/uber/cadence v0.0.0-00010101000000-000000000000
 	github.com/uber/cadence/common/archiver/gcloud v0.0.0-00010101000000-000000000000
-	github.com/uber/cadence/service/sharddistributor/store/etcd v0.0.0-00010101000000-000000000000
 	go.uber.org/automaxprocs v1.6.0
 	go.uber.org/mock v0.5.0
 )

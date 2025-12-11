@@ -53,21 +53,19 @@ const (
 	// please also reference selectedAPIsForwardingRedirectionPolicyAPIAllowlist and DCRedirectionPolicySelectedAPIsForwardingV2
 	DCRedirectionPolicySelectedAPIsForwarding = "selected-apis-forwarding"
 	// DCRedirectionPolicySelectedAPIsForwardingV2 forwards everything in DCRedirectionPolicySelectedAPIsForwarding,
-	// as well as activity completions (sync and async) and heartbeats.
+	// as well as activity completions (sync and async).
 	// This is done because activity results are generally deemed "useful" and relatively costly to re-do (when it is
 	// even possible to redo), but activity workers themselves may be datacenter-specific.
 	//
 	// This will likely replace DCRedirectionPolicySelectedAPIsForwarding soon.
 	//
 	// 1-6. from DCRedirectionPolicySelectedAPIsForwarding
-	// 7. RecordActivityTaskHeartbeat
-	// 8. RecordActivityTaskHeartbeatByID
-	// 9. RespondActivityTaskCanceled
-	// 10. RespondActivityTaskCanceledByID
-	// 11. RespondActivityTaskCompleted
-	// 12. RespondActivityTaskCompletedByID
-	// 13. RespondActivityTaskFailed
-	// 14. RespondActivityTaskFailedByID
+	// 7. RespondActivityTaskCanceled
+	// 8. RespondActivityTaskCanceledByID
+	// 9. RespondActivityTaskCompleted
+	// 10. RespondActivityTaskCompletedByID
+	// 11. RespondActivityTaskFailed
+	// 12. RespondActivityTaskFailedByID
 	// please also reference selectedAPIsForwardingRedirectionPolicyAPIAllowlistV2
 	DCRedirectionPolicySelectedAPIsForwardingV2 = "selected-apis-forwarding-v2"
 	// DCRedirectionPolicyAllDomainAPIsForwarding means forwarding all the worker and non-worker APIs based domain,
@@ -142,8 +140,6 @@ var selectedAPIsForwardingRedirectionPolicyAPIAllowlistV2 = map[string]struct{}{
 	"TerminateWorkflowExecution":       {},
 	"ResetWorkflowExecution":           {},
 	// additional endpoints
-	"RecordActivityTaskHeartbeat":      {},
-	"RecordActivityTaskHeartbeatByID":  {},
 	"RespondActivityTaskCanceled":      {},
 	"RespondActivityTaskCanceledByID":  {},
 	"RespondActivityTaskCompleted":     {},
@@ -263,12 +259,12 @@ func (policy *selectedOrAllAPIsForwardingRedirectionPolicy) withRedirect(
 	ctx context.Context,
 	domainEntry *cache.DomainCacheEntry,
 	workflowExecution *types.WorkflowExecution,
-	actClSelPolicyForNewWF *types.ActiveClusterSelectionPolicy,
+	requestedActiveClusterSelectionPolicy *types.ActiveClusterSelectionPolicy,
 	apiName string,
 	requestedConsistencyLevel types.QueryConsistencyLevel,
 	call func(string) error,
 ) error {
-	targetDC, enableDomainNotActiveForwarding := policy.getTargetClusterAndIsDomainNotActiveAutoForwarding(ctx, domainEntry, workflowExecution, actClSelPolicyForNewWF, apiName, requestedConsistencyLevel)
+	targetDC, enableDomainNotActiveForwarding := policy.getTargetClusterAndIsDomainNotActiveAutoForwarding(ctx, domainEntry, workflowExecution, requestedActiveClusterSelectionPolicy, apiName, requestedConsistencyLevel)
 	domainName := domainEntry.GetInfo().Name
 
 	policy.logger.Debug(
@@ -285,7 +281,7 @@ func (policy *selectedOrAllAPIsForwardingRedirectionPolicy) withRedirect(
 			metrics.DomainTag(domainName),
 			metrics.SourceClusterTag(policy.currentClusterName),
 			metrics.TargetClusterTag(targetDC),
-			metrics.IsActiveActiveDomainTag(actClSelPolicyForNewWF != nil),
+			metrics.IsActiveActiveDomainTag(requestedActiveClusterSelectionPolicy != nil),
 			metrics.QueryConsistencyLevelTag(requestedConsistencyLevel.String()),
 		)...,
 	)
@@ -340,7 +336,7 @@ func (policy *selectedOrAllAPIsForwardingRedirectionPolicy) getTargetClusterAndI
 	ctx context.Context,
 	domainEntry *cache.DomainCacheEntry,
 	workflowExecution *types.WorkflowExecution,
-	actClSelPolicyForNewWF *types.ActiveClusterSelectionPolicy,
+	requestedActiveClusterSelectionPolicy *types.ActiveClusterSelectionPolicy,
 	apiName string,
 	requestedConsistencyLevel types.QueryConsistencyLevel,
 ) (string, bool) {
@@ -367,7 +363,7 @@ func (policy *selectedOrAllAPIsForwardingRedirectionPolicy) getTargetClusterAndI
 
 	currentActiveCluster := domainEntry.GetReplicationConfig().ActiveClusterName
 	if domainEntry.GetReplicationConfig().IsActiveActive() {
-		workflowActiveCluster := policy.activeClusterForActiveActiveDomainRequest(ctx, domainEntry, workflowExecution, actClSelPolicyForNewWF, apiName)
+		workflowActiveCluster := policy.activeClusterForActiveActiveDomainRequest(ctx, domainEntry, workflowExecution, requestedActiveClusterSelectionPolicy, apiName)
 		policy.logger.Debug(
 			"Active-active domain, routing to active cluster",
 			tag.WorkflowDomainName(domainEntry.GetInfo().Name),
@@ -434,31 +430,46 @@ func (policy *selectedOrAllAPIsForwardingRedirectionPolicy) activeClusterForActi
 	ctx context.Context,
 	domainEntry *cache.DomainCacheEntry,
 	workflowExecution *types.WorkflowExecution,
-	actClSelPolicyForNewWF *types.ActiveClusterSelectionPolicy,
+	requestedActiveClusterSelectionPolicy *types.ActiveClusterSelectionPolicy,
 	apiName string,
 ) string {
 	policy.logger.Debug("Determining active cluster for active-active domain request", tag.WorkflowDomainName(domainEntry.GetInfo().Name), tag.Dynamic("execution", workflowExecution), tag.OperationName(apiName))
-	if actClSelPolicyForNewWF != nil {
-		policy.logger.Debug("Active cluster selection policy for new workflow", tag.WorkflowDomainName(domainEntry.GetInfo().Name), tag.OperationName(apiName), tag.Dynamic("policy", actClSelPolicyForNewWF))
-		activeClusterInfo, err := policy.activeClusterManager.GetActiveClusterInfoByClusterAttribute(ctx, domainEntry.GetInfo().ID, actClSelPolicyForNewWF.GetClusterAttribute())
+	if apiName == "SignalWithStartWorkflowExecution" {
+		existingActiveClusterSelectionPolicy, running, err := policy.activeClusterManager.GetActiveClusterSelectionPolicyForCurrentWorkflow(ctx, domainEntry.GetInfo().ID, workflowExecution.WorkflowID)
 		if err != nil {
-			policy.logger.Error("Failed to lookup active cluster of new workflow, using current cluster", tag.WorkflowDomainName(domainEntry.GetInfo().Name), tag.OperationName(apiName), tag.Error(err))
+			policy.logger.Error("Failed to get active cluster selection policy for current workflow, using current cluster", tag.WorkflowDomainName(domainEntry.GetInfo().Name), tag.OperationName(apiName), tag.Error(err))
 			return policy.currentClusterName
 		}
-		return activeClusterInfo.ActiveClusterName
+		// if current workflow is still running, use the policy for the current workflow
+		if running {
+			requestedActiveClusterSelectionPolicy = existingActiveClusterSelectionPolicy
+		}
+		return policy.activeClusterByClusterAttribute(ctx, domainEntry, requestedActiveClusterSelectionPolicy, apiName)
+	} else if apiName == "StartWorkflowExecution" {
+		return policy.activeClusterByClusterAttribute(ctx, domainEntry, requestedActiveClusterSelectionPolicy, apiName)
 	}
 
-	if workflowExecution == nil || workflowExecution.WorkflowID == "" || workflowExecution.RunID == "" {
-		policy.logger.Debug("Workflow execution is nil or workflow id or run id is empty, using current cluster", tag.WorkflowDomainName(domainEntry.GetInfo().Name), tag.OperationName(apiName))
+	if workflowExecution == nil || workflowExecution.WorkflowID == "" {
+		policy.logger.Debug("Workflow execution is nil or workflow id is empty, using current cluster", tag.WorkflowDomainName(domainEntry.GetInfo().Name), tag.OperationName(apiName))
 		return policy.currentClusterName
 	}
 
 	activeClusterInfo, err := policy.activeClusterManager.GetActiveClusterInfoByWorkflow(ctx, domainEntry.GetInfo().ID, workflowExecution.WorkflowID, workflowExecution.RunID)
 	if err != nil {
-		policy.logger.Error("Failed to lookup active cluster of workflow, using current cluster", tag.WorkflowDomainName(domainEntry.GetInfo().Name), tag.WorkflowID(workflowExecution.WorkflowID), tag.WorkflowRunID(workflowExecution.RunID), tag.OperationName(apiName), tag.Error(err))
+		policy.logger.Error("Failed to get active cluster of workflow, using current cluster", tag.WorkflowDomainName(domainEntry.GetInfo().Name), tag.WorkflowID(workflowExecution.WorkflowID), tag.WorkflowRunID(workflowExecution.RunID), tag.OperationName(apiName), tag.Error(err))
 		return policy.currentClusterName
 	}
 
-	policy.logger.Debug("Lookup workflow result for active-active domain request", tag.WorkflowDomainName(domainEntry.GetInfo().Name), tag.WorkflowID(workflowExecution.WorkflowID), tag.WorkflowRunID(workflowExecution.RunID), tag.OperationName(apiName), tag.ActiveClusterName(activeClusterInfo.ActiveClusterName))
+	policy.logger.Debug("Get active cluster info by workflow for active-active domain request", tag.WorkflowDomainName(domainEntry.GetInfo().Name), tag.WorkflowID(workflowExecution.WorkflowID), tag.WorkflowRunID(workflowExecution.RunID), tag.OperationName(apiName), tag.ActiveClusterName(activeClusterInfo.ActiveClusterName))
+	return activeClusterInfo.ActiveClusterName
+}
+
+func (policy *selectedOrAllAPIsForwardingRedirectionPolicy) activeClusterByClusterAttribute(ctx context.Context, domainEntry *cache.DomainCacheEntry, requestedActiveClusterSelectionPolicy *types.ActiveClusterSelectionPolicy, apiName string) string {
+	policy.logger.Debug("Active cluster selection policy by cluster attribute", tag.WorkflowDomainName(domainEntry.GetInfo().Name), tag.OperationName(apiName), tag.Dynamic("policy", requestedActiveClusterSelectionPolicy))
+	activeClusterInfo, err := policy.activeClusterManager.GetActiveClusterInfoByClusterAttribute(ctx, domainEntry.GetInfo().ID, requestedActiveClusterSelectionPolicy.GetClusterAttribute())
+	if err != nil {
+		policy.logger.Error("Failed to lookup active cluster by cluster attribute, using current cluster", tag.WorkflowDomainName(domainEntry.GetInfo().Name), tag.OperationName(apiName), tag.Error(err))
+		return policy.currentClusterName
+	}
 	return activeClusterInfo.ActiveClusterName
 }
