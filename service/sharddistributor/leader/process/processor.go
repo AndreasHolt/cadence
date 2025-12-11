@@ -412,7 +412,6 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		distributionChanged = true
 	}
 
-	distributionChanged := len(deletedShards) > 0 || len(staleExecutors) > 0 || assignedToEmptyExecutors || updatedAssignments
 	if !distributionChanged {
 		p.logger.Info("No changes to distribution detected. Skipping rebalance.")
 		return nil
