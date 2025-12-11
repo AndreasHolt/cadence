@@ -95,6 +95,11 @@ type (
 		// the executor is considered stale and its shards are eligible for redistribution.
 		// Default: 10 seconds
 		HeartbeatTTL time.Duration `yaml:"heartbeatTTL"`
+
+		// PerShardCooldown is the minimum time between moving the same shard and between
+		// consecutive load-only rebalances.
+		// Default: 1 minute
+		PerShardCooldown time.Duration `yaml:"perShardCooldown"`
 	}
 
 	// YamlNode is a lazy-unmarshaler, because *yaml.Node only exists in gopkg.in/yaml.v3, not v2,

@@ -632,6 +632,55 @@ type (
 		Type   string    `yaml:"type"`
 		Config *YamlNode `yaml:"config"`
 	}
+
+	// ShardDistribution is a configuration for leader election running.
+	// This configuration should be in sync with sharddistributor.
+	ShardDistribution struct {
+		LeaderStore Store         `yaml:"leaderStore"`
+		Election    Election      `yaml:"election"`
+		Namespaces  []Namespace   `yaml:"namespaces"`
+		Process     LeaderProcess `yaml:"process"`
+		Store       Store         `yaml:"store"`
+	}
+
+	// Store is a generic container for any storage configuration that should be parsed by the implementation.
+	Store struct {
+		StorageParams *YamlNode `yaml:"storageParams"`
+	}
+
+	Namespace struct {
+		Name string `yaml:"name"`
+		Type string `yaml:"type"`
+		Mode string `yaml:"mode"`
+		// ShardNum is defined for fixed namespace.
+		ShardNum int64 `yaml:"shardNum"`
+	}
+
+	Election struct {
+		LeaderPeriod           time.Duration `yaml:"leaderPeriod"`           // Time to hold leadership before resigning
+		MaxRandomDelay         time.Duration `yaml:"maxRandomDelay"`         // Maximum random delay before campaigning
+		FailedElectionCooldown time.Duration `yaml:"failedElectionCooldown"` // wait between election attempts with unhandled errors
+	}
+
+	LeaderProcess struct {
+		// Period is the maximum duration between shard rebalance operations
+		// Default: 1 second
+		Period time.Duration `yaml:"period"`
+
+		// Timeout is the maximum duration of a single shard rebalance operation
+		// Default: 1 second
+		Timeout time.Duration `yaml:"timeout"`
+
+		// HeartbeatTTL is the duration after which, if no heartbeat is received from an executor,
+		// the executor is considered stale and its shards are eligible for redistribution.
+		// Default: 10 seconds
+		HeartbeatTTL time.Duration `yaml:"heartbeatTTL"`
+
+		// PerShardCooldown is the minimum time between moving the same shard and between
+		// consecutive load-only rebalances.
+		// Default: 1 minute
+		PerShardCooldown time.Duration `yaml:"perShardCooldown"`
+	}
 )
 
 const (
