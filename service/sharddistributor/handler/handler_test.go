@@ -32,6 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/sharddistributor/config"
@@ -249,6 +250,7 @@ func TestGetShardOwner(t *testing.T) {
 				logger:               logger,
 				shardDistributionCfg: cfg,
 				storage:              mockStorage,
+				timeSource:           clock.NewRealTimeSource(),
 			}
 			if tt.setupMocks != nil {
 				tt.setupMocks(mockStorage)
@@ -289,6 +291,7 @@ func TestAssignEphemeralShard_PrefersLowerLoad(t *testing.T) {
 		logger:               logger,
 		shardDistributionCfg: cfg,
 		storage:              mockStorage,
+		timeSource:           clock.NewRealTimeSource(),
 	}
 
 	request := &types.GetShardOwnerRequest{
@@ -347,6 +350,7 @@ func TestWatchNamespaceState(t *testing.T) {
 		shardDistributionCfg: cfg,
 		storage:              mockStorage,
 		startWG:              sync.WaitGroup{},
+		timeSource:           clock.NewRealTimeSource(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
