@@ -598,6 +598,44 @@ func TestRebalanceShards_ShadowModeWithStaleExecutors(t *testing.T) {
 	})
 }
 
+// TestEmitRecentShardMoves verifies the churn gauge reports the number of shards moved recently.
+func TestEmitRecentShardMoves(t *testing.T) {
+	mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
+	defer mocks.ctrl.Finish()
+	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+	processor.cfg.LoadBalance.PerShardCooldown = time.Minute
+
+	now := processor.timeSource.Now().UTC()
+	namespaceState := &store.NamespaceState{
+		ShardStats: map[string]store.ShardStatistics{
+			"moved-recent-1": {LastMoveTime: now.Add(-30 * time.Second)},
+			"moved-recent-2": {LastMoveTime: now.Add(-59 * time.Second)},
+			"moved-old":      {LastMoveTime: now.Add(-2 * time.Minute)},
+			"never-moved":    {},
+		},
+	}
+
+	scope := &metricmocks.Scope{}
+	scope.On("UpdateGauge", metrics.ShardDistributorRecentShardMoves, 2.0).Once()
+
+	processor.emitRecentShardMoves(scope, namespaceState)
+	scope.AssertExpectations(t)
+}
+
+// TestEmitRecentShardMoves_EmptyState verifies the churn gauge emits 0 when no shard stats exist.
+func TestEmitRecentShardMoves_EmptyState(t *testing.T) {
+	mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
+	defer mocks.ctrl.Finish()
+	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+	processor.cfg.LoadBalance.PerShardCooldown = time.Minute
+
+	scope := &metricmocks.Scope{}
+	scope.On("UpdateGauge", metrics.ShardDistributorRecentShardMoves, 0.0).Once()
+
+	processor.emitRecentShardMoves(scope, &store.NamespaceState{ShardStats: nil})
+	scope.AssertExpectations(t)
+}
+
 func TestRebalanceShards_NoShardsToReassign(t *testing.T) {
 	mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
 	defer mocks.ctrl.Finish()
