@@ -464,13 +464,12 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	updatedAssignments := p.updateAssignments(shardsToReassign, activeExecutors, currentAssignments)
 	// structuralChange means we must reconcile for liveness/namespace-structure reasons.
 	// Cooldowns only gate load-only moves, while structural changes apply immediately.
-	structuralChange := len(deletedShards) > 0 || len(staleExecutors) > 0 || assignedToEmptyExecutors || updatedAssignments
-	loadBalanceChange, err := p.loadBalance(currentAssignments, namespaceState, deletedShards, structuralChange, metricsLoopScope)
+	loadBalanceChange, err := p.loadBalance(currentAssignments, namespaceState, deletedShards, metricsLoopScope)
 	if err != nil {
 		return fmt.Errorf("load balance: %w", err)
 	}
 
-	distributionChanged := structuralChange || loadBalanceChange
+	distributionChanged := assignedToEmptyExecutors || updatedAssignments || loadBalanceChange
 	if !distributionChanged {
 		p.logger.Info("No changes to distribution detected. Skipping rebalance.")
 		return nil
