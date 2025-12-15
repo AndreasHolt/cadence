@@ -14,6 +14,7 @@ import (
 	"github.com/uber/cadence/service/sharddistributor/canary/processorephemeral"
 	"github.com/uber/cadence/service/sharddistributor/canary/replay"
 	"github.com/uber/cadence/service/sharddistributor/canary/sharddistributorclient"
+	"github.com/uber/cadence/service/sharddistributor/canary/sharddistributorexecutorclient"
 	"github.com/uber/cadence/service/sharddistributor/client/executorclient"
 	"github.com/uber/cadence/service/sharddistributor/client/spectatorclient"
 )

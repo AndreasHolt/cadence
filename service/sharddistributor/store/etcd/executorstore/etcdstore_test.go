@@ -12,6 +12,7 @@ import (
 	"go.uber.org/fx/fxtest"
 	"gopkg.in/yaml.v2"
 
+	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/types"
@@ -708,11 +709,16 @@ func recordHeartbeats(ctx context.Context, t *testing.T, executorStore store.Sto
 
 func createStore(t *testing.T, tc *testhelper.StoreTestCluster) store.Store {
 	t.Helper()
+
+	etcdConfig, err := NewETCDConfig(tc.LeaderCfg)
+	require.NoError(t, err)
+
 	store, err := NewStore(ExecutorStoreParams{
-		Client:    tc.Client,
-		Cfg:       tc.LeaderCfg,
-		Lifecycle: fxtest.NewLifecycle(t),
-		Logger:    testlogger.New(t),
+		Client:     tc.Client,
+		Cfg:        etcdConfig,
+		Lifecycle:  fxtest.NewLifecycle(t),
+		Logger:     testlogger.New(t),
+		TimeSource: clock.NewRealTimeSource(),
 	})
 	require.NoError(t, err)
 	return store
