@@ -22,6 +22,7 @@ import (
 	"github.com/uber/cadence/service/sharddistributor/canary"
 	canaryConfig "github.com/uber/cadence/service/sharddistributor/canary/config"
 	"github.com/uber/cadence/service/sharddistributor/canary/executors"
+	"github.com/uber/cadence/service/sharddistributor/canary/replay"
 	"github.com/uber/cadence/service/sharddistributor/client/clientcommon"
 	"github.com/uber/cadence/service/sharddistributor/client/executorclient"
 	"github.com/uber/cadence/service/sharddistributor/client/spectatorclient"
@@ -36,6 +37,8 @@ const (
 	defaultEphemeralNamespace       = "shard-distributor-canary-ephemeral"
 	defaultCanaryGRPCPort           = 7953 // Port for canary to receive ping requests
 	defaultNumExecutors             = 1
+	defaultCanaryMetricsPort        = 9098
+	defaultReplayNamespace          = "shard-distributor-replay"
 
 	shardDistributorServiceName = "cadence-shard-distributor"
 )
@@ -45,6 +48,7 @@ func runApp(c *cli.Context) {
 	fixedNamespace := c.String("fixed-namespace")
 	ephemeralNamespace := c.String("ephemeral-namespace")
 	canaryGRPCPort := c.Int("canary-grpc-port")
+	canaryMetricsPort := c.Int("canary-metrics-port")
 
 	numFixedExecutors := c.Int("num-fixed-executors")
 	numEphemeralExecutors := c.Int("num-ephemeral-executors")
@@ -56,30 +60,50 @@ func runApp(c *cli.Context) {
 
 	}
 
-	fx.New(opts(fixedNamespace, ephemeralNamespace, endpoint, canaryGRPCPort, numFixedExecutors, numEphemeralExecutors)).Run()
+	replayOpts := replay.Options{
+		CSVPath:           c.String("replay-csv"),
+		Speed:             c.Float64("replay-speed"),
+		Namespace:         c.String("replay-namespace"),
+		NumFixedExecutors: c.Int("replay-num-fixed-executors"),
+	}
+
+	fx.New(opts(fixedNamespace, ephemeralNamespace, endpoint, canaryGRPCPort, numFixedExecutors, numEphemeralExecutors, canaryMetricsPort, replayOpts)).Run()
 }
 
-func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort int, numFixedExecutors, numEphemeral int) fx.Option {
+func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort int, numFixedExecutors, numEphemeral int, canaryMetricsPort int, replayOpts replay.Options) fx.Option {
+
 	logger, _ := zap.NewDevelopment()
 	cadenceLogger := log.NewLogger(logger)
 
 	metricsConfig := cadenceconfig.Metrics{
 		Prometheus: &prometheus.Configuration{
-			ListenAddress: "127.0.0.1:9098",
+			ListenAddress: fmt.Sprintf("127.0.0.1:%d", canaryMetricsPort),
 			TimerType:     "histogram",
 		},
 	}
 	metricsScope := metricsConfig.NewScope(cadenceLogger, "shard-distributor-canary")
 
-	configuration := clientcommon.Config{
-		Namespaces: []clientcommon.NamespaceConfig{
+	if replayOpts.Namespace == "" {
+		replayOpts.Namespace = defaultReplayNamespace
+	}
+	if replayOpts.NumFixedExecutors <= 0 {
+		replayOpts.NumFixedExecutors = 3
+	}
+
+	configuration := clientcommon.Config{}
+	if replayOpts.Enabled() {
+		configuration.Namespaces = []clientcommon.NamespaceConfig{
+			{Namespace: replayOpts.Namespace, HeartBeatInterval: 1 * time.Second, MigrationMode: sdconfig.MigrationModeONBOARDED},
+		}
+	} else {
+		configuration.Namespaces = []clientcommon.NamespaceConfig{
 			{Namespace: fixedNamespace, HeartBeatInterval: 1 * time.Second, MigrationMode: sdconfig.MigrationModeONBOARDED},
 			{Namespace: ephemeralNamespace, HeartBeatInterval: 1 * time.Second, MigrationMode: sdconfig.MigrationModeONBOARDED},
 			{Namespace: executors.LocalPassthroughNamespace, HeartBeatInterval: 1 * time.Second, MigrationMode: sdconfig.MigrationModeLOCALPASSTHROUGH},
 			{Namespace: executors.LocalPassthroughShadowNamespace, HeartBeatInterval: 1 * time.Second, MigrationMode: sdconfig.MigrationModeLOCALPASSTHROUGHSHADOW},
 			{Namespace: executors.DistributedPassthroughNamespace, HeartBeatInterval: 1 * time.Second, MigrationMode: sdconfig.MigrationModeDISTRIBUTEDPASSTHROUGH},
 			{Namespace: executors.ExternalAssignmentNamespace, HeartBeatInterval: 1 * time.Second, MigrationMode: sdconfig.MigrationModeDISTRIBUTEDPASSTHROUGH},
-		},
+		}
 	}
 
 	canaryGRPCAddress := fmt.Sprintf("127.0.0.1:%d", canaryGRPCPort)
@@ -96,7 +120,7 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 		clientcommon.GrpcAddressMetadataKey: canaryGRPCAddress,
 	}
 
-	return fx.Options(
+	options := []fx.Option{
 		fx.Supply(
 			fx.Annotate(metricsScope, fx.As(new(tally.Scope))),
 			fx.Annotate(clock.NewRealTimeSource(), fx.As(new(clock.TimeSource))),
@@ -104,9 +128,27 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 			transport,
 			executorMetadata,
 			logger,
+			replayOpts,
 		),
+	}
 
-		fx.Provide(func(peerChooser spectatorclient.SpectatorPeerChooserInterface) yarpc.Config {
+	if replayOpts.Enabled() {
+		options = append(options, fx.Provide(func() yarpc.Config {
+			return yarpc.Config{
+				Name: "shard-distributor-canary",
+				Inbounds: yarpc.Inbounds{
+					transport.NewInbound(listener), // Listen for incoming ping requests
+				},
+				Outbounds: yarpc.Outbounds{
+					shardDistributorServiceName: {
+						Unary:  transport.NewSingleOutbound(endpoint),
+						Stream: transport.NewSingleOutbound(endpoint),
+					},
+				},
+			}
+		}))
+	} else {
+		options = append(options, fx.Provide(func(peerChooser spectatorclient.SpectatorPeerChooserInterface) yarpc.Config {
 			return yarpc.Config{
 				Name: "shard-distributor-canary",
 				Inbounds: yarpc.Inbounds{
@@ -124,8 +166,10 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 					},
 				},
 			}
-		}),
+		}))
+	}
 
+	options = append(options,
 		fx.Provide(
 			func(t *grpc.Transport) peer.Transport { return t },
 		),
@@ -167,7 +211,18 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 				},
 			},
 		}),
+		canary.ModuleWithReplay(
+			canary.NamespacesNames{
+				FixedNamespace:              fixedNamespace,
+				EphemeralNamespace:          ephemeralNamespace,
+				ExternalAssignmentNamespace: executors.ExternalAssignmentNamespace,
+				SharddistributorServiceName: shardDistributorServiceName,
+			},
+			replayOpts,
+		),
 	)
+
+	return fx.Options(options...)
 }
 
 func buildCLI() *cli.App {
@@ -216,6 +271,28 @@ func buildCLI() *cli.App {
 					Name:  "num-ephemeral-executors",
 					Value: defaultNumExecutors,
 					Usage: "number of executors of ephemeral namespace to start. Don't use with num-executors",
+					Name:  "canary-metrics-port",
+					Value: defaultCanaryMetricsPort,
+					Usage: "port for canary Prometheus metrics",
+				},
+				&cli.StringFlag{
+					Name:  "replay-csv",
+					Usage: "enable CSV load replay (path to CSV: timestamp,load0,...,loadN-1)",
+				},
+				&cli.StringFlag{
+					Name:  "replay-namespace",
+					Value: defaultReplayNamespace,
+					Usage: "fixed namespace used for CSV replay",
+				},
+				&cli.IntFlag{
+					Name:  "replay-num-fixed-executors",
+					Value: 3,
+					Usage: "number of fixed-namespace executors to run in-process during replay",
+				},
+				&cli.Float64Flag{
+					Name:  "replay-speed",
+					Value: 1.0,
+					Usage: "CSV replay speed multiplier (timestamp-following mode)",
 				},
 			},
 			Action: func(c *cli.Context) error {

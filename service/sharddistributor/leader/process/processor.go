@@ -50,6 +50,15 @@ const (
 	_defaultHeartbeatTTL = 10 * time.Second
 	_defaultTimeout      = 1 * time.Second
 	_defaultCooldown     = 250 * time.Millisecond
+	// Default cooldown between moving the same shard / applying consecutive moves.
+	_defaultPerShardCooldown = time.Minute
+	// Default fraction of total shards that may be moved per load-balance pass.
+	_defaultMoveBudgetProportion = 0.02
+	// Default hysteresis bands around mean load.
+	_defaultHysteresisUpperBand = 1.1
+	_defaultHysteresisLowerBand = 0.9
+	// Default threshold for triggering severe-imbalance escape hatch.
+	_defaultSevereImbalanceRatio = 1.5
 )
 
 type processorFactory struct {
