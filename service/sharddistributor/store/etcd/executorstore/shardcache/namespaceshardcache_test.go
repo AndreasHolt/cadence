@@ -530,6 +530,8 @@ func TestNamespaceShardToExecutor_ExecutorStatistics(t *testing.T) {
 	shardID1 := "shard-stats-1"
 	shardID2 := "shard-stats-2"
 
+	now := time.Now().UTC()
+
 	initialStats := map[string]etcdtypes.ShardStatistics{
 		shardID1: {SmoothedLoad: 10.0, LastUpdateTime: etcdtypes.Time(mockTime.Now().UTC().Add(-time.Hour)), LastMoveTime: etcdtypes.Time(mockTime.Now().UTC().Add(-2 * time.Hour))},
 		shardID2: {SmoothedLoad: 20.0, LastUpdateTime: etcdtypes.Time(mockTime.Now().UTC().Add(-30 * time.Minute)), LastMoveTime: etcdtypes.Time(mockTime.Now().UTC().Add(-90 * time.Minute))},
