@@ -192,15 +192,6 @@ func computeExecutorLoads(currentAssignments map[string][]string, namespaceState
 	return loads, total
 }
 
-// shouldSkipLoadBalanceDueToCooldown implements a cooldown for load-only balancing:
-// if any shard moved recently (latestMoveTime within the cooldown window), skip this pass to reduce churn.
-func shouldSkipLoadBalanceDueToCooldown(structuralChange bool, cooldown time.Duration, now time.Time, latestMoveTime time.Time) bool {
-	return !structuralChange &&
-		cooldown > 0 &&
-		!latestMoveTime.IsZero() &&
-		now.Sub(latestMoveTime) < cooldown
-}
-
 // classifySourcesAndDestinations returns the source and destination executor sets for rebalancing.
 func classifySourcesAndDestinations(
 	executorLoads map[string]float64,

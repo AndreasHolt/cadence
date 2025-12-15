@@ -2993,8 +2993,6 @@ const (
 	ShardDistributorStoreRequestsPerNamespace
 	ShardDistributorStoreLatencyHistogramPerNamespace
 
-	// ShardDistributorLoadBalanceGlobalCooldownSkips counts load-only balancing passes skipped due to cooldown.
-	ShardDistributorLoadBalanceGlobalCooldownSkips
 	// ShardDistributorLoadBalanceMovesPerCycle reports number of shards moved in a single load-balance pass.
 	ShardDistributorLoadBalanceMovesPerCycle
 
