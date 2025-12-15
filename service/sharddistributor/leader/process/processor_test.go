@@ -598,12 +598,11 @@ func TestRebalanceShards_ShadowModeWithStaleExecutors(t *testing.T) {
 	})
 }
 
-// TestEmitRecentShardMoves verifies the churn gauge reports the number of shards moved recently.
-func TestEmitRecentShardMoves(t *testing.T) {
+// TestEmitShardMovesLastMinute verifies the churn gauge reports how many shards were moved in the last minute.
+func TestEmitShardMovesLastMinute(t *testing.T) {
 	mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
 	defer mocks.ctrl.Finish()
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
-	processor.cfg.LoadBalance.PerShardCooldown = time.Minute
 
 	now := processor.timeSource.Now().UTC()
 	namespaceState := &store.NamespaceState{
@@ -616,23 +615,22 @@ func TestEmitRecentShardMoves(t *testing.T) {
 	}
 
 	scope := &metricmocks.Scope{}
-	scope.On("UpdateGauge", metrics.ShardDistributorRecentShardMoves, 2.0).Once()
+	scope.On("UpdateGauge", metrics.ShardDistributorShardMovesLastMinute, 2.0).Once()
 
-	processor.emitRecentShardMoves(scope, namespaceState)
+	processor.emitShardMovesLastMinute(scope, namespaceState)
 	scope.AssertExpectations(t)
 }
 
-// TestEmitRecentShardMoves_EmptyState verifies the churn gauge emits 0 when no shard stats exist.
-func TestEmitRecentShardMoves_EmptyState(t *testing.T) {
+// TestEmitShardMovesLastMinute_EmptyState verifies the churn gauge emits 0 when no shard stats exist.
+func TestEmitShardMovesLastMinute_EmptyState(t *testing.T) {
 	mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
 	defer mocks.ctrl.Finish()
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
-	processor.cfg.LoadBalance.PerShardCooldown = time.Minute
 
 	scope := &metricmocks.Scope{}
-	scope.On("UpdateGauge", metrics.ShardDistributorRecentShardMoves, 0.0).Once()
+	scope.On("UpdateGauge", metrics.ShardDistributorShardMovesLastMinute, 0.0).Once()
 
-	processor.emitRecentShardMoves(scope, &store.NamespaceState{ShardStats: nil})
+	processor.emitShardMovesLastMinute(scope, &store.NamespaceState{ShardStats: nil})
 	scope.AssertExpectations(t)
 }
 
