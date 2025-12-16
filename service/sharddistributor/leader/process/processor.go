@@ -460,9 +460,9 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		return nil
 	}
 	deletedShards := p.findDeletedShards(namespaceState)
-	shardsToReassign, currentAssignments := p.findShardsToReassign(activeExecutors, namespaceState, deletedShards, staleExecutors)
+	shardsNeedingReassignment, currentAssignments := p.findShardsNeedingReassignment(activeExecutors, namespaceState, deletedShards, staleExecutors)
 
-	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignLoopNumRebalancedShards, float64(len(shardsToReassign)))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignLoopNumRebalancedShards, float64(len(shardsNeedingReassignment)))
 
 	// If there are deleted shards or stale executors, the distribution has changed.
 	assignedToEmptyExecutors := assignShardsToEmptyExecutors(currentAssignments)
@@ -475,7 +475,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		return fmt.Errorf("load balance: %w", err)
 	}
 
-	distributionChanged := assignedToEmptyExecutors || updatedAssignments || loadBalanceChange
+	distributionChanged := len(deletedShards) > 0 || len(staleExecutors) > 0 || didAssignToEmpty || didAssignShardsNeedingReassignment || didLoadBalance
 	if !distributionChanged {
 		p.logger.Info("No changes to distribution detected. Skipping rebalance.")
 		return nil
@@ -561,7 +561,7 @@ func (p *namespaceProcessor) findDeletedShards(namespaceState *store.NamespaceSt
 	return deletedShards
 }
 
-func (p *namespaceProcessor) findShardsToReassign(
+func (p *namespaceProcessor) findShardsNeedingReassignment(
 	activeExecutors []string,
 	namespaceState *store.NamespaceState,
 	deletedShards map[string]store.ShardState,
@@ -572,7 +572,7 @@ func (p *namespaceProcessor) findShardsToReassign(
 		allShards[shardID] = struct{}{}
 	}
 
-	shardsToReassign := make([]string, 0)
+	shardsNeedingReassignment := make([]string, 0)
 	currentAssignments := make(map[string][]string)
 
 	for _, executorID := range activeExecutors {
@@ -591,25 +591,25 @@ func (p *namespaceProcessor) findShardsToReassign(
 					currentAssignments[executorID] = append(currentAssignments[executorID], shardID)
 				} else {
 					// Otherwise, reassign the shard (executor is either inactive or stale)
-					shardsToReassign = append(shardsToReassign, shardID)
+					shardsNeedingReassignment = append(shardsNeedingReassignment, shardID)
 				}
 			}
 		}
 	}
 
 	for shardID := range allShards {
-		shardsToReassign = append(shardsToReassign, shardID)
+		shardsNeedingReassignment = append(shardsNeedingReassignment, shardID)
 	}
-	return shardsToReassign, currentAssignments
+	return shardsNeedingReassignment, currentAssignments
 }
 
-func (*namespaceProcessor) updateAssignments(shardsToReassign []string, activeExecutors []string, currentAssignments map[string][]string) (distributionChanged bool) {
-	if len(shardsToReassign) == 0 {
+func (*namespaceProcessor) assignShardsNeedingReassignment(shardsNeedingReassignment []string, activeExecutors []string, currentAssignments map[string][]string) bool {
+	if len(shardsNeedingReassignment) == 0 {
 		return false
 	}
 
 	i := rand.Intn(len(activeExecutors))
-	for _, shardID := range shardsToReassign {
+	for _, shardID := range shardsNeedingReassignment {
 		executorID := activeExecutors[i%len(activeExecutors)]
 		currentAssignments[executorID] = append(currentAssignments[executorID], shardID)
 		i++
