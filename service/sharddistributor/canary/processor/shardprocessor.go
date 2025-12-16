@@ -11,7 +11,6 @@ import (
 
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/types"
-	"github.com/uber/cadence/service/sharddistributor/canary/replay"
 	"github.com/uber/cadence/service/sharddistributor/client/executorclient"
 )
 
@@ -34,15 +33,6 @@ func NewShardProcessor(shardID string, timeSource clock.TimeSource, logger *zap.
 	return p
 }
 
-// NewShardProcessorConstructor returns a shard processor constructor that reports replayed shard loads.
-func NewShardProcessorConstructor(loadProvider replay.LoadProvider) func(string, clock.TimeSource, *zap.Logger) *ShardProcessor {
-	return func(shardID string, timeSource clock.TimeSource, logger *zap.Logger) *ShardProcessor {
-		p := NewShardProcessor(shardID, timeSource, logger)
-		p.loadProvider = loadProvider
-		return p
-	}
-}
-
 // ShardProcessor is a processor for a shard.
 type ShardProcessor struct {
 	shardID      string
@@ -61,14 +51,6 @@ var _ executorclient.ShardProcessor = (*ShardProcessor)(nil)
 
 // GetShardReport implements executorclient.ShardProcessor.
 func (p *ShardProcessor) GetShardReport() executorclient.ShardReport {
-	load := 1.0
-	if p.loadProvider != nil {
-		if v, ok := p.loadProvider.LoadForShard(p.shardID); ok {
-			load = v
-		} else {
-			load = 0
-		}
-	}
 	return executorclient.ShardReport{
 		ShardLoad: load,                               // We return a load from shardID
 		Status:    types.ShardStatus(p.status.Load()), // Report the shard as ready since it's actively processing

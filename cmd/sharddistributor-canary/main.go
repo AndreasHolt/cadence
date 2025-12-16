@@ -22,7 +22,6 @@ import (
 	"github.com/uber/cadence/service/sharddistributor/canary"
 	canaryConfig "github.com/uber/cadence/service/sharddistributor/canary/config"
 	"github.com/uber/cadence/service/sharddistributor/canary/executors"
-	"github.com/uber/cadence/service/sharddistributor/canary/replay"
 	"github.com/uber/cadence/service/sharddistributor/client/clientcommon"
 	"github.com/uber/cadence/service/sharddistributor/client/executorclient"
 	"github.com/uber/cadence/service/sharddistributor/client/spectatorclient"
@@ -48,7 +47,6 @@ func runApp(c *cli.Context) {
 	fixedNamespace := c.String("fixed-namespace")
 	ephemeralNamespace := c.String("ephemeral-namespace")
 	canaryGRPCPort := c.Int("canary-grpc-port")
-	canaryMetricsPort := c.Int("canary-metrics-port")
 
 	numFixedExecutors := c.Int("num-fixed-executors")
 	numEphemeralExecutors := c.Int("num-ephemeral-executors")
@@ -77,33 +75,21 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 
 	metricsConfig := cadenceconfig.Metrics{
 		Prometheus: &prometheus.Configuration{
-			ListenAddress: fmt.Sprintf("127.0.0.1:%d", canaryMetricsPort),
+			ListenAddress: "127.0.0.1:9098",
 			TimerType:     "histogram",
 		},
 	}
 	metricsScope := metricsConfig.NewScope(cadenceLogger, "shard-distributor-canary")
 
-	if replayOpts.Namespace == "" {
-		replayOpts.Namespace = defaultReplayNamespace
-	}
-	if replayOpts.NumFixedExecutors <= 0 {
-		replayOpts.NumFixedExecutors = 3
-	}
-
-	configuration := clientcommon.Config{}
-	if replayOpts.Enabled() {
-		configuration.Namespaces = []clientcommon.NamespaceConfig{
-			{Namespace: replayOpts.Namespace, HeartBeatInterval: 1 * time.Second, MigrationMode: sdconfig.MigrationModeONBOARDED},
-		}
-	} else {
-		configuration.Namespaces = []clientcommon.NamespaceConfig{
+	configuration := clientcommon.Config{
+		Namespaces: []clientcommon.NamespaceConfig{
 			{Namespace: fixedNamespace, HeartBeatInterval: 1 * time.Second, MigrationMode: sdconfig.MigrationModeONBOARDED},
 			{Namespace: ephemeralNamespace, HeartBeatInterval: 1 * time.Second, MigrationMode: sdconfig.MigrationModeONBOARDED},
 			{Namespace: executors.LocalPassthroughNamespace, HeartBeatInterval: 1 * time.Second, MigrationMode: sdconfig.MigrationModeLOCALPASSTHROUGH},
 			{Namespace: executors.LocalPassthroughShadowNamespace, HeartBeatInterval: 1 * time.Second, MigrationMode: sdconfig.MigrationModeLOCALPASSTHROUGHSHADOW},
 			{Namespace: executors.DistributedPassthroughNamespace, HeartBeatInterval: 1 * time.Second, MigrationMode: sdconfig.MigrationModeDISTRIBUTEDPASSTHROUGH},
 			{Namespace: executors.ExternalAssignmentNamespace, HeartBeatInterval: 1 * time.Second, MigrationMode: sdconfig.MigrationModeDISTRIBUTEDPASSTHROUGH},
-		}
+		},
 	}
 
 	canaryGRPCAddress := fmt.Sprintf("127.0.0.1:%d", canaryGRPCPort)
@@ -120,7 +106,7 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 		clientcommon.GrpcAddressMetadataKey: canaryGRPCAddress,
 	}
 
-	options := []fx.Option{
+	return fx.Options(
 		fx.Supply(
 			fx.Annotate(metricsScope, fx.As(new(tally.Scope))),
 			fx.Annotate(clock.NewRealTimeSource(), fx.As(new(clock.TimeSource))),
@@ -128,27 +114,9 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 			transport,
 			executorMetadata,
 			logger,
-			replayOpts,
 		),
-	}
 
-	if replayOpts.Enabled() {
-		options = append(options, fx.Provide(func() yarpc.Config {
-			return yarpc.Config{
-				Name: "shard-distributor-canary",
-				Inbounds: yarpc.Inbounds{
-					transport.NewInbound(listener), // Listen for incoming ping requests
-				},
-				Outbounds: yarpc.Outbounds{
-					shardDistributorServiceName: {
-						Unary:  transport.NewSingleOutbound(endpoint),
-						Stream: transport.NewSingleOutbound(endpoint),
-					},
-				},
-			}
-		}))
-	} else {
-		options = append(options, fx.Provide(func(peerChooser spectatorclient.SpectatorPeerChooserInterface) yarpc.Config {
+		fx.Provide(func(peerChooser spectatorclient.SpectatorPeerChooserInterface) yarpc.Config {
 			return yarpc.Config{
 				Name: "shard-distributor-canary",
 				Inbounds: yarpc.Inbounds{
@@ -166,10 +134,8 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 					},
 				},
 			}
-		}))
-	}
+		}),
 
-	options = append(options,
 		fx.Provide(
 			func(t *grpc.Transport) peer.Transport { return t },
 		),
@@ -221,8 +187,6 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 			replayOpts,
 		),
 	)
-
-	return fx.Options(options...)
 }
 
 func buildCLI() *cli.App {
