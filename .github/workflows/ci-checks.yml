@@ -475,7 +475,7 @@ jobs:
             docker compose -f docker/github_actions/docker-compose.yml run integration-test-async-wf bash -c "make .just-build && go test -timeout 60s -run ^TestAsyncWFIntegrationSuite -tags asyncwfintegration -count 1 -v github.com/uber/cadence/host"
 
   golang-integration-test-with-etcd:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'push'
     name: Golang integration test with etcd
     runs-on: ubuntu-latest
 
