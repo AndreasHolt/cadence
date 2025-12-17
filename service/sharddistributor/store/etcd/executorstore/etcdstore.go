@@ -500,11 +500,15 @@ func (s *executorStoreImpl) AssignShard(ctx context.Context, namespace, shardID,
 			state.AssignedShards = make(map[string]*types.ShardAssignment)
 		}
 
+		if _, alreadyAssigned := state.AssignedShards[shardID]; alreadyAssigned {
+			return &store.ErrShardAlreadyAssigned{ShardID: shardID, AssignedTo: executorID}
+		}
+
 		statsResp, err := s.client.Get(ctx, executorStatsKey)
 		if err != nil {
 			return fmt.Errorf("get shard statistics: %w", err)
 		}
-
+		
 		now := s.timeSource.Now().UTC()
 		executorShardStats := make(map[string]etcdtypes.ShardStatistics)
 		if len(statsResp.Kvs) > 0 {
@@ -540,10 +544,8 @@ func (s *executorStoreImpl) AssignShard(ctx context.Context, namespace, shardID,
 		}
 		statusModRev := statusResp.Kvs[0].ModRevision
 
-		// 3. Modify the state in memory, adding the new shard if it's not already there.
-		if _, alreadyAssigned := state.AssignedShards[shardID]; !alreadyAssigned {
-			state.AssignedShards[shardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
-		}
+		// 3. Modify the state in memory, adding the new shard.
+		state.AssignedShards[shardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
 
 		// Compress new state value
 		newStateValue, err := json.Marshal(state)
