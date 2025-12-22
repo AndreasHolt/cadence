@@ -2990,6 +2990,21 @@ const (
 	ShardDistributorActiveExecutors
 	// ShardDistributorAssignmentLoadCV measures coefficient of variation across executor loads
 	ShardDistributorAssignmentLoadCV
+	// ShardDistributorAssignmentLoadMaxOverMean measures max/mean across executor loads
+	ShardDistributorAssignmentLoadMaxOverMean
+	// ShardDistributorAssignmentSmoothedLoadMaxOverMean measures max/mean across executor smoothed loads
+	ShardDistributorAssignmentSmoothedLoadMaxOverMean
+	// ShardDistributorAssignmentSmoothedLoadCV measures coefficient of variation across executor smoothed loads
+	ShardDistributorAssignmentSmoothedLoadCV
+	// ShardDistributorAssignmentReportedLoadMissingRatio measures the fraction of assigned shards that have no
+	// per-shard load report on the currently assigned executor.
+	ShardDistributorAssignmentReportedLoadMissingRatio
+	// ShardDistributorAssignmentSmoothedLoadMissingRatio measures the fraction of assigned shards that are missing
+	// smoothed load statistics (ShardStats entry absent or no update time).
+	ShardDistributorAssignmentSmoothedLoadMissingRatio
+	// ShardDistributorAssignmentSmoothedLoadStaleRatio measures the fraction of assigned shards whose smoothed load
+	// statistics are stale relative to the leader's staleness threshold.
+	ShardDistributorAssignmentSmoothedLoadStaleRatio
 
 	ShardDistributorStoreExecutorNotFound
 	ShardDistributorStoreFailuresPerNamespace
@@ -3801,11 +3816,26 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		ShardDistributorAssignLoopSuccess:               {metricName: "shard_distrubutor_shard_assign_success", metricType: Counter},
 		ShardDistributorAssignLoopFail:                  {metricName: "shard_distrubutor_shard_assign_fail", metricType: Counter},
 
-		ShardDistributorActiveShards:               {metricName: "shard_distributor_active_shards", metricType: Gauge},
-		ShardDistributorTotalExecutors:             {metricName: "shard_distributor_total_executors", metricType: Gauge},
-		ShardDistributorOldestExecutorHeartbeatLag: {metricName: "shard_distributor_oldest_executor_heartbeat_lag", metricType: Gauge},
-		ShardDistributorAssignmentLoadCV:           {metricName: "shard_distributor_assignment_load_cv", metricType: Gauge},
-		ShardDistributorActiveExecutors:            {metricName: "shard_distributor_active_executors", metricType: Gauge},
+		ShardDistributorActiveShards:                      {metricName: "shard_distributor_active_shards", metricType: Gauge},
+		ShardDistributorTotalExecutors:                    {metricName: "shard_distributor_total_executors", metricType: Gauge},
+		ShardDistributorOldestExecutorHeartbeatLag:        {metricName: "shard_distributor_oldest_executor_heartbeat_lag", metricType: Gauge},
+		ShardDistributorAssignmentLoadCV:                  {metricName: "shard_distributor_assignment_load_cv", metricType: Gauge},
+		ShardDistributorActiveExecutors:                   {metricName: "shard_distributor_active_executors", metricType: Gauge},
+		ShardDistributorAssignmentLoadMaxOverMean:         {metricName: "shard_distributor_assignment_load_max_over_mean", metricType: Gauge},
+		ShardDistributorAssignmentSmoothedLoadMaxOverMean: {metricName: "shard_distributor_assignment_smoothed_load_max_over_mean", metricType: Gauge},
+		ShardDistributorAssignmentSmoothedLoadCV:          {metricName: "shard_distributor_assignment_smoothed_load_cv", metricType: Gauge},
+		ShardDistributorAssignmentReportedLoadMissingRatio: {
+			metricName: "shard_distributor_assignment_reported_load_missing_ratio",
+			metricType: Gauge,
+		},
+		ShardDistributorAssignmentSmoothedLoadMissingRatio: {
+			metricName: "shard_distributor_assignment_smoothed_load_missing_ratio",
+			metricType: Gauge,
+		},
+		ShardDistributorAssignmentSmoothedLoadStaleRatio: {
+			metricName: "shard_distributor_assignment_smoothed_load_stale_ratio",
+			metricType: Gauge,
+		},
 
 		ShardDistributorStoreExecutorNotFound:             {metricName: "shard_distributor_store_executor_not_found", metricType: Counter},
 		ShardDistributorStoreFailuresPerNamespace:         {metricName: "shard_distributor_store_failures_per_namespace", metricType: Counter},

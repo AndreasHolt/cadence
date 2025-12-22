@@ -892,6 +892,66 @@ func (p *namespaceProcessor) emitShardMovesLastMinute(
 		return
 	}
 
+	now := p.timeSource.Now().UTC()
+	staleAfter := p.cfg.HeartbeatTTL
+
+	reportedLoads := make([]float64, 0, len(assignments))
+	smoothedLoads := make([]float64, 0, len(assignments))
+
+	totalAssigned := 0
+	reportedMissing := 0
+	smoothedMissing := 0
+	smoothedStale := 0
+
+	for executorID, shards := range assignments {
+		reportedLoad := 0.0
+		smoothedLoad := 0.0
+
+		heartbeat, heartbeatOK := namespaceState.Executors[executorID]
+		for _, shardID := range shards {
+			totalAssigned++
+
+			// Reported load (from current executor heartbeat), primarily used as an operator-facing signal.
+			if !heartbeatOK || heartbeat.ReportedShards == nil {
+				reportedMissing++
+			} else if shardReport, ok := heartbeat.ReportedShards[shardID]; ok && shardReport != nil {
+				reportedLoad += shardReport.ShardLoad
+			} else {
+				reportedMissing++
+			}
+
+			// Smoothed load (EWMA), used by the control loop for load balancing decisions.
+			if namespaceState.ShardStats == nil {
+				smoothedMissing++
+				continue
+			}
+			stats, ok := namespaceState.ShardStats[shardID]
+			if !ok || stats.LastUpdateTime.IsZero() {
+				smoothedMissing++
+				continue
+			}
+			if staleAfter > 0 && now.Sub(stats.LastUpdateTime) > staleAfter {
+				smoothedStale++
+			}
+			smoothedLoad += stats.SmoothedLoad
+		}
+
+		reportedLoads = append(reportedLoads, reportedLoad)
+		smoothedLoads = append(smoothedLoads, smoothedLoad)
+	}
+
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentLoadMaxOverMean, maxOverMean(reportedLoads))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentLoadCV, coefficientOfVariation(reportedLoads))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadMaxOverMean, maxOverMean(smoothedLoads))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadCV, coefficientOfVariation(smoothedLoads))
+
+	if totalAssigned == 0 {
+		metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentReportedLoadMissingRatio, 0)
+		metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadMissingRatio, 0)
+		metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadStaleRatio, 0)
+		return
+	}
+
 	window := time.Minute
 	now := p.timeSource.Now().UTC()
 	recentMoves := 0
@@ -952,6 +1012,30 @@ func coefficientOfVariation(values []float64) float64 {
 	if variance == 0 {
 		return 0
 	}
+
+	return math.Sqrt(variance) / mean
+}
+
+func coefficientOfVariation(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	total := 0.0
+	for _, value := range values {
+		total += value
+	}
+	mean := total / float64(len(values))
+	if mean == 0 {
+		return 0
+	}
+
+	variance := 0.0
+	for _, value := range values {
+		delta := value - mean
+		variance += delta * delta
+	}
+	variance /= float64(len(values))
 
 	return math.Sqrt(variance) / mean
 }
