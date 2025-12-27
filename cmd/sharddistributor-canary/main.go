@@ -64,7 +64,7 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 
 	metricsConfig := cadenceconfig.Metrics{
 		Prometheus: &prometheus.Configuration{
-			ListenAddress: fmt.Sprintf("127.0.0.1:%d", canaryMetricsPort),
+			ListenAddress: fmt.Sprintf("0.0.0.0:%d", canaryMetricsPort),
 			TimerType:     "histogram",
 		},
 	}
