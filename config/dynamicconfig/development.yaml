@@ -79,6 +79,8 @@ frontend.enableActiveClusterSelectionPolicyInStartWorkflow:
 - value: true
 shardDistributor.migrationMode:
   - value: "onboarded"
+    constraints:
+      namespace: "shard-distributor-replay"
   - value: "local_pass"
     constraints:
       namespace: "test-local-passthrough"
