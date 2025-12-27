@@ -14,9 +14,10 @@ CADENCE_LOG="${CADENCE_LOG:-$RUN_DIR/cadence-server.prometheus.log}"
 CADENCE_PIDFILE="$RUN_DIR/cadence-server.prometheus.pid"
 
 CANARY_ENDPOINT="${CANARY_ENDPOINT:-127.0.0.1:7943}"
-CANARY_CSV="${CANARY_CSV:-$ROOT_DIR/tasklist1000_fixed.csv}"
+CANARY_CSV="${CANARY_CSV:-$ROOT_DIR/combined_4x.csv}"
 CANARY_NAMESPACE="${CANARY_NAMESPACE:-shard-distributor-replay}"
-CANARY_EXECUTORS="${CANARY_EXECUTORS:-9}"
+CANARY_EXECUTORS="${CANARY_EXECUTORS:-3}"
+CANARY_REPLAY_SPEED="${CANARY_REPLAY_SPEED:-1.0}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"; }
@@ -115,7 +116,8 @@ start_canary_foreground() {
     --endpoint "$CANARY_ENDPOINT" \
     --replay-csv "$CANARY_CSV" \
     --replay-namespace "$CANARY_NAMESPACE" \
-    --replay-num-fixed-executors "$CANARY_EXECUTORS"
+    --replay-num-fixed-executors "$CANARY_EXECUTORS" \
+    --replay-speed "$CANARY_REPLAY_SPEED"
 }
 
 cmd="${1:-start}"

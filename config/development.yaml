@@ -194,9 +194,9 @@ shardDistribution:
     loadBalance:
       disableBenefitGating: false
       severeImbalanceRatio: 1.3
-      moveBudgetProportion: 0.05
-      hysteresisUpperBand: 1.1
-      hysteresisLowerBand: 0.95
+      moveBudgetProportion: 0.01
+      hysteresisUpperBand: 1.15
+      hysteresisLowerBand: 0.90
 
 shard-distributor-matching:
   namespaces:
@@ -205,4 +205,3 @@ shard-distributor-matching:
       migration_mode: local_pass
       ttl_shard: 5m
       ttl_report: 1m
-
