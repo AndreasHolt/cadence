@@ -17,6 +17,12 @@ def parse_args():
     )
     parser.add_argument("--format", default="png", help="Output format (png/pdf)")
     parser.add_argument("--title", help="Optional title prefix for figures")
+    parser.add_argument(
+        "--x-axis",
+        choices=("elapsed", "timestamp"),
+        default="elapsed",
+        help="X-axis mode (elapsed minutes since start or timestamps)",
+    )
     return parser.parse_args()
 
 
@@ -43,18 +49,28 @@ def load_series(path):
     return rows
 
 
-def split_xy(series):
+def split_xy(series, base_time, x_axis):
     if not series:
         return [], []
     xs, ys = zip(*series)
-    return list(xs), list(ys)
+    if x_axis == "timestamp":
+        return list(xs), list(ys)
+    # elapsed minutes since base time
+    return [((x - base_time).total_seconds() / 60.0) for x in xs], list(ys)
+
+
+def base_time_for(series_list):
+    times = [s[0][0] for s in series_list if s]
+    if not times:
+        return None
+    return min(times)
 
 
 def ensure_out_dir(path):
     os.makedirs(path, exist_ok=True)
 
 
-def plot_imbalance(run_dir, out_dir, fmt, title_prefix):
+def plot_imbalance(run_dir, out_dir, fmt, title_prefix, x_axis):
     smoothed_mm = load_series(os.path.join(run_dir, "smoothed_max_over_mean.csv"))
     reported_mm = load_series(os.path.join(run_dir, "reported_max_over_mean.csv"))
     smoothed_cv = load_series(os.path.join(run_dir, "smoothed_cv.csv"))
@@ -71,12 +87,16 @@ def plot_imbalance(run_dir, out_dir, fmt, title_prefix):
         sys.exit(1)
 
     fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+    base_time = base_time_for([smoothed_mm, reported_mm, smoothed_cv, reported_cv])
+    if base_time is None:
+        print("warn: empty series for imbalance plot", file=sys.stderr)
+        return
 
     for series, label, color in [
         (smoothed_mm, "smoothed", "#2ca02c"),
         (reported_mm, "reported", "#f2c84b"),
     ]:
-        xs, ys = split_xy(series)
+        xs, ys = split_xy(series, base_time, x_axis)
         if xs:
             axes[0].plot(xs, ys, label=label, color=color, linewidth=1.5)
     axes[0].set_title("Imbalance (Max/Mean)")
@@ -87,12 +107,13 @@ def plot_imbalance(run_dir, out_dir, fmt, title_prefix):
         (smoothed_cv, "smoothed", "#2ca02c"),
         (reported_cv, "reported", "#f2c84b"),
     ]:
-        xs, ys = split_xy(series)
+        xs, ys = split_xy(series, base_time, x_axis)
         if xs:
             axes[1].plot(xs, ys, label=label, color=color, linewidth=1.5)
     axes[1].set_title("Imbalance (CV)")
     axes[1].grid(True, alpha=0.3)
     axes[1].legend(loc="upper right")
+    axes[1].set_xlabel("minutes since start" if x_axis == "elapsed" else "timestamp")
 
     if title_prefix:
         fig.suptitle(title_prefix)
@@ -104,7 +125,7 @@ def plot_imbalance(run_dir, out_dir, fmt, title_prefix):
     print(f"wrote {out_path}")
 
 
-def plot_churn(run_dir, out_dir, fmt, title_prefix):
+def plot_churn(run_dir, out_dir, fmt, title_prefix, x_axis):
     moves = load_series(os.path.join(run_dir, "moves_per_window.csv"))
     avg_moves = load_series(os.path.join(run_dir, "avg_moves_per_cycle.csv"))
 
@@ -119,18 +140,23 @@ def plot_churn(run_dir, out_dir, fmt, title_prefix):
         sys.exit(1)
 
     fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+    base_time = base_time_for([moves, avg_moves])
+    if base_time is None:
+        print("warn: empty series for churn plot", file=sys.stderr)
+        return
 
-    xs, ys = split_xy(moves)
+    xs, ys = split_xy(moves, base_time, x_axis)
     if xs:
         axes[0].plot(xs, ys, color="#1f77b4", linewidth=1.5)
     axes[0].set_title("Moves per Window")
     axes[0].grid(True, alpha=0.3)
 
-    xs, ys = split_xy(avg_moves)
+    xs, ys = split_xy(avg_moves, base_time, x_axis)
     if xs:
         axes[1].plot(xs, ys, color="#9467bd", linewidth=1.5)
     axes[1].set_title("Avg Moves per Cycle")
     axes[1].grid(True, alpha=0.3)
+    axes[1].set_xlabel("minutes since start" if x_axis == "elapsed" else "timestamp")
 
     if title_prefix:
         fig.suptitle(title_prefix)
@@ -147,8 +173,8 @@ def main():
     run_dir = args.run_dir
     out_dir = args.out_dir or run_dir
     title_prefix = args.title
-    plot_imbalance(run_dir, out_dir, args.format, title_prefix)
-    plot_churn(run_dir, out_dir, args.format, title_prefix)
+    plot_imbalance(run_dir, out_dir, args.format, title_prefix, args.x_axis)
+    plot_churn(run_dir, out_dir, args.format, title_prefix, args.x_axis)
 
 
 if __name__ == "__main__":
