@@ -7,6 +7,7 @@ RUN_DIR="$ROOT_DIR/.run"
 mkdir -p "$RUN_DIR"
 
 ETCD_CMD="${ETCD_CMD:-etcd}"
+ETCD_ARGS="${ETCD_ARGS:---quota-backend-bytes=8589934592}"
 ETCD_LOG="${ETCD_LOG:-$RUN_DIR/etcd.log}"
 ETCD_PIDFILE="$RUN_DIR/etcd.pid"
 
@@ -14,7 +15,7 @@ CADENCE_LOG="${CADENCE_LOG:-$RUN_DIR/cadence-server.prometheus.log}"
 CADENCE_PIDFILE="$RUN_DIR/cadence-server.prometheus.pid"
 
 CANARY_ENDPOINT="${CANARY_ENDPOINT:-127.0.0.1:7943}"
-CANARY_CSV="${CANARY_CSV:-$ROOT_DIR/combined_4x.csv}"
+CANARY_CSV="${CANARY_CSV:-$ROOT_DIR/21-12_00-06_fixed.csv}"
 CANARY_NAMESPACE="${CANARY_NAMESPACE:-shard-distributor-replay}"
 CANARY_EXECUTORS="${CANARY_EXECUTORS:-3}"
 CANARY_REPLAY_SPEED="${CANARY_REPLAY_SPEED:-1.0}"
@@ -64,7 +65,7 @@ start_etcd_detached() {
   : > "$ETCD_LOG"
 
   # Detach so it survives script exit / Ctrl+C and keeps logging
-  nohup $ETCD_CMD >>"$ETCD_LOG" 2>&1 &
+  nohup $ETCD_CMD $ETCD_ARGS >>"$ETCD_LOG" 2>&1 &
   echo $! > "$ETCD_PIDFILE"
 
   echo "etcd pid: $(cat "$ETCD_PIDFILE")"
