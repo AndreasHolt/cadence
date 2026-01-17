@@ -7,7 +7,7 @@ RUN_DIR="$ROOT_DIR/.run"
 mkdir -p "$RUN_DIR"
 
 ETCD_CMD="${ETCD_CMD:-etcd}"
-ETCD_ARGS="${ETCD_ARGS:---quota-backend-bytes=8589934592}"
+ETCD_ARGS="${ETCD_ARGS:---quota-backend-bytes=8589934592 --auto-compaction-mode=periodic --auto-compaction-retention=1h}"
 ETCD_LOG="${ETCD_LOG:-$RUN_DIR/etcd.log}"
 ETCD_PIDFILE="$RUN_DIR/etcd.pid"
 
