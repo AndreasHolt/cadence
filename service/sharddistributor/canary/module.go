@@ -5,8 +5,8 @@ import (
 	"go.uber.org/yarpc"
 
 	sharddistributorv1 "github.com/uber/cadence/.gen/proto/sharddistributor/v1"
-	"github.com/uber/cadence/service/sharddistributor/canary/config"
 	"github.com/uber/cadence/common/clock"
+	"github.com/uber/cadence/service/sharddistributor/canary/config"
 	"github.com/uber/cadence/service/sharddistributor/canary/executors"
 	"github.com/uber/cadence/service/sharddistributor/canary/factory"
 	"github.com/uber/cadence/service/sharddistributor/canary/handler"
@@ -40,7 +40,8 @@ func ModuleWithReplay(namespacesNames NamespacesNames, replayOpts replay.Options
 
 func opts(names NamespacesNames, replayOpts replay.Options) fx.Option {
 	isReplay := replayOpts.Enabled()
-	return fx.Options(
+
+	options := []fx.Option{
 		fx.Supply(names.Config),
 		fx.Provide(sharddistributorv1.NewFxShardDistributorExecutorAPIYARPCClient(names.SharddistributorServiceName)),
 		fx.Provide(sharddistributorv1.NewFxShardDistributorAPIYARPCClient(names.SharddistributorServiceName)),

@@ -50,15 +50,6 @@ const (
 	_defaultHeartbeatTTL = 10 * time.Second
 	_defaultTimeout      = 1 * time.Second
 	_defaultCooldown     = 250 * time.Millisecond
-	// Default cooldown between moving the same shard / applying consecutive moves.
-	_defaultPerShardCooldown = time.Minute
-	// Default fraction of total shards that may be moved per load-balance pass.
-	_defaultMoveBudgetProportion = 0.02
-	// Default hysteresis bands around mean load.
-	_defaultHysteresisUpperBand = 1.1
-	_defaultHysteresisLowerBand = 0.9
-	// Default threshold for triggering severe-imbalance escape hatch.
-	_defaultSevereImbalanceRatio = 1.5
 )
 
 type processorFactory struct {
@@ -91,13 +82,13 @@ func NewProcessorFactory(
 	cfg config.ShardDistribution,
 	sdConfig *config.Config,
 ) Factory {
-	if cfg.Process.Period <= 0 {
+	if cfg.Process.Period == 0 {
 		cfg.Process.Period = _defaultPeriod
 	}
-	if cfg.Process.HeartbeatTTL <= 0 {
+	if cfg.Process.HeartbeatTTL == 0 {
 		cfg.Process.HeartbeatTTL = _defaultHeartbeatTTL
 	}
-	if cfg.Process.Timeout <= 0 {
+	if cfg.Process.Timeout == 0 {
 		cfg.Process.Timeout = _defaultTimeout
 	}
 	if cfg.Process.RebalanceCooldown == 0 {
@@ -436,7 +427,6 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		}
 		return nil
 	}
-	p.logger.Info("Active executors", tag.ShardExecutors(activeExecutors))
 	metricsLoopScope.UpdateGauge(metrics.ShardDistributorActiveExecutors, float64(len(activeExecutors)))
 
 	deletedShards := p.findDeletedShards(namespaceState)
@@ -866,29 +856,12 @@ func makeShards(num int64) []string {
 	}
 	return shards
 }
-
-func (p *namespaceProcessor) emitAssignmentLoadCV(
+func (p *namespaceProcessor) emitAssignmentImbalanceMetrics(
 	metricsLoopScope metrics.Scope,
 	assignments map[string][]string,
 	namespaceState *store.NamespaceState,
 ) {
-	if metricsLoopScope == nil {
-		return
-	}
-	cv := computeExecutorLoadCV(assignments, namespaceState)
-	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentLoadCV, cv)
-}
-
-func (p *namespaceProcessor) emitShardMovesLastMinute(
-	metricsLoopScope metrics.Scope,
-	namespaceState *store.NamespaceState,
-) {
 	if metricsLoopScope == nil || namespaceState == nil {
-		return
-	}
-
-	if len(namespaceState.ShardStats) == 0 {
-		metricsLoopScope.UpdateGauge(metrics.ShardDistributorShardMovesLastMinute, 0)
 		return
 	}
 
@@ -952,68 +925,29 @@ func (p *namespaceProcessor) emitShardMovesLastMinute(
 		return
 	}
 
-	window := time.Minute
-	now := p.timeSource.Now().UTC()
-	recentMoves := 0
-	for _, stats := range namespaceState.ShardStats {
-		if stats.LastMoveTime.IsZero() {
-			continue
-		}
-		if now.Sub(stats.LastMoveTime) <= window {
-			recentMoves++
-		}
-	}
-	metricsLoopScope.UpdateGauge(metrics.ShardDistributorShardMovesLastMinute, float64(recentMoves))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentReportedLoadMissingRatio, float64(reportedMissing)/float64(totalAssigned))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadMissingRatio, float64(smoothedMissing)/float64(totalAssigned))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadStaleRatio, float64(smoothedStale)/float64(totalAssigned))
 }
 
-func computeExecutorLoadCV(assignments map[string][]string, namespaceState *store.NamespaceState) float64 {
-	if len(assignments) == 0 || namespaceState == nil || len(namespaceState.Executors) == 0 {
-		return 0
-	}
-
-	loads := make([]float64, 0, len(assignments))
-	for executorID, shards := range assignments {
-		load := 0.0
-		heartbeat, ok := namespaceState.Executors[executorID]
-		for _, shardID := range shards {
-			if !ok || heartbeat.ReportedShards == nil {
-				continue
-			}
-			if shardReport, exists := heartbeat.ReportedShards[shardID]; exists && shardReport != nil {
-				load += shardReport.ShardLoad
-			}
-		}
-		loads = append(loads, load)
-	}
-
-	return coefficientOfVariation(loads)
-}
-
-func coefficientOfVariation(values []float64) float64 {
-	if len(values) <= 1 {
+func maxOverMean(values []float64) float64 {
+	if len(values) == 0 {
 		return 0
 	}
 
 	total := 0.0
+	max := 0.0
 	for _, value := range values {
 		total += value
+		if value > max {
+			max = value
+		}
 	}
 	mean := total / float64(len(values))
 	if mean == 0 {
 		return 0
 	}
-
-	variance := 0.0
-	for _, value := range values {
-		diff := value - mean
-		variance += diff * diff
-	}
-	variance /= float64(len(values))
-	if variance == 0 {
-		return 0
-	}
-
-	return math.Sqrt(variance) / mean
+	return max / mean
 }
 
 func coefficientOfVariation(values []float64) float64 {

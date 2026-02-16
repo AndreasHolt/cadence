@@ -199,24 +199,18 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 		}),
 
 		// Include the canary module - it will set up spectator peer choosers and canary client
-		canary.Module(canary.NamespacesNames{
-			FixedNamespace:              fixedNamespace,
-			EphemeralNamespace:          ephemeralNamespace,
-			ExternalAssignmentNamespace: executors.ExternalAssignmentNamespace,
-			SharddistributorServiceName: shardDistributorServiceName,
-			Config: canaryConfig.Config{
-				Canary: canaryConfig.CanaryConfig{
-					NumFixedExecutors:     numFixedExecutors,
-					NumEphemeralExecutors: numEphemeral,
-				},
-			},
-		}),
 		canary.ModuleWithReplay(
 			canary.NamespacesNames{
 				FixedNamespace:              fixedNamespace,
 				EphemeralNamespace:          ephemeralNamespace,
 				ExternalAssignmentNamespace: executors.ExternalAssignmentNamespace,
 				SharddistributorServiceName: shardDistributorServiceName,
+				Config: canaryConfig.Config{
+					Canary: canaryConfig.CanaryConfig{
+						NumFixedExecutors:     numFixedExecutors,
+						NumEphemeralExecutors: numEphemeral,
+					},
+				},
 			},
 			replayOpts,
 		),
@@ -271,6 +265,8 @@ func buildCLI() *cli.App {
 					Name:  "num-ephemeral-executors",
 					Value: defaultNumExecutors,
 					Usage: "number of executors of ephemeral namespace to start. Don't use with num-executors",
+				},
+				&cli.IntFlag{
 					Name:  "canary-metrics-port",
 					Value: defaultCanaryMetricsPort,
 					Usage: "port for canary Prometheus metrics",

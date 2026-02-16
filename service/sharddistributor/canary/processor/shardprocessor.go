@@ -68,9 +68,11 @@ func (p *ShardProcessor) GetShardReport() executorclient.ShardReport {
 		} else {
 			load = 0
 		}
+	} else {
+		load = p.shardLoad // We get a load from shardID
 	}
 	return executorclient.ShardReport{
-		ShardLoad: load,                               // We return a load from shardID
+		ShardLoad: load,
 		Status:    types.ShardStatus(p.status.Load()), // Report the shard as ready since it's actively processing
 	}
 }
