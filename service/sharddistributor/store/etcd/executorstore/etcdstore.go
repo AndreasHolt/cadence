@@ -538,31 +538,6 @@ func (s *executorStoreImpl) AssignShard(ctx context.Context, namespace, shardID,
 			state.AssignedShards = make(map[string]*types.ShardAssignment)
 		}
 
-		statsResp, err := s.client.Get(ctx, executorStatsKey)
-		if err != nil {
-			return fmt.Errorf("get shard statistics: %w", err)
-		}
-
-		now := s.timeSource.Now().UTC()
-		executorShardStats := make(map[string]etcdtypes.ShardStatistics)
-		if len(statsResp.Kvs) > 0 {
-			if err := common.DecompressAndUnmarshal(statsResp.Kvs[0].Value, &executorShardStats); err != nil {
-				return fmt.Errorf("parse shard statistics: %w", err)
-			}
-		}
-
-		shardStats, ok := executorShardStats[shardID]
-		if !ok {
-			shardStats.SmoothedLoad = 0
-			shardStats.LastUpdateTime = etcdtypes.Time(now)
-			// Leave LastMoveTime for newly added shards as zero, to not block it from being moved
-			// once we have load measurements.
-			shardStats.LastMoveTime = etcdtypes.Time(time.Time{})
-		} else {
-			shardStats.LastMoveTime = etcdtypes.Time(now)
-		}
-		executorShardStats[shardID] = shardStats
-
 		// 2. Get the executor state.
 		statusResp, err := s.client.Get(ctx, statusKey)
 		if err != nil {
@@ -588,7 +563,7 @@ func (s *executorStoreImpl) AssignShard(ctx context.Context, namespace, shardID,
 		}
 
 		// Update the last updated timestamp.
-		now = s.timeSource.Now().UTC()
+		now := s.timeSource.Now().UTC()
 		state.LastUpdated = etcdtypes.Time(now)
 
 		// Compress new state value

@@ -103,9 +103,6 @@ func NewProcessorFactory(
 	if cfg.Process.RebalanceCooldown == 0 {
 		cfg.Process.RebalanceCooldown = _defaultCooldown
 	}
-	if cfg.Process.PerShardCooldown <= 0 {
-		cfg.Process.PerShardCooldown = _defaultPerShardCooldown
-	}
 	if cfg.Process.LoadBalance.PerShardCooldown <= 0 {
 		cfg.Process.LoadBalance.PerShardCooldown = _defaultPerShardCooldown
 	}
