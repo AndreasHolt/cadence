@@ -588,7 +588,7 @@ func (s *executorStoreImpl) AssignShard(ctx context.Context, namespace, shardID,
 		}
 
 		// Update the last updated timestamp.
-		now := s.timeSource.Now().UTC()
+		now = s.timeSource.Now().UTC()
 		state.LastUpdated = etcdtypes.Time(now)
 
 		// Compress new state value
