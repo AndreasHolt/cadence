@@ -11,17 +11,26 @@ import (
 	"github.com/uber/cadence/service/sharddistributor/store"
 )
 
+const (
+	loadBalanceStopReasonNoLoad               = "no_load"
+	loadBalanceStopReasonMoveBudgetZero       = "move_budget_zero"
+	loadBalanceStopReasonMoveBudgetExhausted  = "move_budget_exhausted"
+	loadBalanceStopReasonNoSources            = "no_sources"
+	loadBalanceStopReasonNoDestinations       = "no_destinations_not_severe"
+	loadBalanceStopReasonNoActiveDestinations = "no_active_destinations"
+	loadBalanceStopReasonNoDestinationExec    = "no_destination_executor"
+	loadBalanceStopReasonNoEligibleShard      = "no_eligible_shard"
+)
+
 func (p *namespaceProcessor) loadBalance(
 	currentAssignments map[string][]string,
 	namespaceState *store.NamespaceState,
 	deletedShards map[string]store.ShardState,
 	metricsScope metrics.Scope,
 ) (bool, error) {
+
 	loads, totalLoad := computeExecutorLoads(currentAssignments, namespaceState)
 	if len(loads) == 0 {
-		if metricsScope != nil {
-			metricsScope.UpdateGauge(metrics.ShardDistributorLoadBalanceMovesPerCycle, 0)
-		}
 		return false, nil
 	}
 
@@ -31,6 +40,10 @@ func (p *namespaceProcessor) loadBalance(
 	shardsMoved := false
 	movesPlanned := 0
 	now := p.timeSource.Now().UTC()
+
+	if moveBudget <= 0 {
+		return false, nil
+	}
 
 	// Plan multiple moves per cycle (within budget), recomputing eligibility after each move.
 	// Stop early once sources/destinations are empty, i.e. imbalance is within hysteresis bands.
@@ -50,14 +63,16 @@ func (p *namespaceProcessor) loadBalance(
 		// Escape hatch: if we have sources but no destinations under the normal lower band,
 		// allow moving to the least-loaded ACTIVE executor when imbalance is severe.
 		if len(destinationExecutors) == 0 {
-			relaxed, ok := destinationsForSevereImbalance(
-				loads,
-				meanLoad,
-				p.cfg.LoadBalance.SevereImbalanceRatio,
-				currentAssignments,
-				namespaceState,
-			)
-			if !ok {
+			if !isSevereImbalance(loads, meanLoad, p.cfg.LoadBalance.SevereImbalanceRatio) {
+				break
+			}
+			relaxed := make(map[string]struct{})
+			for executorID := range currentAssignments {
+				if namespaceState.Executors[executorID].Status == types.ExecutorStatusACTIVE {
+					relaxed[executorID] = struct{}{}
+				}
+			}
+			if len(relaxed) == 0 {
 				break
 			}
 			destinationExecutors = relaxed
@@ -108,10 +123,6 @@ func (p *namespaceProcessor) loadBalance(
 			break
 		}
 	}
-
-	if metricsScope != nil {
-		metricsScope.UpdateGauge(metrics.ShardDistributorLoadBalanceMovesPerCycle, float64(movesPlanned))
-	}
 	return shardsMoved, nil
 }
 
@@ -134,38 +145,18 @@ func computeExecutorLoads(currentAssignments map[string][]string, namespaceState
 	return loads, total
 }
 
-func destinationsForSevereImbalance(
-	executorLoads map[string]float64,
-	meanLoad float64,
-	severeImbalanceRatio float64,
-	currentAssignments map[string][]string,
-	namespaceState *store.NamespaceState,
-) (map[string]struct{}, bool) {
+func isSevereImbalance(executorLoads map[string]float64, meanLoad, severeImbalanceRatio float64) bool {
+	if meanLoad <= 0 || severeImbalanceRatio <= 0 {
+		return false
+	}
+
 	maxLoad := 0.0
 	for _, load := range executorLoads {
 		if load > maxLoad {
 			maxLoad = load
 		}
 	}
-
-	severe := meanLoad > 0 &&
-		severeImbalanceRatio > 0 &&
-		maxLoad/meanLoad >= severeImbalanceRatio
-	if !severe {
-		return nil, false
-	}
-
-	relaxed := make(map[string]struct{})
-	for executorID := range currentAssignments {
-		if namespaceState.Executors[executorID].Status == types.ExecutorStatusACTIVE {
-			relaxed[executorID] = struct{}{}
-		}
-	}
-	if len(relaxed) == 0 {
-		return nil, false
-	}
-
-	return relaxed, true
+	return maxLoad/meanLoad >= severeImbalanceRatio
 }
 
 // classifySourcesAndDestinations returns the source and destination executor sets for rebalancing.
