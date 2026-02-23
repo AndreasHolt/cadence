@@ -50,7 +50,6 @@ func TestLoadBalance_Convergence(t *testing.T) {
 		},
 		ShardAssignments: assignments,
 		ShardStats:       shardStats,
-		GlobalRevision:   10,
 	}, nil)
 
 	for sID := range shardStats {
@@ -149,7 +148,6 @@ func TestLoadBalance_NoMoveNeeded(t *testing.T) {
 		},
 		ShardAssignments: assignments,
 		ShardStats:       shardStats,
-		GlobalRevision:   10,
 	}, nil)
 
 	// Expect AssignShards to NOT be called
@@ -327,7 +325,6 @@ func TestLoadBalance_BudgetConstraint(t *testing.T) {
 		},
 		ShardAssignments: assignments,
 		ShardStats:       shardStats,
-		GlobalRevision:   10,
 	}, nil)
 
 	for sID := range shardStats {
@@ -399,7 +396,6 @@ func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
 		},
 		ShardAssignments: assignments,
 		ShardStats:       shardStats,
-		GlobalRevision:   10,
 	}, nil)
 
 	for sID := range shardStats {
@@ -560,7 +556,6 @@ func TestLoadBalance_NoDestinations(t *testing.T) {
 		},
 		ShardAssignments: assignments,
 		ShardStats:       shardStats,
-		GlobalRevision:   10,
 	}, nil)
 
 	// Expect AssignShards to NOT be called because no moves are possible.
@@ -609,7 +604,6 @@ func TestLoadBalance_ExecutorRemovedFromDestination(t *testing.T) {
 		},
 		ShardAssignments: assignments,
 		ShardStats:       shardStats,
-		GlobalRevision:   10,
 	}, nil)
 
 	for sID := range shardStats {

@@ -228,7 +228,12 @@ func (p *namespaceProcessor) runRebalancingLoop(ctx context.Context) {
 			p.logger.Info("Rebalancing loop cancelled.")
 			return
 
-		case update := <-updateChan:
+		case update, ok := <-updateChan:
+			if !ok {
+				p.logger.Info("Rebalance trigger channel closed. Stopping rebalancing loop.")
+				return
+			}
+
 			// If an update comes in before the cooldown has expired,
 			// we wait until the cooldown has passed since the last rebalance before processing it.
 			// This ensures that we don't rebalance too frequently in response to a flurry of updates
