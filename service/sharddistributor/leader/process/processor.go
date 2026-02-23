@@ -50,6 +50,15 @@ const (
 	_defaultHeartbeatTTL = 10 * time.Second
 	_defaultTimeout      = 1 * time.Second
 	_defaultCooldown     = 250 * time.Millisecond
+	// Default cooldown between moving the same shard / applying consecutive moves.
+	_defaultPerShardCooldown = time.Minute
+	// Default fraction of total shards that may be moved per load-balance pass.
+	_defaultMoveBudgetProportion = 0.01
+	// Default hysteresis bands around mean load.
+	_defaultHysteresisUpperBand = 1.15
+	_defaultHysteresisLowerBand = 0.95
+	// Default threshold for triggering severe-imbalance escape hatch.
+	_defaultSevereImbalanceRatio = 1.5
 )
 
 type processorFactory struct {
@@ -93,6 +102,21 @@ func NewProcessorFactory(
 	}
 	if cfg.Process.RebalanceCooldown == 0 {
 		cfg.Process.RebalanceCooldown = _defaultCooldown
+	}
+	if cfg.Process.LoadBalance.PerShardCooldown <= 0 {
+		cfg.Process.LoadBalance.PerShardCooldown = _defaultPerShardCooldown
+	}
+	if cfg.Process.LoadBalance.MoveBudgetProportion <= 0 {
+		cfg.Process.LoadBalance.MoveBudgetProportion = _defaultMoveBudgetProportion
+	}
+	if cfg.Process.LoadBalance.HysteresisUpperBand <= 0 {
+		cfg.Process.LoadBalance.HysteresisUpperBand = _defaultHysteresisUpperBand
+	}
+	if cfg.Process.LoadBalance.HysteresisLowerBand <= 0 {
+		cfg.Process.LoadBalance.HysteresisLowerBand = _defaultHysteresisLowerBand
+	}
+	if cfg.Process.LoadBalance.SevereImbalanceRatio <= 0 {
+		cfg.Process.LoadBalance.SevereImbalanceRatio = _defaultSevereImbalanceRatio
 	}
 
 	return &processorFactory{
@@ -204,7 +228,12 @@ func (p *namespaceProcessor) runRebalancingLoop(ctx context.Context) {
 			p.logger.Info("Rebalancing loop cancelled.")
 			return
 
-		case update := <-updateChan:
+		case update, ok := <-updateChan:
+			if !ok {
+				p.logger.Info("Rebalance trigger channel closed. Stopping rebalancing loop.")
+				return
+			}
+
 			// If an update comes in before the cooldown has expired,
 			// we wait until the cooldown has passed since the last rebalance before processing it.
 			// This ensures that we don't rebalance too frequently in response to a flurry of updates
@@ -399,10 +428,10 @@ func (p *namespaceProcessor) rebalanceShards(ctx context.Context) (err error) {
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.Timeout)
 	defer cancel()
 
-	return p.rebalanceShardsImpl(ctx, metricsLoopScope)
+	return p.executeRebalanceCycle(ctx, metricsLoopScope)
 }
 
-func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoopScope metrics.Scope) (err error) {
+func (p *namespaceProcessor) executeRebalanceCycle(ctx context.Context, metricsLoopScope metrics.Scope) (err error) {
 	namespaceState, err := p.shardStore.GetState(ctx, p.namespaceCfg.Name)
 	if err != nil {
 		return fmt.Errorf("get state: %w", err)
@@ -427,19 +456,23 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		}
 		return nil
 	}
-	p.logger.Info("Active executors", tag.ShardExecutors(activeExecutors))
-
 	deletedShards := p.findDeletedShards(namespaceState)
-	shardsToReassign, currentAssignments := p.findShardsToReassign(activeExecutors, namespaceState, deletedShards, staleExecutors)
+	shardsNeedingReassignment, currentAssignments := p.findShardsNeedingReassignment(activeExecutors, namespaceState, deletedShards, staleExecutors)
 
-	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignLoopNumRebalancedShards, float64(len(shardsToReassign)))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignLoopNumRebalancedShards, float64(len(shardsNeedingReassignment)))
 
-	// If there are deleted shards or stale executors, the distribution has changed.
-	assignedToEmptyExecutors := assignShardsToEmptyExecutors(currentAssignments)
-	updatedAssignments := p.updateAssignments(shardsToReassign, activeExecutors, currentAssignments)
-	isRebalancedByShardLoad := p.rebalanceByShardLoad(calcShardLoad(namespaceState), currentAssignments)
+	// Reassign shards from deleted/stale executors and backfill empty ones
+	didAssignToEmpty := assignShardsToEmptyExecutors(currentAssignments)
+	didAssignShardsNeedingReassignment := p.assignShardsNeedingReassignment(shardsNeedingReassignment, activeExecutors, currentAssignments)
+	//isRebalancedByShardLoad := p.rebalanceByShardLoad(calcShardLoad(namespaceState), currentAssignments)
 
-	distributionChanged := len(deletedShards) > 0 || len(staleExecutors) > 0 || assignedToEmptyExecutors || updatedAssignments || isRebalancedByShardLoad
+	// Load-based changes
+	didLoadBalance, err := p.loadBalance(currentAssignments, namespaceState, deletedShards, metricsLoopScope)
+	if err != nil {
+		return fmt.Errorf("load balance: %w", err)
+	}
+
+	distributionChanged := len(deletedShards) > 0 || len(staleExecutors) > 0 || didAssignToEmpty || didAssignShardsNeedingReassignment || didLoadBalance // || isRebalancedByShardLoad
 	if !distributionChanged {
 		p.logger.Info("No changes to distribution detected. Skipping rebalance.")
 		return nil
@@ -525,7 +558,7 @@ func (p *namespaceProcessor) findDeletedShards(namespaceState *store.NamespaceSt
 	return deletedShards
 }
 
-func (p *namespaceProcessor) findShardsToReassign(
+func (p *namespaceProcessor) findShardsNeedingReassignment(
 	activeExecutors []string,
 	namespaceState *store.NamespaceState,
 	deletedShards map[string]store.ShardState,
@@ -536,7 +569,7 @@ func (p *namespaceProcessor) findShardsToReassign(
 		allShards[shardID] = struct{}{}
 	}
 
-	shardsToReassign := make([]string, 0)
+	shardsNeedingReassignment := make([]string, 0)
 	currentAssignments := make(map[string][]string)
 
 	for _, executorID := range activeExecutors {
@@ -555,25 +588,25 @@ func (p *namespaceProcessor) findShardsToReassign(
 					currentAssignments[executorID] = append(currentAssignments[executorID], shardID)
 				} else {
 					// Otherwise, reassign the shard (executor is either inactive or stale)
-					shardsToReassign = append(shardsToReassign, shardID)
+					shardsNeedingReassignment = append(shardsNeedingReassignment, shardID)
 				}
 			}
 		}
 	}
 
 	for shardID := range allShards {
-		shardsToReassign = append(shardsToReassign, shardID)
+		shardsNeedingReassignment = append(shardsNeedingReassignment, shardID)
 	}
-	return shardsToReassign, currentAssignments
+	return shardsNeedingReassignment, currentAssignments
 }
 
-func (*namespaceProcessor) updateAssignments(shardsToReassign []string, activeExecutors []string, currentAssignments map[string][]string) (distributionChanged bool) {
-	if len(shardsToReassign) == 0 {
+func (*namespaceProcessor) assignShardsNeedingReassignment(shardsNeedingReassignment []string, activeExecutors []string, currentAssignments map[string][]string) bool {
+	if len(shardsNeedingReassignment) == 0 {
 		return false
 	}
 
 	i := rand.Intn(len(activeExecutors))
-	for _, shardID := range shardsToReassign {
+	for _, shardID := range shardsNeedingReassignment {
 		executorID := activeExecutors[i%len(activeExecutors)]
 		currentAssignments[executorID] = append(currentAssignments[executorID], shardID)
 		i++
