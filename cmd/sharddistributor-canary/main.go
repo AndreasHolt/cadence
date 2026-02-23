@@ -17,6 +17,7 @@ import (
 
 	sharddistributorv1 "github.com/uber/cadence/.gen/proto/sharddistributor/v1"
 	"github.com/uber/cadence/common/clock"
+	cadenceconfig "github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/service/sharddistributor/canary"
 	canaryConfig "github.com/uber/cadence/service/sharddistributor/canary/config"
@@ -47,6 +48,7 @@ func runApp(c *cli.Context) {
 	fixedNamespace := c.String("fixed-namespace")
 	ephemeralNamespace := c.String("ephemeral-namespace")
 	canaryGRPCPort := c.Int("canary-grpc-port")
+	canaryMetricsPort := c.Int("canary-metrics-port")
 
 	numFixedExecutors := c.Int("num-fixed-executors")
 	numEphemeralExecutors := c.Int("num-ephemeral-executors")
@@ -120,7 +122,7 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 
 	options := []fx.Option{
 		fx.Supply(
-			fx.Annotate(tally.NoopScope, fx.As(new(tally.Scope))),
+			fx.Annotate(metricsScope, fx.As(new(tally.Scope))),
 			fx.Annotate(clock.NewRealTimeSource(), fx.As(new(clock.TimeSource))),
 			configuration,
 			transport,
@@ -174,9 +176,8 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 		fx.Provide(
 			yarpc.NewDispatcher,
 			func(d *yarpc.Dispatcher) yarpc.ClientConfig { return d }, // Reprovide the dispatcher as a client config
+			func(l *zap.Logger) log.Logger { return log.NewLogger(l) },
 		),
-		fx.Provide(zap.NewDevelopment),
-		fx.Provide(log.NewLogger),
 
 		// We do decorate instead of Invoke because we want to start and stop the dispatcher at the
 		// correct time.
