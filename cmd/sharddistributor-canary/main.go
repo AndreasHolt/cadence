@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/uber-go/tally"
+	"github.com/uber-go/tally/prometheus"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/fx"
 	"go.uber.org/yarpc"
@@ -16,6 +17,7 @@ import (
 
 	sharddistributorv1 "github.com/uber/cadence/.gen/proto/sharddistributor/v1"
 	"github.com/uber/cadence/common/clock"
+	cadenceconfig "github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/service/sharddistributor/canary"
 	canaryConfig "github.com/uber/cadence/service/sharddistributor/canary/config"
@@ -34,6 +36,7 @@ const (
 	defaultEphemeralNamespace       = "shard-distributor-canary-ephemeral"
 	defaultCanaryGRPCPort           = 7953 // Port for canary to receive ping requests
 	defaultNumExecutors             = 1
+	defaultCanaryMetricsPort        = 9098
 
 	shardDistributorServiceName = "cadence-shard-distributor"
 )
@@ -43,6 +46,7 @@ func runApp(c *cli.Context) {
 	fixedNamespace := c.String("fixed-namespace")
 	ephemeralNamespace := c.String("ephemeral-namespace")
 	canaryGRPCPort := c.Int("canary-grpc-port")
+	canaryMetricsPort := c.Int("canary-metrics-port")
 
 	numFixedExecutors := c.Int("num-fixed-executors")
 	numEphemeralExecutors := c.Int("num-ephemeral-executors")
@@ -54,10 +58,21 @@ func runApp(c *cli.Context) {
 
 	}
 
-	fx.New(opts(fixedNamespace, ephemeralNamespace, endpoint, canaryGRPCPort, numFixedExecutors, numEphemeralExecutors)).Run()
+	fx.New(opts(fixedNamespace, ephemeralNamespace, endpoint, canaryGRPCPort, numFixedExecutors, numEphemeralExecutors, canaryMetricsPort)).Run()
 }
 
-func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort int, numFixedExecutors, numEphemeral int) fx.Option {
+func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort int, numFixedExecutors, numEphemeral int, canaryMetricsPort int) fx.Option {
+	logger, _ := zap.NewDevelopment()
+	cadenceLogger := log.NewLogger(logger)
+
+	metricsConfig := cadenceconfig.Metrics{
+		Prometheus: &prometheus.Configuration{
+			ListenAddress: fmt.Sprintf("127.0.0.1:%d", canaryMetricsPort),
+			TimerType:     "histogram",
+		},
+	}
+	metricsScope := metricsConfig.NewScope(cadenceLogger, "shard-distributor-canary")
+
 	configuration := clientcommon.Config{
 		Namespaces: []clientcommon.NamespaceConfig{
 			{Namespace: fixedNamespace, HeartBeatInterval: 1 * time.Second, MigrationMode: config.MigrationModeONBOARDED},
@@ -85,11 +100,12 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 
 	return fx.Options(
 		fx.Supply(
-			fx.Annotate(tally.NoopScope, fx.As(new(tally.Scope))),
+			fx.Annotate(metricsScope, fx.As(new(tally.Scope))),
 			fx.Annotate(clock.NewRealTimeSource(), fx.As(new(clock.TimeSource))),
 			configuration,
 			transport,
 			executorMetadata,
+			logger,
 		),
 
 		fx.Provide(func(peerChooser spectatorclient.SpectatorPeerChooserInterface) yarpc.Config {
@@ -118,9 +134,8 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 		fx.Provide(
 			yarpc.NewDispatcher,
 			func(d *yarpc.Dispatcher) yarpc.ClientConfig { return d }, // Reprovide the dispatcher as a client config
+			func(l *zap.Logger) log.Logger { return log.NewLogger(l) },
 		),
-		fx.Provide(zap.NewDevelopment),
-		fx.Provide(log.NewLogger),
 
 		// We do decorate instead of Invoke because we want to start and stop the dispatcher at the
 		// correct time.
@@ -203,6 +218,11 @@ func buildCLI() *cli.App {
 					Name:  "num-ephemeral-executors",
 					Value: defaultNumExecutors,
 					Usage: "number of executors of ephemeral namespace to start. Don't use with num-executors",
+				},
+				&cli.IntFlag{
+					Name:  "canary-metrics-port",
+					Value: defaultCanaryMetricsPort,
+					Usage: "port for canary Prometheus metrics",
 				},
 			},
 			Action: func(c *cli.Context) error {

@@ -15,5 +15,6 @@ func TestDependenciesAreSatisfied(t *testing.T) {
 		defaultCanaryGRPCPort,
 		defaultNumExecutors,
 		defaultNumExecutors,
+		defaultCanaryMetricsPort,
 	)))
 }
