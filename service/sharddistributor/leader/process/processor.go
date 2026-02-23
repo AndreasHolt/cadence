@@ -461,14 +461,13 @@ func (p *namespaceProcessor) executeRebalanceCycle(ctx context.Context, metricsL
 	didAssignShardsNeedingReassignment := p.assignShardsNeedingReassignment(shardsNeedingReassignment, activeExecutors, currentAssignments)
 	//isRebalancedByShardLoad := p.rebalanceByShardLoad(calcShardLoad(namespaceState), currentAssignments)
 
-	p.emitAssignmentLoadCV(metricsLoopScope, currentAssignments, namespaceState)
-	p.emitShardMovesLastMinute(metricsLoopScope, namespaceState)
-
 	// Load-based changes
 	didLoadBalance, err := p.loadBalance(currentAssignments, namespaceState, deletedShards, metricsLoopScope)
 	if err != nil {
 		return fmt.Errorf("load balance: %w", err)
 	}
+
+	p.emitAssignmentImbalanceMetrics(metricsLoopScope, currentAssignments, namespaceState)
 
 	distributionChanged := len(deletedShards) > 0 || len(staleExecutors) > 0 || didAssignToEmpty || didAssignShardsNeedingReassignment || didLoadBalance // || isRebalancedByShardLoad
 	if !distributionChanged {
@@ -885,6 +884,7 @@ func makeShards(num int64) []string {
 	return shards
 }
 func (p *namespaceProcessor) emitAssignmentImbalanceMetrics(
+
 	metricsLoopScope metrics.Scope,
 	assignments map[string][]string,
 	namespaceState *store.NamespaceState,
