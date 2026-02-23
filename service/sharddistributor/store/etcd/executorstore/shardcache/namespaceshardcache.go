@@ -319,9 +319,9 @@ func (n *namespaceShardToExecutor) watch(triggerCh chan<- struct{}) error {
 			}
 
 			if n.executorStateChanges(watchResp.Events) {
-				if err := n.refresh(context.Background()); err != nil {
-					n.logger.Error("failed to refresh namespace shard to executor", tag.ShardNamespace(n.namespace), tag.Error(err))
-					return err
+				select {
+				case triggerCh <- struct{}{}:
+				default:
 				}
 			}
 		}
