@@ -647,3 +647,337 @@ func TestLoadBalance_ExecutorRemovedFromDestination(t *testing.T) {
 	err := processor.rebalanceShards(context.Background())
 	require.NoError(t, err)
 }
+
+func TestFindSwapShards_BasicSwap(t *testing.T) {
+	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+
+	execA, execB := "exec-A", "exec-B"
+	now := mocks.timeSource.Now()
+
+	currentAssignments := map[string][]string{
+		execA: {"a-hot", "a-warm"},
+		execB: {"b-cold"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardAssignments: map[string]store.AssignedState{
+			execA: {AssignedShards: map[string]*types.ShardAssignment{"a-hot": {}, "a-warm": {}}},
+			execB: {AssignedShards: map[string]*types.ShardAssignment{"b-cold": {}}},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"a-hot":  {SmoothedLoad: 50, LastUpdateTime: now},
+			"a-warm": {SmoothedLoad: 10, LastUpdateTime: now},
+			"b-cold": {SmoothedLoad: 5, LastUpdateTime: now},
+		},
+	}
+
+	moves, found := findSwapShards(
+		currentAssignments,
+		namespaceState,
+		execA,
+		execB,
+		60,
+		5,
+		processor.cfg.LoadBalance.PerShardCooldown,
+		now,
+	)
+
+	require.True(t, found)
+	require.Len(t, moves, 2)
+
+	var moveAtoB, moveBtoA *move_T
+	for _, m := range moves {
+		if m.source == execA && m.destination == execB {
+			moveAtoB = &m
+		}
+		if m.source == execB && m.destination == execA {
+			moveBtoA = &m
+		}
+	}
+	require.NotNil(t, moveAtoB, "Should have move from A to B")
+	require.NotNil(t, moveBtoA, "Should have move from B to A")
+
+	assert.Equal(t, "a-hot", moveAtoB.shardID, "Should swap the hottest shard from A")
+	assert.Equal(t, "b-cold", moveBtoA.shardID, "Should swap the coldest shard from B")
+}
+
+func TestFindSwapShards_OnlySourceHasEligibleShards(t *testing.T) {
+	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	defer mocks.ctrl.Finish()
+	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+
+	execA, execB := "exec-A", "exec-B"
+	now := mocks.timeSource.Now()
+
+	currentAssignments := map[string][]string{
+		execA: {"a-1", "a-2"},
+		execB: {},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardAssignments: map[string]store.AssignedState{
+			execA: {AssignedShards: map[string]*types.ShardAssignment{"a-1": {}, "a-2": {}}},
+			execB: {AssignedShards: map[string]*types.ShardAssignment{}},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"a-1": {SmoothedLoad: 50, LastUpdateTime: now},
+			"a-2": {SmoothedLoad: 10, LastUpdateTime: now},
+		},
+	}
+
+	moves, found := findSwapShards(
+		currentAssignments,
+		namespaceState,
+		execA,
+		execB,
+		60,
+		0,
+		processor.cfg.LoadBalance.PerShardCooldown,
+		now,
+	)
+
+	assert.False(t, found, "Should not find swap when destination has no shards")
+	assert.Nil(t, moves)
+}
+
+func TestFindSwapShards_OnlyDestinationHasEligibleShards(t *testing.T) {
+	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	defer mocks.ctrl.Finish()
+	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+
+	execA, execB := "exec-A", "exec-B"
+	now := mocks.timeSource.Now()
+
+	currentAssignments := map[string][]string{
+		execA: {},
+		execB: {"b-1", "b-2"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardAssignments: map[string]store.AssignedState{
+			execA: {AssignedShards: map[string]*types.ShardAssignment{}},
+			execB: {AssignedShards: map[string]*types.ShardAssignment{"b-1": {}, "b-2": {}}},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"b-1": {SmoothedLoad: 50, LastUpdateTime: now},
+			"b-2": {SmoothedLoad: 10, LastUpdateTime: now},
+		},
+	}
+
+	moves, found := findSwapShards(
+		currentAssignments,
+		namespaceState,
+		execA,
+		execB,
+		0,
+		60,
+		processor.cfg.LoadBalance.PerShardCooldown,
+		now,
+	)
+
+	assert.False(t, found, "Should not find swap when source has no shards")
+	assert.Nil(t, moves)
+}
+
+func TestFindSwapShards_CooldownOnDestinationShard(t *testing.T) {
+	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+
+	cooldown := processor.cfg.LoadBalance.PerShardCooldown
+	require.True(t, cooldown > 0, "PerShardCooldown should be configured")
+
+	execA, execB := "exec-A", "exec-B"
+	now := mocks.timeSource.Now()
+	recentMove := now.Add(-cooldown / 2)
+
+	currentAssignments := map[string][]string{
+		execA: {"a-hot", "a-warm"},
+		execB: {"b-recent", "b-warm"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardAssignments: map[string]store.AssignedState{
+			execA: {AssignedShards: map[string]*types.ShardAssignment{"a-hot": {}, "a-warm": {}}},
+			execB: {AssignedShards: map[string]*types.ShardAssignment{"b-recent": {}, "b-warm": {}}},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"a-hot":    {SmoothedLoad: 50, LastUpdateTime: now},
+			"a-warm":   {SmoothedLoad: 10, LastUpdateTime: now},
+			"b-recent": {SmoothedLoad: 5, LastUpdateTime: now, LastMoveTime: recentMove},
+			"b-warm":   {SmoothedLoad: 2, LastUpdateTime: now},
+		},
+	}
+
+	moves, found := findSwapShards(
+		currentAssignments,
+		namespaceState,
+		execA,
+		execB,
+		60,
+		7,
+		cooldown,
+		now,
+	)
+
+	require.True(t, found, "Should find swap using non-cooldown shards")
+	require.Len(t, moves, 2)
+
+	var swappedFromB string
+	for _, m := range moves {
+		if m.source == execB {
+			swappedFromB = m.shardID
+		}
+	}
+	assert.Equal(t, "b-warm", swappedFromB, "Should swap using b-warm (not in cooldown), not b-recent")
+}
+
+func TestFindSwapShards_NoBeneficialSwap(t *testing.T) {
+	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	defer mocks.ctrl.Finish()
+	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+
+	execA, execB := "exec-A", "exec-B"
+	now := mocks.timeSource.Now()
+
+	currentAssignments := map[string][]string{
+		execA: {"a-heavy"},
+		execB: {"b-light"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardAssignments: map[string]store.AssignedState{
+			execA: {AssignedShards: map[string]*types.ShardAssignment{"a-heavy": {}}},
+			execB: {AssignedShards: map[string]*types.ShardAssignment{"b-light": {}}},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"a-heavy": {SmoothedLoad: 100, LastUpdateTime: now},
+			"b-light": {SmoothedLoad: 99, LastUpdateTime: now},
+		},
+	}
+	executorLoads := map[string]float64{
+		execA: 100,
+		execB: 99,
+	}
+
+	_, found := processor.findShardsToMove(currentAssignments, namespaceState, execA, execB, executorLoads, now)
+
+	assert.False(t, found, "Should not find beneficial swap when loads are too similar")
+}
+
+func TestFindSwapShards_MultipleCandidatesPicksBest(t *testing.T) {
+	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	defer mocks.ctrl.Finish()
+	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+
+	execA, execB := "exec-A", "exec-B"
+	now := mocks.timeSource.Now()
+
+	currentAssignments := map[string][]string{
+		execA: {"a-1", "a-2", "a-3"},
+		execB: {"b-1", "b-2", "b-3"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardAssignments: map[string]store.AssignedState{
+			execA: {AssignedShards: map[string]*types.ShardAssignment{"a-1": {}, "a-2": {}, "a-3": {}}},
+			execB: {AssignedShards: map[string]*types.ShardAssignment{"b-1": {}, "b-2": {}, "b-3": {}}},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"a-1": {SmoothedLoad: 80, LastUpdateTime: now},
+			"a-2": {SmoothedLoad: 40, LastUpdateTime: now},
+			"a-3": {SmoothedLoad: 20, LastUpdateTime: now},
+			"b-1": {SmoothedLoad: 10, LastUpdateTime: now},
+			"b-2": {SmoothedLoad: 5, LastUpdateTime: now},
+			"b-3": {SmoothedLoad: 1, LastUpdateTime: now},
+		},
+	}
+
+	moves, found := findSwapShards(
+		currentAssignments,
+		namespaceState,
+		execA,
+		execB,
+		140,
+		16,
+		processor.cfg.LoadBalance.PerShardCooldown,
+		now,
+	)
+
+	require.True(t, found)
+	require.Len(t, moves, 2)
+
+	var moveAtoB, moveBtoA *move_T
+	for _, m := range moves {
+		if m.source == execA && m.destination == execB {
+			moveAtoB = &m
+		}
+		if m.source == execB && m.destination == execA {
+			moveBtoA = &m
+		}
+	}
+	require.NotNil(t, moveAtoB, "Should have move from A to B")
+	require.NotNil(t, moveBtoA, "Should have move from B to A")
+
+	assert.Equal(t, "a-1", moveAtoB.shardID, "Should swap the hottest shard from A (load 80)")
+	assert.Equal(t, "b-1", moveBtoA.shardID, "Should swap the hottest shard from B (load 10)")
+}
+
+func TestFindSwapShards_MissingShardStats(t *testing.T) {
+	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	defer mocks.ctrl.Finish()
+	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+
+	execA, execB := "exec-A", "exec-B"
+	now := mocks.timeSource.Now()
+
+	currentAssignments := map[string][]string{
+		execA: {"a-known", "a-unknown"},
+		execB: {"b-1"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardAssignments: map[string]store.AssignedState{
+			execA: {AssignedShards: map[string]*types.ShardAssignment{"a-known": {}, "a-unknown": {}}},
+			execB: {AssignedShards: map[string]*types.ShardAssignment{"b-1": {}}},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"a-known": {SmoothedLoad: 50, LastUpdateTime: now},
+			"b-1":     {SmoothedLoad: 10, LastUpdateTime: now},
+		},
+	}
+
+	_, found := findSwapShards(
+		currentAssignments,
+		namespaceState,
+		execA,
+		execB,
+		50,
+		10,
+		processor.cfg.LoadBalance.PerShardCooldown,
+		now,
+	)
+
+	assert.False(t, found, "Should not find swap when source has no eligible shards with stats")
+}
