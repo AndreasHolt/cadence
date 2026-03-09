@@ -675,7 +675,7 @@ func TestFindSwapShards_BasicSwap(t *testing.T) {
 		},
 	}
 
-	moves, found := findSwapShards(
+	moves, found, _ := findSwapShards(
 		currentAssignments,
 		namespaceState,
 		execA,
@@ -689,7 +689,7 @@ func TestFindSwapShards_BasicSwap(t *testing.T) {
 	require.True(t, found)
 	require.Len(t, moves, 2)
 
-	var moveAtoB, moveBtoA *move_T
+	var moveAtoB, moveBtoA *ShardMove
 	for _, m := range moves {
 		if m.source == execA && m.destination == execB {
 			moveAtoB = &m
@@ -732,7 +732,7 @@ func TestFindSwapShards_OnlySourceHasEligibleShards(t *testing.T) {
 		},
 	}
 
-	moves, found := findSwapShards(
+	moves, found, _ := findSwapShards(
 		currentAssignments,
 		namespaceState,
 		execA,
@@ -774,7 +774,7 @@ func TestFindSwapShards_OnlyDestinationHasEligibleShards(t *testing.T) {
 		},
 	}
 
-	moves, found := findSwapShards(
+	moves, found, _ := findSwapShards(
 		currentAssignments,
 		namespaceState,
 		execA,
@@ -821,7 +821,7 @@ func TestFindSwapShards_CooldownOnDestinationShard(t *testing.T) {
 		},
 	}
 
-	moves, found := findSwapShards(
+	moves, found, _ := findSwapShards(
 		currentAssignments,
 		namespaceState,
 		execA,
@@ -911,7 +911,7 @@ func TestFindSwapShards_MultipleCandidatesPicksBest(t *testing.T) {
 		},
 	}
 
-	moves, found := findSwapShards(
+	moves, found, _ := findSwapShards(
 		currentAssignments,
 		namespaceState,
 		execA,
@@ -925,7 +925,7 @@ func TestFindSwapShards_MultipleCandidatesPicksBest(t *testing.T) {
 	require.True(t, found)
 	require.Len(t, moves, 2)
 
-	var moveAtoB, moveBtoA *move_T
+	var moveAtoB, moveBtoA *ShardMove
 	for _, m := range moves {
 		if m.source == execA && m.destination == execB {
 			moveAtoB = &m
@@ -968,7 +968,7 @@ func TestFindSwapShards_MissingShardStats(t *testing.T) {
 		},
 	}
 
-	_, found := findSwapShards(
+	_, found, _ := findSwapShards(
 		currentAssignments,
 		namespaceState,
 		execA,
