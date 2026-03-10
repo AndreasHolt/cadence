@@ -393,3 +393,11 @@ func QueryConsistencyLevelTag(level string) Tag {
 func BudgetManagerNameTag(name string) Tag {
 	return metricWithUnknown(budgetManagerName, name)
 }
+
+func ExecutorTag(executorID string) Tag {
+	return metricWithUnknown("executor", executorID)
+}
+
+func ShardTag(shardID string) Tag {
+	return metricWithUnknown("shard", shardID)
+}

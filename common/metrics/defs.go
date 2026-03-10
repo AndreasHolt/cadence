@@ -3002,6 +3002,9 @@ const (
 	// ShardDistributorAssignmentSmoothedLoadStaleRatio measures the fraction of assigned shards with stale smoothed load stats.
 	ShardDistributorAssignmentSmoothedLoadStaleRatio
 
+	ShardDistributorExecutorLoad
+	ShardDistributorShardLoad
+
 	ShardDistributorStoreExecutorNotFound
 	ShardDistributorStoreFailuresPerNamespace
 	ShardDistributorStoreRequestsPerNamespace
@@ -3827,6 +3830,9 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 			metricName: "shard_distributor_assignment_smoothed_load_stale_ratio",
 			metricType: Gauge,
 		},
+
+		ShardDistributorExecutorLoad: {metricName: "shard_distributor_executor_load", metricType: Gauge},
+		ShardDistributorShardLoad:    {metricName: "shard_distributor_shard_load", metricType: Gauge},
 
 		ShardDistributorStoreExecutorNotFound:             {metricName: "shard_distributor_store_executor_not_found", metricType: Counter},
 		ShardDistributorStoreFailuresPerNamespace:         {metricName: "shard_distributor_store_failures_per_namespace", metricType: Counter},

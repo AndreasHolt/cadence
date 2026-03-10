@@ -917,14 +917,18 @@ func (p *namespaceProcessor) emitAssignmentImbalanceMetrics(
 		for _, shardID := range shards {
 			totalAssigned++
 
+			shardLoad := 0.0
 			// Reported load from current executor heartbeat.
 			if !heartbeatOK || heartbeat.ReportedShards == nil {
 				reportedMissing++
 			} else if shardReport, ok := heartbeat.ReportedShards[shardID]; ok && shardReport != nil {
 				reportedLoad += shardReport.ShardLoad
+				shardLoad = shardReport.ShardLoad
 			} else {
 				reportedMissing++
 			}
+
+			metricsLoopScope.Tagged(metrics.ShardTag(shardID)).UpdateGauge(metrics.ShardDistributorShardLoad, shardLoad)
 
 			// Smoothed load (EWMA) from shard stats.
 			if namespaceState.ShardStats == nil {
@@ -941,6 +945,8 @@ func (p *namespaceProcessor) emitAssignmentImbalanceMetrics(
 			}
 			smoothedLoad += stats.SmoothedLoad
 		}
+
+		metricsLoopScope.Tagged(metrics.ExecutorTag(executorID)).UpdateGauge(metrics.ShardDistributorExecutorLoad, reportedLoad)
 
 		reportedLoads = append(reportedLoads, reportedLoad)
 		smoothedLoads = append(smoothedLoads, smoothedLoad)
