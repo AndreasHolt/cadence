@@ -2,11 +2,15 @@ package processor
 
 import (
 	"context"
+	"math"
+	"math/rand"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/dgryski/go-farm"
 	"go.uber.org/zap"
 
 	"github.com/uber/cadence/common/clock"
@@ -25,7 +29,6 @@ const (
 func NewShardProcessor(shardID string, timeSource clock.TimeSource, logger *zap.Logger) *ShardProcessor {
 	p := &ShardProcessor{
 		shardID:    shardID,
-		shardLoad:  shardLoadFromID(shardID),
 		timeSource: timeSource,
 		logger:     logger,
 		stopChan:   make(chan struct{}),
@@ -46,7 +49,6 @@ func NewShardProcessorConstructor(loadProvider replay.LoadProvider) func(string,
 // ShardProcessor is a processor for a shard.
 type ShardProcessor struct {
 	shardID      string
-	shardLoad    float64
 	timeSource   clock.TimeSource
 	logger       *zap.Logger
 	stopChan     chan struct{}
@@ -114,11 +116,45 @@ func (p *ShardProcessor) process() {
 	}
 }
 
-// shardLoadFromID returns a shard load based on the shard ID.
-// If the shard ID is not a valid integer, it returns 1.0.
-func shardLoadFromID(shardID string) float64 {
-	if parsed, err := strconv.Atoi(shardID); err == nil && parsed > 0 {
-		return float64(parsed)
+func (p *ShardProcessor) calculateLoad() float64 {
+
+	hotFraction := getEnvFloat("SD_HOT_FRACTION", 0.05)
+	hotMultiplier := getEnvFloat("SD_HOT_MULTIPLIER", 8.0)
+	rotateSeconds := getEnvFloat("SD_HOT_ROTATE_SECONDS", 120.0)
+	noisePct := getEnvFloat("SD_LOAD_NOISE_PCT", 0.10)
+	execScale := getEnvFloat("SD_EXEC_LOAD_SCALE", 1.0)
+
+	load := 1.0
+
+	// Determine if shard is hot based on ID and time rotation
+	period := int64(0)
+	if rotateSeconds > 0 {
+		period = p.timeSource.Now().Unix() / int64(rotateSeconds)
 	}
-	return 1.0
+
+	// Use a hash of shardID and period to decide hotness
+	h := farm.Fingerprint64([]byte(p.shardID + strconv.FormatInt(period, 10)))
+	if float64(h%1000)/1000.0 < hotFraction {
+		load *= hotMultiplier
+	}
+
+	// Add noise
+	if noisePct > 0 {
+		noise := (rand.Float64()*2 - 1) * noisePct
+		load *= (1 + noise)
+	}
+
+	// Apply executor scale
+	load *= execScale
+
+	return math.Max(0.1, load)
+}
+
+func getEnvFloat(key string, defaultValue float64) float64 {
+	if val := os.Getenv(key); val != "" {
+		if f, err := strconv.ParseFloat(val, 64); err == nil {
+			return f
+		}
+	}
+	return defaultValue
 }
