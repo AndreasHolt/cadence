@@ -27,6 +27,7 @@ import (
 
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/log"
+	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/rpc"
 	"github.com/uber/cadence/service/sharddistributor/config"
@@ -45,6 +46,22 @@ var Module = fx.Module("sharddistributor",
 	election.Module,
 	process.Module,
 	fx.Provide(config.NewConfig),
+	fx.Decorate(func(cfg config.ShardDistribution, logger log.Logger) config.ShardDistribution {
+		speed := config.ReplaySpeedFromEnv()
+		if speed <= 1.0 {
+			return cfg
+		}
+		scaled := config.ScaleShardDistributionForReplay(cfg, speed)
+		logger.Info("Applied replay speed scaling to shard distributor timers",
+			tag.Dynamic("replay_speed", speed),
+			tag.Dynamic("election_leader_period", scaled.Election.LeaderPeriod),
+			tag.Dynamic("process_period", scaled.Process.Period),
+			tag.Dynamic("heartbeat_ttl", scaled.Process.HeartbeatTTL),
+			tag.Dynamic("per_shard_cooldown", scaled.Process.LoadBalance.PerShardCooldown),
+			tag.Dynamic("load_smoothing_tau", scaled.Process.LoadBalance.LoadSmoothingTau),
+		)
+		return scaled
+	}),
 	fx.Decorate(func(s store.Store, metricsClient metrics.Client, logger log.Logger, timeSource clock.TimeSource) store.Store {
 		return meteredStore.NewStore(s, metricsClient, logger, timeSource)
 	}),

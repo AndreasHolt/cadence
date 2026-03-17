@@ -206,7 +206,13 @@ func TestRecordHeartbeatUpdatesShardStatistics(t *testing.T) {
 	updated, ok := nsState.ShardStats[shardID]
 	require.True(t, ok)
 	assert.True(t, updated.LastUpdateTime.After(initialStats.LastUpdateTime))
-	expectedLoad := statistics.CalculateSmoothedLoad(initialStats.SmoothedLoad, req.ReportedShards[shardID].ShardLoad, initialStats.LastUpdateTime, updated.LastUpdateTime)
+	expectedLoad := statistics.CalculateSmoothedLoad(
+		initialStats.SmoothedLoad,
+		req.ReportedShards[shardID].ShardLoad,
+		initialStats.LastUpdateTime,
+		updated.LastUpdateTime,
+		config.DefaultLoadSmoothingTau,
+	)
 	assert.InDelta(t, expectedLoad, updated.SmoothedLoad, 1e-9)
 	assert.Equal(t, initialStats.LastMoveTime, updated.LastMoveTime)
 }
@@ -1091,6 +1097,7 @@ func createStore(t *testing.T, tc *testhelper.StoreTestCluster) store.Store {
 		Logger:        testlogger.New(t),
 		TimeSource:    clock.NewMockedTimeSourceAt(time.Now()),
 		MetricsClient: metrics.NewNoopMetricsClient(),
+		ShardCfg:      tc.LeaderCfg,
 		Config: &config.Config{
 			LoadBalancingMode: func(namespace string) string { return config.LoadBalancingModeNAIVE },
 			MaxEtcdTxnOps:     dynamicproperties.GetIntPropertyFn(128),

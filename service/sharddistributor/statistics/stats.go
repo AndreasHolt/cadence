@@ -5,11 +5,10 @@ import (
 	"time"
 )
 
-func CalculateSmoothedLoad(prev, current float64, lastUpdate, now time.Time) float64 {
+func CalculateSmoothedLoad(prev, current float64, lastUpdate, now time.Time, tau time.Duration) float64 {
 	if math.IsNaN(current) || math.IsInf(current, 0) {
 		current = 0
 	}
-	const tau = 30 * time.Second // smaller = more responsive, larger = smoother
 	if lastUpdate.IsZero() || tau <= 0 {
 		return current
 	}

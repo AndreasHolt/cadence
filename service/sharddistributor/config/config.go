@@ -106,6 +106,11 @@ type (
 		// Default: 1 minute.
 		PerShardCooldown time.Duration `yaml:"perShardCooldown"`
 
+		// LoadSmoothingTau controls the EWMA smoothing time constant for shard load statistics.
+		// Smaller values react faster, larger values smooth more.
+		// Default: 30 seconds.
+		LoadSmoothingTau time.Duration `yaml:"loadSmoothingTau"`
+
 		// MoveBudgetProportion is the fraction of total shards that may be moved per load-balance pass.
 		// Default: 0.01 (1%).
 		MoveBudgetProportion float64 `yaml:"moveBudgetProportion"`
@@ -115,12 +120,12 @@ type (
 		HysteresisUpperBand float64 `yaml:"hysteresisUpperBand"`
 
 		// HysteresisLowerBand is the multiplier below mean load that qualifies an executor as a destination.
-		// Default: 0.95.
+		// Default: 0.90.
 		HysteresisLowerBand float64 `yaml:"hysteresisLowerBand"`
 
 		// SevereImbalanceRatio triggers a destination "escape hatch" when maxLoad/meanLoad exceeds this value
 		// but no executor qualifies as a destination under the normal hysteresis lower band.
-		// Default: 1.5.
+		// Default: 1.30.
 		SevereImbalanceRatio float64 `yaml:"severeImbalanceRatio"`
 
 		// DisableBenefitGating controls whether load-based balancing may accept moves that do not

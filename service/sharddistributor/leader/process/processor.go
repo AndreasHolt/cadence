@@ -56,9 +56,9 @@ const (
 	_defaultMoveBudgetProportion = 0.01
 	// Default hysteresis bands around mean load.
 	_defaultHysteresisUpperBand = 1.15
-	_defaultHysteresisLowerBand = 0.95
+	_defaultHysteresisLowerBand = 0.9
 	// Default threshold for triggering severe-imbalance escape hatch.
-	_defaultSevereImbalanceRatio = 1.5
+	_defaultSevereImbalanceRatio = 1.3
 )
 
 type processorFactory struct {
@@ -105,6 +105,9 @@ func NewProcessorFactory(
 	}
 	if cfg.Process.LoadBalance.PerShardCooldown <= 0 {
 		cfg.Process.LoadBalance.PerShardCooldown = _defaultPerShardCooldown
+	}
+	if cfg.Process.LoadBalance.LoadSmoothingTau <= 0 {
+		cfg.Process.LoadBalance.LoadSmoothingTau = config.DefaultLoadSmoothingTau
 	}
 	if cfg.Process.LoadBalance.MoveBudgetProportion <= 0 {
 		cfg.Process.LoadBalance.MoveBudgetProportion = _defaultMoveBudgetProportion

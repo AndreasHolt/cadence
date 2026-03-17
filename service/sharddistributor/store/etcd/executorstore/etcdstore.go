@@ -46,6 +46,7 @@ type executorStoreImpl struct {
 	recordWriter  *common.RecordWriter
 	cfg           *config.Config
 	metricsClient metrics.Client
+	loadTau       time.Duration
 }
 
 // shardStatisticsUpdate holds the staged statistics for a shard so we can write them
@@ -66,6 +67,7 @@ type ExecutorStoreParams struct {
 	TimeSource    clock.TimeSource
 	Config        *config.Config
 	MetricsClient metrics.Client
+	ShardCfg      config.ShardDistribution
 }
 
 // NewStore creates a new etcd-backed store and provides it to the fx application.
@@ -81,6 +83,10 @@ func NewStore(p ExecutorStoreParams) (store.Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create record writer: %w", err)
 	}
+	loadTau := p.ShardCfg.Process.LoadBalance.LoadSmoothingTau
+	if loadTau <= 0 {
+		loadTau = config.DefaultLoadSmoothingTau
+	}
 	store := &executorStoreImpl{
 		client:        p.Client,
 		prefix:        p.ETCDConfig.Prefix,
@@ -90,6 +96,7 @@ func NewStore(p ExecutorStoreParams) (store.Store, error) {
 		recordWriter:  recordWriter,
 		cfg:           p.Config,
 		metricsClient: p.MetricsClient,
+		loadTau:       loadTau,
 	}
 
 	p.Lifecycle.Append(fx.StartStopHook(store.Start, store.Stop))
@@ -187,13 +194,19 @@ func (s *executorStoreImpl) calcUpdatedStatistics(ctx context.Context, namespace
 			)
 			continue
 		}
-		statsUpdate.stats[shardID] = UpdateShardStatistic(shardID, report.ShardLoad, now, oldStats)
+		statsUpdate.stats[shardID] = UpdateShardStatistic(shardID, report.ShardLoad, now, oldStats, s.loadTau)
 	}
 
 	return []shardStatisticsUpdate{statsUpdate}, nil
 }
 
-func UpdateShardStatistic(shardID string, shardLoad float64, now time.Time, oldStats map[string]etcdtypes.ShardStatistics) etcdtypes.ShardStatistics {
+func UpdateShardStatistic(
+	shardID string,
+	shardLoad float64,
+	now time.Time,
+	oldStats map[string]etcdtypes.ShardStatistics,
+	loadTau time.Duration,
+) etcdtypes.ShardStatistics {
 	var stats etcdtypes.ShardStatistics
 
 	prevStats, ok := oldStats[shardID]
@@ -203,7 +216,7 @@ func UpdateShardStatistic(shardID string, shardLoad float64, now time.Time, oldS
 
 	prevSmoothed := prevStats.SmoothedLoad
 	prevUpdate := prevStats.LastUpdateTime.ToTime()
-	newSmoothed := statistics.CalculateSmoothedLoad(prevSmoothed, shardLoad, prevUpdate, now)
+	newSmoothed := statistics.CalculateSmoothedLoad(prevSmoothed, shardLoad, prevUpdate, now, loadTau)
 
 	stats.SmoothedLoad = newSmoothed
 	stats.LastUpdateTime = etcdtypes.Time(now)
