@@ -393,6 +393,7 @@ func TestCancelOutstandingPoll(t *testing.T) {
 				executor:         executor,
 				config: &config.Config{
 					ExcludeShortLivedTaskListsFromShardManager: func(opts ...dynamicproperties.FilterOption) bool { return false },
+					PercentageOnboardedToShardManager:          func(opts ...dynamicproperties.FilterOption) int { return 100 },
 				},
 			}
 			taskListRegistry.Register(*tasklistID, mockManager)
@@ -454,6 +455,14 @@ func TestErrIfShardOwnershipLost(t *testing.T) {
 		err := engine.errIfShardOwnershipLost(context.Background(), taskListID)
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "failed to lookup ownership in SD")
+	})
+
+	t.Run("not excluded from sd with shard process not found returns ownership error", func(t *testing.T) {
+		engine, executor, _ := newEngine(t)
+		executor.EXPECT().GetShardProcess(gomock.Any(), gomock.Any()).Return(nil, executorclient.ErrShardProcessNotFound)
+
+		err := engine.errIfShardOwnershipLost(context.Background(), taskListID)
+		assertTypedOwnershipErr(t, err, "not known", "self")
 	})
 
 	t.Run("not excluded from sd and shard no longer owned", func(t *testing.T) {
@@ -741,6 +750,7 @@ func TestQueryWorkflow(t *testing.T) {
 				executor:             executor,
 				config: &config.Config{
 					ExcludeShortLivedTaskListsFromShardManager: func(opts ...dynamicproperties.FilterOption) bool { return false },
+					PercentageOnboardedToShardManager:          func(opts ...dynamicproperties.FilterOption) int { return 100 },
 				},
 			}
 			taskListRegistry.Register(*tasklistID, mockManager)
@@ -1210,6 +1220,7 @@ func TestUpdateTaskListPartitionConfig(t *testing.T) {
 				config: &config.Config{
 					EnableAdaptiveScaler:                       dynamicproperties.GetBoolPropertyFilteredByTaskListInfo(tc.enableAdaptiveScaler),
 					ExcludeShortLivedTaskListsFromShardManager: func(opts ...dynamicproperties.FilterOption) bool { return false },
+					PercentageOnboardedToShardManager:          func(opts ...dynamicproperties.FilterOption) int { return 100 },
 				},
 				executor: mockExecutor,
 			}
@@ -1391,6 +1402,7 @@ func TestRefreshTaskListPartitionConfig(t *testing.T) {
 				executor:         mockExecutor,
 				config: &config.Config{
 					ExcludeShortLivedTaskListsFromShardManager: func(opts ...dynamicproperties.FilterOption) bool { return false },
+					PercentageOnboardedToShardManager:          func(opts ...dynamicproperties.FilterOption) int { return 100 },
 				},
 			}
 			taskListRegistry.Register(*tasklistID, mockManager)
