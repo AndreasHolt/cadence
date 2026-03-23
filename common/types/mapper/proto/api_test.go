@@ -1585,10 +1585,6 @@ func TestFailoverType(t *testing.T) {
 	assert.Nil(t, ToFailoverType(apiv1.FailoverType(999))) // Unknown value
 }
 
-func EncodingTypeFuzzer(e *types.EncodingType, c fuzz.Continue) {
-	*e = types.EncodingType(c.Intn(2)) // 0-1: ThriftRW, JSON
-}
-
 func QueryConsistencyLevelFuzzer(e *types.QueryConsistencyLevel, c fuzz.Continue) {
 	*e = types.QueryConsistencyLevel(c.Intn(2)) // 0-1: Eventual, Strong
 }
@@ -1631,14 +1627,6 @@ func FailoverTypeFuzzer(e *types.FailoverType, c fuzz.Continue) {
 
 func ArchivalStatusFuzzer(e *types.ArchivalStatus, c fuzz.Continue) {
 	*e = types.ArchivalStatus(c.Intn(2)) // 0-1: Disabled, Enabled
-}
-
-func DomainStatusFuzzer(e *types.DomainStatus, c fuzz.Continue) {
-	*e = types.DomainStatus(c.Intn(3)) // 0-2: Registered, Deprecated, Deleted
-}
-
-func IsolationGroupStateFuzzer(e *types.IsolationGroupState, c fuzz.Continue) {
-	*e = types.IsolationGroupState(c.Intn(3)) // 0-2: Invalid, Healthy, Drained
 }
 
 func ContinueAsNewInitiatorFuzzer(e *types.ContinueAsNewInitiator, c fuzz.Continue) {
@@ -1759,7 +1747,7 @@ func ActiveClusterSelectionPolicyFuzzerNoCustom(p *types.ActiveClusterSelectionP
 
 func TestDataBlobArrayFuzz(t *testing.T) {
 	testutils.RunMapperFuzzTest(t, FromDataBlobArray, ToDataBlobArray,
-		testutils.WithCustomFuncs(EncodingTypeFuzzer),
+		testutils.WithCustomFuncs(testutils.EncodingTypeFuzzer),
 	)
 }
 
@@ -1940,9 +1928,9 @@ func TestFailoverDomainResponseFuzz(t *testing.T) {
 					r.ReplicationConfiguration = &types.DomainReplicationConfiguration{}
 				}
 			},
-			EncodingTypeFuzzer,
-			IsolationGroupStateFuzzer,
-			DomainStatusFuzzer,
+			testutils.EncodingTypeFuzzer,
+			testutils.IsolationGroupStateFuzzer,
+			testutils.DomainStatusFuzzer,
 			ArchivalStatusFuzzer,
 		),
 		testutils.WithExcludedFields("EmitMetric", "WorkflowExecutionRetentionPeriodInDays"),
@@ -2344,9 +2332,9 @@ func TestUpdateDomainRequestFuzz(t *testing.T) {
 	// HistoryArchivalStatus, VisibilityArchivalStatus: only included in field mask if corresponding URI is non-nil
 	testutils.RunMapperFuzzTest(t, FromUpdateDomainRequest, ToUpdateDomainRequest,
 		testutils.WithCustomFuncs(
-			EncodingTypeFuzzer,
-			IsolationGroupStateFuzzer,
-			DomainStatusFuzzer,
+			testutils.EncodingTypeFuzzer,
+			testutils.IsolationGroupStateFuzzer,
+			testutils.DomainStatusFuzzer,
 			ArchivalStatusFuzzer,
 		),
 		testutils.WithExcludedFields("EmitMetric", "FailoverReason", "WorkflowExecutionRetentionPeriodInDays", "HistoryArchivalStatus", "VisibilityArchivalStatus"),
@@ -2372,7 +2360,7 @@ func TestGetWorkflowExecutionHistoryResponseFuzz(t *testing.T) {
 	testutils.RunMapperFuzzTest(t, FromGetWorkflowExecutionHistoryResponse, ToGetWorkflowExecutionHistoryResponse,
 		testutils.WithExcludedFields("History"), // History is tested in TestHistoryEventFuzz test
 		testutils.WithCustomFuncs(
-			EncodingTypeFuzzer,
+			testutils.EncodingTypeFuzzer,
 		),
 	)
 }
@@ -2675,7 +2663,7 @@ func TestCountWorkflowExecutionsResponseFuzz(t *testing.T) {
 func TestDataBlobFuzz(t *testing.T) {
 	testutils.RunMapperFuzzTest(t, FromDataBlob, ToDataBlob,
 		testutils.WithCustomFuncs(
-			EncodingTypeFuzzer,
+			testutils.EncodingTypeFuzzer,
 		),
 	)
 }
@@ -2812,7 +2800,7 @@ func TestDescribeDomainResponseFuzz(t *testing.T) {
 	testutils.RunMapperFuzzTest(t, FromDescribeDomainResponse, ToDescribeDomainResponse,
 		testutils.WithCustomFuncs(
 			ActiveClusterSelectionPolicyFuzzerNoCustom,
-			DomainStatusFuzzer,
+			testutils.DomainStatusFuzzer,
 			ArchivalStatusFuzzer,
 			func(r *types.DescribeDomainResponse, c fuzz.Continue) {
 				c.Fuzz(r)
@@ -2973,11 +2961,11 @@ func TestClusterFailoverFuzz(t *testing.T) {
 func TestDescribeDomainResponseDomainFuzz(t *testing.T) {
 	// ActiveClusterSelectionPolicy has mutually exclusive fields based on Strategy
 	// WorkflowExecutionRetentionPeriodInDays: nil→0 conversion
-	// DomainInfo, Configuration, ReplicationConfiguration must be non-nil
+	// [BUG] DomainInfo, Configuration, ReplicationConfiguration must be non-nil
 	testutils.RunMapperFuzzTest(t, FromDescribeDomainResponseDomain, ToDescribeDomainResponseDomain,
 		testutils.WithCustomFuncs(
 			ActiveClusterSelectionPolicyFuzzerNoCustom,
-			DomainStatusFuzzer,
+			testutils.DomainStatusFuzzer,
 			ArchivalStatusFuzzer,
 			func(r *types.DescribeDomainResponse, c fuzz.Continue) {
 				c.Fuzz(r)
@@ -3050,7 +3038,7 @@ func TestUpdateDomainResponseFuzz(t *testing.T) {
 	testutils.RunMapperFuzzTest(t, FromUpdateDomainResponse, ToUpdateDomainResponse,
 		testutils.WithCustomFuncs(
 			ActiveClusterSelectionPolicyFuzzerNoCustom,
-			DomainStatusFuzzer,
+			testutils.DomainStatusFuzzer,
 			ArchivalStatusFuzzer,
 			func(r *types.UpdateDomainResponse, c fuzz.Continue) {
 				c.Fuzz(r)
