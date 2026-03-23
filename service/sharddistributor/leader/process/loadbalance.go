@@ -312,9 +312,8 @@ type ShardMove struct {
 }
 
 type shardInfo struct {
-	id    string
-	load  float64
-	index int
+	id   string
+	load float64
 }
 
 func (p *namespaceProcessor) findSingleShard(
@@ -385,7 +384,7 @@ func findMultiShards(
 	selectedMultiShards := []ShardMove{}
 
 	var eligibleShards []shardInfo
-	for i, shardID := range currentAssignments[source] {
+	for _, shardID := range currentAssignments[source] {
 		stats, ok := namespaceState.ShardStats[shardID]
 		if !ok {
 			continue
@@ -394,9 +393,8 @@ func findMultiShards(
 			continue
 		}
 		eligibleShards = append(eligibleShards, shardInfo{
-			id:    shardID,
-			load:  stats.SmoothedLoad,
-			index: i,
+			id:   shardID,
+			load: stats.SmoothedLoad,
 		})
 	}
 
@@ -435,7 +433,7 @@ func findSwapShards(
 	now time.Time,
 ) ([]ShardMove, bool, float64) {
 	var eligibleShardsSource []shardInfo
-	for i, shardID := range currentAssignments[source] {
+	for _, shardID := range currentAssignments[source] {
 		stats, ok := namespaceState.ShardStats[shardID]
 		if !ok {
 			continue
@@ -444,13 +442,12 @@ func findSwapShards(
 			continue
 		}
 		eligibleShardsSource = append(eligibleShardsSource, shardInfo{
-			id:    shardID,
-			load:  stats.SmoothedLoad,
-			index: i,
+			id:   shardID,
+			load: stats.SmoothedLoad,
 		})
 	}
 	var eligibleShardsDestination []shardInfo
-	for i, shardID := range currentAssignments[destination] {
+	for _, shardID := range currentAssignments[destination] {
 		stats, ok := namespaceState.ShardStats[shardID]
 		if !ok {
 			continue
@@ -459,9 +456,8 @@ func findSwapShards(
 			continue
 		}
 		eligibleShardsDestination = append(eligibleShardsDestination, shardInfo{
-			id:    shardID,
-			load:  stats.SmoothedLoad,
-			index: i,
+			id:   shardID,
+			load: stats.SmoothedLoad,
 		})
 	}
 
@@ -476,7 +472,8 @@ func findSwapShards(
 	})
 
 	idealLoad := (sourceLoad - destLoad) / 2
-	bestSwap := idealLoad
+	bestDiff := idealLoad
+	bestActualMove := 0.0
 	var bestMoves []ShardMove
 	found := false
 	for _, dShard := range eligibleShardsDestination {
@@ -496,8 +493,9 @@ func findSwapShards(
 			actualMove := sShard.load - dShard.load
 			diff := math.Abs(idealLoad - actualMove)
 
-			if diff < bestSwap {
-				bestSwap = diff
+			if diff < bestDiff {
+				bestDiff = diff
+				bestActualMove = actualMove
 				bestMoves = []ShardMove{
 					{shardID: sShard.id, source: source, destination: destination},
 					{shardID: dShard.id, source: destination, destination: source},
@@ -507,7 +505,7 @@ func findSwapShards(
 		}
 	}
 	if found {
-		return bestMoves, true, computeBenefitOfMove(sourceLoad, destLoad, idealLoad-bestSwap)
+		return bestMoves, true, computeBenefitOfMove(sourceLoad, destLoad, bestActualMove)
 	}
 	return nil, false, 0
 }
