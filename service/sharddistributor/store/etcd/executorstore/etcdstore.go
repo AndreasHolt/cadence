@@ -193,6 +193,18 @@ func (s *executorStoreImpl) calcUpdatedStatistics(ctx context.Context, namespace
 			)
 			continue
 		}
+
+		shardOwner, err := s.shardCache.GetShardOwner(ctx, namespace, shardID)
+		if err != nil {
+			if errors.Is(err, store.ErrShardNotFound) {
+				continue
+			}
+			return nil, fmt.Errorf("lookup shard owner: %w", err)
+		}
+		if shardOwner.ExecutorID != executorID {
+			continue
+		}
+
 		statsUpdate.stats[shardID] = UpdateShardStatistic(shardID, report.ShardLoad, now, oldStats)
 	}
 
