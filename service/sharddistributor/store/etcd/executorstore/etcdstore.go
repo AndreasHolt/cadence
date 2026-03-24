@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -244,6 +245,12 @@ func (s *executorStoreImpl) GetHeartbeat(ctx context.Context, namespace string, 
 			if err := common.DecompressAndUnmarshal(kv.Value, &assignedState); err != nil {
 				return nil, nil, fmt.Errorf("parse assigned shards: %w", err)
 			}
+		case etcdkeys.ExecutorMetadataKey:
+			if heartbeatState.Metadata == nil {
+				heartbeatState.Metadata = make(map[string]string)
+			}
+			metadataKey := parseMetadataKey(s.prefix, namespace, executorID, key)
+			heartbeatState.Metadata[metadataKey] = value
 		}
 	}
 
@@ -311,6 +318,12 @@ func (s *executorStoreImpl) GetState(ctx context.Context, namespace string) (*st
 					shardStats[shardID] = *stat.ToShardStatistics()
 				}
 			}
+		case etcdkeys.ExecutorMetadataKey:
+			if heartbeat.Metadata == nil {
+				heartbeat.Metadata = make(map[string]string)
+			}
+			metadataKey := parseMetadataKey(s.prefix, namespace, executorID, key)
+			heartbeat.Metadata[metadataKey] = value
 		}
 		heartbeatStates[executorID] = heartbeat
 		assignedStates[executorID] = assigned
@@ -322,6 +335,11 @@ func (s *executorStoreImpl) GetState(ctx context.Context, namespace string) (*st
 		ShardAssignments: assignedStates,
 		GlobalRevision:   resp.Header.Revision,
 	}, nil
+}
+
+func parseMetadataKey(prefix, namespace, executorID, key string) string {
+	metadataPrefix := etcdkeys.BuildMetadataKey(prefix, namespace, executorID, "")
+	return strings.TrimPrefix(key, metadataPrefix)
 }
 
 func (s *executorStoreImpl) SubscribeToAssignmentChanges(ctx context.Context, namespace string) (<-chan map[*store.ShardOwner][]string, func(), error) {

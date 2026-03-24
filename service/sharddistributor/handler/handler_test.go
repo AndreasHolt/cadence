@@ -35,6 +35,7 @@ import (
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/types"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/config"
 	"github.com/uber/cadence/service/sharddistributor/store"
 )
@@ -281,6 +282,76 @@ func TestAssignEphemeralShard_PrefersLowerLoad(t *testing.T) {
 			"shard2": {SmoothedLoad: 5.0},
 			"shard3": {SmoothedLoad: 1.0},
 			"shard4": {SmoothedLoad: 1.0},
+		},
+	}, nil)
+	mockStorage.EXPECT().AssignShard(gomock.Any(), _testNamespaceEphemeral, request.ShardKey, "owner2").Return(nil)
+	mockStorage.EXPECT().GetExecutor(gomock.Any(), _testNamespaceEphemeral, "owner2").Return(&store.ShardOwner{
+		ExecutorID: "owner2",
+		Metadata:   map[string]string{"ip": "127.0.0.1", "port": "1234"},
+	}, nil)
+
+	resp, err := handler.GetShardOwner(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, "owner2", resp.Owner)
+}
+
+// TestAssignEphemeralShard_PrefersLowerUtilization verifies that ephemeral shard placement
+// prefers the executor with lower normalized load when capacities differ.
+func TestAssignEphemeralShard_PrefersLowerUtilization(t *testing.T) {
+	cfg := config.ShardDistribution{
+		Namespaces: []config.Namespace{
+			{
+				Name: _testNamespaceEphemeral,
+				Type: config.NamespaceTypeEphemeral,
+			},
+		},
+	}
+
+	ctrl := gomock.NewController(t)
+	logger := testlogger.New(t)
+	mockStorage := store.NewMockStore(ctrl)
+
+	handler := &handlerImpl{
+		logger:               logger,
+		shardDistributionCfg: cfg,
+		storage:              mockStorage,
+		timeSource:           clock.NewRealTimeSource(),
+	}
+
+	request := &types.GetShardOwnerRequest{
+		Namespace: _testNamespaceEphemeral,
+		ShardKey:  "weighted-shard",
+	}
+
+	mockStorage.EXPECT().GetShardOwner(gomock.Any(), _testNamespaceEphemeral, request.ShardKey).Return(nil, store.ErrShardNotFound)
+	mockStorage.EXPECT().GetState(gomock.Any(), _testNamespaceEphemeral).Return(&store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			"owner1": {Status: types.ExecutorStatusACTIVE, Metadata: map[string]string{capacity.GoMaxProcsMetadataKey: "4"}},
+			"owner2": {Status: types.ExecutorStatusACTIVE, Metadata: map[string]string{capacity.GoMaxProcsMetadataKey: "8"}},
+		},
+		ShardAssignments: map[string]store.AssignedState{
+			"owner1": {
+				AssignedShards: map[string]*types.ShardAssignment{
+					"shard1": {Status: types.AssignmentStatusREADY},
+					"shard2": {Status: types.AssignmentStatusREADY},
+				},
+			},
+			"owner2": {
+				AssignedShards: map[string]*types.ShardAssignment{
+					"shard3": {Status: types.AssignmentStatusREADY},
+					"shard4": {Status: types.AssignmentStatusREADY},
+					"shard5": {Status: types.AssignmentStatusREADY},
+					"shard6": {Status: types.AssignmentStatusREADY},
+				},
+			},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"shard1": {SmoothedLoad: 8.0},
+			"shard2": {SmoothedLoad: 8.0},
+			"shard3": {SmoothedLoad: 6.0},
+			"shard4": {SmoothedLoad: 6.0},
+			"shard5": {SmoothedLoad: 6.0},
+			"shard6": {SmoothedLoad: 6.0},
 		},
 	}, nil)
 	mockStorage.EXPECT().AssignShard(gomock.Any(), _testNamespaceEphemeral, request.ShardKey, "owner2").Return(nil)

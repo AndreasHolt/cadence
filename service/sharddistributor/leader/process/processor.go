@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"maps"
 	"math"
-	"math/rand"
 	"slices"
 	"sort"
 	"strconv"
@@ -20,6 +19,7 @@ import (
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/types"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/config"
 	"github.com/uber/cadence/service/sharddistributor/store"
 )
@@ -414,8 +414,8 @@ func (p *namespaceProcessor) executeRebalanceCycle(ctx context.Context, metricsL
 	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignLoopNumRebalancedShards, float64(len(shardsNeedingReassignment)))
 
 	// Reassign shards from deleted/stale executors and backfill empty ones
+	didAssignShardsNeedingReassignment := p.assignShardsNeedingReassignment(shardsNeedingReassignment, namespaceState, currentAssignments)
 	didAssignToEmpty := assignShardsToEmptyExecutors(currentAssignments)
-	didAssignShardsNeedingReassignment := p.assignShardsNeedingReassignment(shardsNeedingReassignment, activeExecutors, currentAssignments)
 
 	// Load-based changes
 	didLoadBalance, err := p.loadBalance(currentAssignments, namespaceState, deletedShards, metricsLoopScope)
@@ -509,16 +509,24 @@ func (p *namespaceProcessor) findShardsNeedingReassignment(
 	return shardsNeedingReassignment, currentAssignments
 }
 
-func (*namespaceProcessor) assignShardsNeedingReassignment(shardsNeedingReassignment []string, activeExecutors []string, currentAssignments map[string][]string) bool {
+func (*namespaceProcessor) assignShardsNeedingReassignment(
+	shardsNeedingReassignment []string,
+	namespaceState *store.NamespaceState,
+	currentAssignments map[string][]string,
+) bool {
 	if len(shardsNeedingReassignment) == 0 {
 		return false
 	}
 
-	i := rand.Intn(len(activeExecutors))
+	executorLoads, _ := computeExecutorLoads(currentAssignments, namespaceState)
+	executorWeights := computeExecutorWeights(currentAssignments, namespaceState)
 	for _, shardID := range shardsNeedingReassignment {
-		executorID := activeExecutors[i%len(activeExecutors)]
+		executorID := selectLeastUtilizedExecutor(currentAssignments, executorLoads, executorWeights)
+		if executorID == "" {
+			return false
+		}
 		currentAssignments[executorID] = append(currentAssignments[executorID], shardID)
-		i++
+		executorLoads[executorID] += shardLoad(namespaceState, shardID)
 	}
 	return true
 }
@@ -667,8 +675,8 @@ func assignShardsToEmptyExecutors(currentAssignments map[string][]string) bool {
 	}
 
 	// We calculate the number of shards to assign each of the empty executors. The idea is to assume all current executors have
-	// the same number of shards `minShardsCurrentlyAssigned`. We use the minimum so when steeling we don't have to worry about
-	// steeling more shards that the executors have.
+	// the same number of shards `minShardsCurrentlyAssigned`. We use the minimum so when stealing we don't have to worry about
+	// stealing more shards than the executors have.
 	// We then calculate the total number of assumed shards `minShardsCurrentlyAssigned * len(executorsWithShards)` and divide it by the
 	// number of current executors. This gives us the number of shards per executor, thus the number of shards to assign to each of the
 	// empty executors.
@@ -677,17 +685,48 @@ func assignShardsToEmptyExecutors(currentAssignments map[string][]string) bool {
 	stealRound := 0
 	for i := 0; i < numShardsToAssignEmptyExecutors; i++ {
 		for _, emptyExecutor := range emptyExecutors {
-			executorToSteelFrom := executorsWithShards[stealRound%len(executorsWithShards)]
+			executorToStealFrom := executorsWithShards[stealRound%len(executorsWithShards)]
 			stealRound++
 
-			stolenShard := currentAssignments[executorToSteelFrom][0]
+			stolenShard := currentAssignments[executorToStealFrom][0]
 
-			currentAssignments[executorToSteelFrom] = currentAssignments[executorToSteelFrom][1:]
+			currentAssignments[executorToStealFrom] = currentAssignments[executorToStealFrom][1:]
 			currentAssignments[emptyExecutor] = append(currentAssignments[emptyExecutor], stolenShard)
 		}
 	}
 
 	return true
+}
+
+func selectLeastUtilizedExecutor(currentAssignments map[string][]string, executorLoads, executorWeights map[string]float64) string {
+	executors := make([]string, 0, len(currentAssignments))
+	for executorID := range currentAssignments {
+		executors = append(executors, executorID)
+	}
+	slices.Sort(executors)
+
+	bestExecutor := ""
+	bestUtilization := math.MaxFloat64
+	bestNormalizedShardCount := math.MaxFloat64
+	for _, executorID := range executors {
+		utilization := capacity.NormalizeLoad(executorLoads[executorID], executorWeights[executorID])
+		normalizedShardCount := capacity.NormalizeLoad(float64(len(currentAssignments[executorID])), executorWeights[executorID])
+		if utilization < bestUtilization || (utilization == bestUtilization && normalizedShardCount < bestNormalizedShardCount) {
+			bestUtilization = utilization
+			bestNormalizedShardCount = normalizedShardCount
+			bestExecutor = executorID
+		}
+	}
+
+	return bestExecutor
+}
+
+func shardLoad(namespaceState *store.NamespaceState, shardID string) float64 {
+	stats, ok := namespaceState.ShardStats[shardID]
+	if !ok {
+		return 0
+	}
+	return stats.SmoothedLoad
 }
 
 func getShards(cfg config.Namespace, namespaceState *store.NamespaceState, deletedShards map[string]store.ShardState) []string {

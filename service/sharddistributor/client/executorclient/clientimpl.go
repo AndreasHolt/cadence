@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/types"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/client/executorclient/metricsconstants"
 	"github.com/uber/cadence/service/sharddistributor/client/executorclient/syncgeneric"
 )
@@ -312,13 +314,15 @@ func (e *executorImpl[SP]) sendHeartbeat(ctx context.Context, status types.Execu
 
 	e.metrics.Gauge(metricsconstants.ShardDistributorExecutorOwnedShards).Update(float64(len(shardStatusReports)))
 
+	metadata := capacity.HeartbeatMetadata(e.metadata.Get(), runtime.GOMAXPROCS(0))
+
 	// Create the request
 	request := &types.ExecutorHeartbeatRequest{
 		Namespace:          e.namespace,
 		ExecutorID:         e.executorID,
 		Status:             status,
 		ShardStatusReports: shardStatusReports,
-		Metadata:           e.metadata.Get(),
+		Metadata:           metadata,
 	}
 
 	// Send the request

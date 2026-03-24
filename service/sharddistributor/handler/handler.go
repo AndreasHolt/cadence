@@ -34,6 +34,7 @@ import (
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/types"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/config"
 	"github.com/uber/cadence/service/sharddistributor/store"
 )
@@ -153,15 +154,16 @@ func (h *handlerImpl) assignEphemeralShard(ctx context.Context, namespace string
 
 	slices.Sort(candidates)
 	candidateLoads := calculateExecutorLoadsForCandidates(state, candidates, now, ttl)
+	candidateWeights := calculateExecutorWeightsForCandidates(state, candidates)
 
 	executorID := ""
-	minTotalLoad := math.MaxFloat64
+	minWeightNormalizedLoad := math.MaxFloat64
 
 	for _, candidate := range candidates {
-		totalLoad := candidateLoads[candidate]
+		weightNormalizedLoad := capacity.NormalizeLoad(candidateLoads[candidate], candidateWeights[candidate])
 
-		if totalLoad < minTotalLoad {
-			minTotalLoad = totalLoad
+		if weightNormalizedLoad < minWeightNormalizedLoad {
+			minWeightNormalizedLoad = weightNormalizedLoad
 			executorID = candidate
 		}
 	}
@@ -211,6 +213,14 @@ func calculateExecutorLoadsForCandidates(
 		loads[executorID] = totalLoad
 	}
 	return loads
+}
+
+func calculateExecutorWeightsForCandidates(state *store.NamespaceState, candidates []string) map[string]float64 {
+	weights := make(map[string]float64, len(candidates))
+	for _, executorID := range candidates {
+		weights[executorID] = capacity.WeightFromMetadata(state.Executors[executorID].Metadata)
+	}
+	return weights
 }
 
 func (h *handlerImpl) WatchNamespaceState(request *types.WatchNamespaceStateRequest, server WatchNamespaceStateServer) error {

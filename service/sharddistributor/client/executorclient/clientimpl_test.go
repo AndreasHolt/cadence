@@ -3,6 +3,7 @@ package executorclient
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/types"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/client/executorclient/syncgeneric"
 )
 
@@ -25,8 +27,16 @@ func expectDrainingHeartbeat(t *testing.T, mockClient *sharddistributorexecutor.
 		Heartbeat(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(ctx context.Context, req *types.ExecutorHeartbeatRequest, _ ...yarpc.CallOption) (*types.ExecutorHeartbeatResponse, error) {
 			assert.Equal(t, types.ExecutorStatusDRAINING, req.Status)
+			assertCapacityMetadata(t, req.Metadata)
 			return &types.ExecutorHeartbeatResponse{}, nil
 		})
+}
+
+func assertCapacityMetadata(t *testing.T, metadata map[string]string) {
+	t.Helper()
+
+	_, err := strconv.Atoi(metadata[capacity.GoMaxProcsMetadataKey])
+	assert.NoError(t, err)
 }
 
 func newTestExecutor(
@@ -61,21 +71,22 @@ func TestHeartBeatLoop(t *testing.T) {
 	mockShardDistributorClient := sharddistributorexecutor.NewMockClient(ctrl)
 
 	// We expect nothing is assigned to the executor, and we assign two shards to it
-	mockShardDistributorClient.EXPECT().Heartbeat(gomock.Any(),
-		&types.ExecutorHeartbeatRequest{
-			Namespace:          "test-namespace",
-			ExecutorID:         "test-executor-id",
-			Status:             types.ExecutorStatusACTIVE,
-			ShardStatusReports: make(map[string]*types.ShardStatusReport),
-			Metadata:           make(map[string]string),
-		}, gomock.Any()).
-		Return(&types.ExecutorHeartbeatResponse{
-			ShardAssignments: map[string]*types.ShardAssignment{
-				"test-shard-id1": {Status: types.AssignmentStatusREADY},
-				"test-shard-id2": {Status: types.AssignmentStatusREADY},
-			},
-			MigrationMode: types.MigrationModeONBOARDED,
-		}, nil)
+	mockShardDistributorClient.EXPECT().Heartbeat(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req *types.ExecutorHeartbeatRequest, _ ...yarpc.CallOption) (*types.ExecutorHeartbeatResponse, error) {
+			assert.Equal(t, "test-namespace", req.Namespace)
+			assert.Equal(t, "test-executor-id", req.ExecutorID)
+			assert.Equal(t, types.ExecutorStatusACTIVE, req.Status)
+			assert.Empty(t, req.ShardStatusReports)
+			assertCapacityMetadata(t, req.Metadata)
+
+			return &types.ExecutorHeartbeatResponse{
+				ShardAssignments: map[string]*types.ShardAssignment{
+					"test-shard-id1": {Status: types.AssignmentStatusREADY},
+					"test-shard-id2": {Status: types.AssignmentStatusREADY},
+				},
+				MigrationMode: types.MigrationModeONBOARDED,
+			}, nil
+		})
 	expectDrainingHeartbeat(t, mockShardDistributorClient)
 
 	// The two shards are assigned to the executor, so we expect them to be created, started and stopped
@@ -127,24 +138,25 @@ func TestHeartbeat(t *testing.T) {
 
 	// We have two shards assigned to the executor, and we expect a third shard to be assigned to it
 	shardDistributorClient := sharddistributorexecutor.NewMockClient(ctrl)
-	shardDistributorClient.EXPECT().Heartbeat(gomock.Any(),
-		&types.ExecutorHeartbeatRequest{
-			Namespace:  "test-namespace",
-			ExecutorID: "test-executor-id",
-			Status:     types.ExecutorStatusACTIVE,
-			ShardStatusReports: map[string]*types.ShardStatusReport{
-				"test-shard-id1": {Status: types.ShardStatusREADY, ShardLoad: 0.123},
-				"test-shard-id2": {Status: types.ShardStatusREADY, ShardLoad: 0.456},
+	shardDistributorClient.EXPECT().Heartbeat(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req *types.ExecutorHeartbeatRequest, _ ...yarpc.CallOption) (*types.ExecutorHeartbeatResponse, error) {
+		assert.Equal(t, "test-namespace", req.Namespace)
+		assert.Equal(t, "test-executor-id", req.ExecutorID)
+		assert.Equal(t, types.ExecutorStatusACTIVE, req.Status)
+		assert.Equal(t, map[string]*types.ShardStatusReport{
+			"test-shard-id1": {Status: types.ShardStatusREADY, ShardLoad: 0.123},
+			"test-shard-id2": {Status: types.ShardStatusREADY, ShardLoad: 0.456},
+		}, req.ShardStatusReports)
+		assertCapacityMetadata(t, req.Metadata)
+
+		return &types.ExecutorHeartbeatResponse{
+			ShardAssignments: map[string]*types.ShardAssignment{
+				"test-shard-id1": {Status: types.AssignmentStatusREADY},
+				"test-shard-id2": {Status: types.AssignmentStatusREADY},
+				"test-shard-id3": {Status: types.AssignmentStatusREADY},
 			},
-			Metadata: make(map[string]string),
-		}, gomock.Any()).Return(&types.ExecutorHeartbeatResponse{
-		ShardAssignments: map[string]*types.ShardAssignment{
-			"test-shard-id1": {Status: types.AssignmentStatusREADY},
-			"test-shard-id2": {Status: types.AssignmentStatusREADY},
-			"test-shard-id3": {Status: types.AssignmentStatusREADY},
-		},
-		MigrationMode: types.MigrationModeONBOARDED,
-	}, nil)
+			MigrationMode: types.MigrationModeONBOARDED,
+		}, nil
+	})
 
 	shardProcessorMock1 := NewMockShardProcessor(ctrl)
 	shardProcessorMock1.EXPECT().GetShardReport().Return(ShardReport{ShardLoad: 0.123, Status: types.ShardStatusREADY})
@@ -373,19 +385,20 @@ func TestHeartbeat_WithMigrationMode(t *testing.T) {
 
 	// Test that heartbeat returns migration mode correctly
 	shardDistributorClient := sharddistributorexecutor.NewMockClient(ctrl)
-	shardDistributorClient.EXPECT().Heartbeat(gomock.Any(),
-		&types.ExecutorHeartbeatRequest{
-			Namespace:          "test-namespace",
-			ExecutorID:         "test-executor-id",
-			Status:             types.ExecutorStatusACTIVE,
-			ShardStatusReports: map[string]*types.ShardStatusReport{},
-			Metadata:           make(map[string]string),
-		}, gomock.Any()).Return(&types.ExecutorHeartbeatResponse{
-		ShardAssignments: map[string]*types.ShardAssignment{
-			"test-shard-id1": {Status: types.AssignmentStatusREADY},
-		},
-		MigrationMode: types.MigrationModeDISTRIBUTEDPASSTHROUGH,
-	}, nil)
+	shardDistributorClient.EXPECT().Heartbeat(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req *types.ExecutorHeartbeatRequest, _ ...yarpc.CallOption) (*types.ExecutorHeartbeatResponse, error) {
+		assert.Equal(t, "test-namespace", req.Namespace)
+		assert.Equal(t, "test-executor-id", req.ExecutorID)
+		assert.Equal(t, types.ExecutorStatusACTIVE, req.Status)
+		assert.Empty(t, req.ShardStatusReports)
+		assertCapacityMetadata(t, req.Metadata)
+
+		return &types.ExecutorHeartbeatResponse{
+			ShardAssignments: map[string]*types.ShardAssignment{
+				"test-shard-id1": {Status: types.AssignmentStatusREADY},
+			},
+			MigrationMode: types.MigrationModeDISTRIBUTEDPASSTHROUGH,
+		}, nil
+	})
 
 	executor := newTestExecutor(shardDistributorClient, nil, nil)
 	executor.setMigrationMode(types.MigrationModeINVALID)

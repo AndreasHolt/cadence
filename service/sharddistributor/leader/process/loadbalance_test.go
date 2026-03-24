@@ -11,6 +11,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/uber/cadence/common/types"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/config"
 	"github.com/uber/cadence/service/sharddistributor/store"
 )
@@ -76,6 +77,62 @@ func TestLoadBalance_Convergence(t *testing.T) {
 
 	err := processor.rebalanceShards(context.Background())
 	require.NoError(t, err)
+}
+
+// TestLoadBalance_UsesWeightedTargets verifies that an executor with higher capacity
+// can receive more absolute load even when it is not the least-loaded executor.
+func TestLoadBalance_UsesWeightedTargets(t *testing.T) {
+	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	defer mocks.ctrl.Finish()
+	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+
+	smallExecutor := "exec-small"
+	largeExecutor := "exec-large"
+	now := mocks.timeSource.Now()
+
+	currentAssignments := map[string][]string{
+		smallExecutor: {},
+		largeExecutor: {},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			smallExecutor: {
+				Status:        types.ExecutorStatusACTIVE,
+				LastHeartbeat: now,
+				Metadata:      map[string]string{capacity.GoMaxProcsMetadataKey: "1"},
+			},
+			largeExecutor: {
+				Status:        types.ExecutorStatusACTIVE,
+				LastHeartbeat: now,
+				Metadata:      map[string]string{capacity.GoMaxProcsMetadataKey: "2"},
+			},
+		},
+		ShardAssignments: map[string]store.AssignedState{
+			smallExecutor: {AssignedShards: make(map[string]*types.ShardAssignment)},
+			largeExecutor: {AssignedShards: make(map[string]*types.ShardAssignment)},
+		},
+		ShardStats: make(map[string]store.ShardStatistics),
+	}
+
+	for i := range 9 {
+		shardID := fmt.Sprintf("small-%d", i)
+		currentAssignments[smallExecutor] = append(currentAssignments[smallExecutor], shardID)
+		namespaceState.ShardAssignments[smallExecutor].AssignedShards[shardID] = &types.ShardAssignment{}
+		namespaceState.ShardStats[shardID] = store.ShardStatistics{SmoothedLoad: 1, LastUpdateTime: now}
+	}
+
+	for i := range 12 {
+		shardID := fmt.Sprintf("large-%d", i)
+		currentAssignments[largeExecutor] = append(currentAssignments[largeExecutor], shardID)
+		namespaceState.ShardAssignments[largeExecutor].AssignedShards[shardID] = &types.ShardAssignment{}
+		namespaceState.ShardStats[shardID] = store.ShardStatistics{SmoothedLoad: 1, LastUpdateTime: now}
+	}
+
+	changed, err := processor.loadBalance(currentAssignments, namespaceState, map[string]store.ShardState{}, nil)
+	require.NoError(t, err)
+	require.True(t, changed)
+	assert.Len(t, currentAssignments[smallExecutor], 8)
+	assert.Len(t, currentAssignments[largeExecutor], 13)
 }
 
 // TestLoadBalance_SkipsNonBeneficialHotShard verifies we skip hot shards that would not improve balance.

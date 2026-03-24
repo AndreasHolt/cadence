@@ -8,6 +8,7 @@ import (
 
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/types"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/store"
 )
 
@@ -32,7 +33,7 @@ func (p *namespaceProcessor) loadBalance(
 		metricsScope.AddCounter(metrics.ShardDistributorLoadBalanceCycles, 1)
 	}
 
-	loads, totalLoad := computeExecutorLoads(currentAssignments, namespaceState)
+	loads, _ := computeExecutorLoads(currentAssignments, namespaceState)
 	if len(loads) == 0 {
 		if metricsScope != nil {
 			metricsScope.Tagged(metrics.ReasonTag(loadBalanceStopReasonNoLoad)).
@@ -41,7 +42,8 @@ func (p *namespaceProcessor) loadBalance(
 		return false, nil
 	}
 
-	meanLoad := totalLoad / float64(len(loads))
+	weights := computeExecutorWeights(currentAssignments, namespaceState)
+	targetLoads := computeTargetLoads(loads, weights)
 	allShards := getShards(p.namespaceCfg, namespaceState, deletedShards)
 	moveBudget := computeMoveBudget(len(allShards), p.cfg.LoadBalance.MoveBudgetProportion)
 	shardsMoved := false
@@ -61,8 +63,7 @@ func (p *namespaceProcessor) loadBalance(
 
 	initialSources, initialDestinations := classifySourcesAndDestinations(
 		loads,
-		namespaceState,
-		meanLoad,
+		targetLoads,
 		p.cfg.LoadBalance.HysteresisUpperBand,
 		p.cfg.LoadBalance.HysteresisLowerBand,
 	)
@@ -74,8 +75,7 @@ func (p *namespaceProcessor) loadBalance(
 	for moveBudget > 0 {
 		sourceExecutors, destinationExecutors := classifySourcesAndDestinations(
 			loads,
-			namespaceState,
-			meanLoad,
+			targetLoads,
 			p.cfg.LoadBalance.HysteresisUpperBand,
 			p.cfg.LoadBalance.HysteresisLowerBand,
 		)
@@ -88,7 +88,7 @@ func (p *namespaceProcessor) loadBalance(
 		// Escape hatch: if we have sources but no destinations under the normal lower band,
 		// allow moving to the least-loaded ACTIVE executor when imbalance is severe.
 		if len(destinationExecutors) == 0 {
-			if !isSevereImbalance(loads, meanLoad, p.cfg.LoadBalance.SevereImbalanceRatio) {
+			if !isSevereImbalance(loads, targetLoads, p.cfg.LoadBalance.SevereImbalanceRatio) {
 				stopReason = loadBalanceStopReasonNoDestinations
 				break
 			}
@@ -105,9 +105,9 @@ func (p *namespaceProcessor) loadBalance(
 			destinationExecutors = relaxed
 		}
 
-		sources := sourcesSortedByDescendingLoad(sourceExecutors, loads)
+		sources := sourcesSortedByDescendingExcessLoad(sourceExecutors, loads, targetLoads)
 
-		destExecutor := p.findBestDestination(destinationExecutors, loads)
+		destExecutor := findBestDestination(destinationExecutors, loads, targetLoads)
 		if destExecutor == "" {
 			stopReason = loadBalanceStopReasonNoDestinationExec
 			break
@@ -127,6 +127,7 @@ func (p *namespaceProcessor) loadBalance(
 				sourceExecutor,
 				destExecutor,
 				loads,
+				targetLoads,
 				now,
 			)
 			if !found {
@@ -184,25 +185,69 @@ func computeExecutorLoads(currentAssignments map[string][]string, namespaceState
 	return loads, total
 }
 
-func isSevereImbalance(executorLoads map[string]float64, meanLoad, severeImbalanceRatio float64) bool {
-	if meanLoad <= 0 || severeImbalanceRatio <= 0 {
+func computeExecutorWeights(currentAssignments map[string][]string, namespaceState *store.NamespaceState) map[string]float64 {
+	weights := make(map[string]float64, len(currentAssignments))
+	for executorID := range currentAssignments {
+		weights[executorID] = capacity.WeightFromMetadata(namespaceState.Executors[executorID].Metadata)
+	}
+	return weights
+}
+
+// computeTargetLoads returns the ideal load per executor in a perfectly balanced
+// cluster, proportional to capacity weight. When all weights are equal this is
+// simply totalLoad / numExecutors (the mean).
+func computeTargetLoads(executorLoads, executorWeights map[string]float64) map[string]float64 {
+	targets := make(map[string]float64, len(executorLoads))
+
+	totalLoad := 0.0
+	totalWeight := 0.0
+	for executorID, load := range executorLoads {
+		totalLoad += load
+		weight := executorWeights[executorID]
+		if weight <= 0 {
+			weight = 1
+		}
+		totalWeight += weight
+	}
+
+	if totalWeight <= 0 {
+		return targets
+	}
+
+	for executorID := range executorLoads {
+		weight := executorWeights[executorID]
+		if weight <= 0 {
+			weight = 1
+		}
+		targets[executorID] = (weight / totalWeight) * totalLoad
+	}
+
+	return targets
+}
+
+// isSevereImbalance reports whether any executor's load exceeds its target by
+// at least the given ratio (e.g. 1.5 means 50% above target).
+func isSevereImbalance(executorLoads, targetLoads map[string]float64, severeImbalanceRatio float64) bool {
+	if severeImbalanceRatio <= 0 {
 		return false
 	}
 
-	maxLoad := 0.0
-	for _, load := range executorLoads {
-		if load > maxLoad {
-			maxLoad = load
+	for executorID, load := range executorLoads {
+		target := targetLoads[executorID]
+		if target <= 0 {
+			continue
+		}
+		if load/target >= severeImbalanceRatio {
+			return true
 		}
 	}
-	return maxLoad/meanLoad >= severeImbalanceRatio
+	return false
 }
 
 // classifySourcesAndDestinations returns the source and destination executor sets for rebalancing.
 func classifySourcesAndDestinations(
 	executorLoads map[string]float64,
-	namespaceState *store.NamespaceState,
-	meanLoad float64,
+	targetLoads map[string]float64,
 	upperBand float64,
 	lowerBand float64,
 ) (map[string]struct{}, map[string]struct{}) {
@@ -210,10 +255,10 @@ func classifySourcesAndDestinations(
 	destinations := make(map[string]struct{})
 
 	for executorID, load := range executorLoads {
-		executor := namespaceState.Executors[executorID]
-		if load > meanLoad*upperBand {
+		targetLoad := targetLoads[executorID]
+		if load > targetLoad*upperBand {
 			sources[executorID] = struct{}{}
-		} else if executor.Status == types.ExecutorStatusACTIVE && load < meanLoad*lowerBand {
+		} else if load < targetLoad*lowerBand {
 			destinations[executorID] = struct{}{}
 		}
 	}
@@ -221,16 +266,16 @@ func classifySourcesAndDestinations(
 	return sources, destinations
 }
 
-// sourcesSortedByDescendingLoad orders sources by descending load so we prefer to
-// move shards away from the hottest executors first. Exact ordering among equal loads is not important.
-func sourcesSortedByDescendingLoad(sourceExecutors map[string]struct{}, executorLoads map[string]float64) []string {
+// sourcesSortedByDescendingExcessLoad orders sources by descending overload above target.
+func sourcesSortedByDescendingExcessLoad(sourceExecutors map[string]struct{}, executorLoads, targetLoads map[string]float64) []string {
 	sources := make([]string, 0, len(sourceExecutors))
 	for executorID := range sourceExecutors {
 		sources = append(sources, executorID)
 	}
 
 	slices.SortFunc(sources, func(a, b string) int {
-		la, lb := executorLoads[a], executorLoads[b]
+		la := executorLoads[a] - targetLoads[a]
+		lb := executorLoads[b] - targetLoads[b]
 		switch {
 		case la > lb:
 			return -1
@@ -251,17 +296,17 @@ func computeMoveBudget(totalShards int, proportion float64) int {
 	return int(math.Ceil(proportion * float64(totalShards)))
 }
 
-func (p *namespaceProcessor) findBestDestination(destinationExecutors map[string]struct{}, executorLoads map[string]float64) string {
-	minLoad := math.MaxFloat64
-	minExecutor := ""
+func findBestDestination(destinationExecutors map[string]struct{}, executorLoads, targetLoads map[string]float64) string {
+	maxDeficit := -math.MaxFloat64
+	bestExecutor := ""
 	for executor := range destinationExecutors {
-		load := executorLoads[executor]
-		if load < minLoad {
-			minLoad = load
-			minExecutor = executor
+		deficit := targetLoads[executor] - executorLoads[executor]
+		if deficit > maxDeficit {
+			maxDeficit = deficit
+			bestExecutor = executor
 		}
 	}
-	return minExecutor
+	return bestExecutor
 }
 
 // findShardToMove returns the best shard to move from source to destination.
@@ -271,6 +316,7 @@ func (p *namespaceProcessor) findShardToMove(
 	source string,
 	destination string,
 	executorLoads map[string]float64,
+	targetLoads map[string]float64,
 	now time.Time,
 ) (string, int, bool) {
 	bestShard := ""
@@ -279,6 +325,8 @@ func (p *namespaceProcessor) findShardToMove(
 
 	sourceLoad := executorLoads[source]
 	destLoad := executorLoads[destination]
+	sourceTarget := targetLoads[source]
+	destTarget := targetLoads[destination]
 	idx := -1
 
 	// If benefitGatingDisabled is true we allow moves that are not beneficial according to computeBenefitOfMove.
@@ -313,7 +361,7 @@ func (p *namespaceProcessor) findShardToMove(
 
 		load := stats.SmoothedLoad
 
-		benefit := computeBenefitOfMove(sourceLoad, destLoad, load)
+		benefit := computeBenefitOfMove(sourceLoad, sourceTarget, destLoad, destTarget, load)
 		if benefit <= 0 {
 			continue
 		}
@@ -327,12 +375,12 @@ func (p *namespaceProcessor) findShardToMove(
 	return bestShard, idx, bestShard != ""
 }
 
-// computeBenefitOfMove returns the expected reduction in sum of squared error (SSE)
-// around the mean load if we move a shard with shardLoad from sourceLoad to destLoad.
+// computeBenefitOfMove returns the reduction in sum of squared deviations around
+// weighted targets if we move a shard from source to destination.
 // A positive value means the move improves overall load balance.
-func computeBenefitOfMove(sourceLoad, destLoad, shardLoad float64) float64 {
+func computeBenefitOfMove(sourceLoad, sourceTarget, destLoad, destTarget, shardLoad float64) float64 {
 	w := shardLoad
-	return 2*w*(sourceLoad-destLoad) - 2*w*w
+	return 2*w*((sourceLoad-sourceTarget)-(destLoad-destTarget)) - 2*w*w
 }
 
 func (p *namespaceProcessor) moveShard(currentAssignments map[string][]string, sourceExecutor string, destExecutor string, shardID string, idx int) error {

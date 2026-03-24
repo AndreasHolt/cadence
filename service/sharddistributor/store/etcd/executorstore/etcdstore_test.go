@@ -91,6 +91,11 @@ func TestRecordHeartbeat(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), resp.Count, "Metadata key 2 should exist")
 	assert.Equal(t, "value-2", string(resp.Kvs[0].Value))
+
+	state, err := executorStore.GetState(ctx, tc.Namespace)
+	require.NoError(t, err)
+	require.Equal(t, "value-1", state.Executors[executorID].Metadata["key-1"])
+	require.Equal(t, "value-2", state.Executors[executorID].Metadata["key-2"])
 }
 
 func TestRecordHeartbeat_NoCompression(t *testing.T) {
