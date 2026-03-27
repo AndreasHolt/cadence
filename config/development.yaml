@@ -186,6 +186,12 @@ shardDistribution:
   process:
     period: 1s
     heartbeatTTL: 2s
+    loadBalance:
+      disableBenefitGating: false
+      severeImbalanceRatio: 1.3
+      moveBudgetProportion: 0.05
+      hysteresisUpperBand: 1.1
+      hysteresisLowerBand: 0.9
 
 shard-distributor-matching:
   namespaces:
@@ -194,3 +200,4 @@ shard-distributor-matching:
       migration_mode: local_pass
       ttl_shard: 5m
       ttl_report: 1m
+    
