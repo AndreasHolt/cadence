@@ -1,0 +1,95 @@
+{
+  "title": "Shard-Distributor Direct Service Dashboard",
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 3,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Load Imbalance Ratio (Max/Mean)",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "shard_distributor_assignment_load_max_over_mean{namespace=~\"$namespace\"}", "legendFormat": "Raw: {{namespace}}" },
+        { "expr": "shard_distributor_assignment_smoothed_load_max_over_mean{namespace=~\"$namespace\"}", "legendFormat": "Smoothed: {{namespace}}" }
+      ],
+      "description": "1.0 is perfect balance. Higher values indicate some nodes have significantly more load than average."
+    },
+    {
+      "type": "timeseries",
+      "title": "Load Coefficient of Variation (CV)",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "shard_distributor_assignment_load_cv{namespace=~\"$namespace\"}", "legendFormat": "Raw CV: {{namespace}}" },
+        { "expr": "shard_distributor_assignment_smoothed_load_cv{namespace=~\"$namespace\"}", "legendFormat": "Smoothed CV: {{namespace}}" }
+      ],
+      "description": "Measures the relative dispersion of load. Lower is better."
+    },
+    {
+      "type": "timeseries",
+      "title": "Assignment Churn (Reassignments / min)",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "rate(shard_distributor_shard_assign_reassigned_shards{namespace=~\"$namespace\"}[1m]) * 60", "legendFormat": "{{namespace}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Shard Assignment Success Rate",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "rate(shard_distrubutor_shard_assign_success{namespace=~\"$namespace\"}[1m]) / rate(shard_distrubutor_shard_assign_attempt{namespace=~\"$namespace\"}[1m])", "legendFormat": "{{namespace}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } }
+    },
+    {
+      "type": "bargauge",
+      "title": "Per-Executor Load",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "options": { "displayMode": "basic", "orientation": "horizontal" },
+      "targets": [
+        { "expr": "shard_distributor_executor_load{namespace=~\"$namespace\"}", "legendFormat": "{{executor}}" }
+      ]
+    },
+    {
+      "type": "bargauge",
+      "title": "Per-Shard Load (Top 20)",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "options": { "displayMode": "basic", "orientation": "horizontal" },
+      "targets": [
+        { "expr": "topk(20, shard_distributor_shard_load{namespace=~\"$namespace\"})", "legendFormat": "Shard {{shard}}" }
+      ]
+    },
+    {
+      "type": "bargauge",
+      "title": "Active Shards per Namespace",
+      "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 },
+      "options": { "displayMode": "basic", "orientation": "horizontal" },
+      "targets": [
+        { "expr": "shard_distributor_active_shards{namespace=~\"$namespace\"}", "legendFormat": "{{namespace}}" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Active Executors",
+      "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "sum(shard_distributor_total_executors{executor_status=\"ExecutorStatusACTIVE\", namespace=~\"$namespace\"}) by (namespace)", "legendFormat": "{{namespace}}" }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "query",
+        "name": "namespace",
+        "label": "Namespace",
+        "datasource": "prometheus",
+        "query": "label_values(shard_distributor_active_shards, namespace)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*"
+      }
+    ]
+  }
+}
