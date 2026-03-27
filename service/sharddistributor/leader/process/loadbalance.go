@@ -21,8 +21,6 @@ const (
 	loadBalanceStopReasonNoActiveDestinations = "no_active_destinations"
 	loadBalanceStopReasonNoDestinationExec    = "no_destination_executor"
 	loadBalanceStopReasonNoEligibleShard      = "no_eligible_shard"
-	useMultiMove                              = true
-	useSwapMove                               = true
 )
 
 func (p *namespaceProcessor) loadBalance(
@@ -256,33 +254,29 @@ func (p *namespaceProcessor) findShardsToMove(
 
 	var multiMoves []ShardMove
 	var multiMoveBenefit float64
-	if useMultiMove {
-		multiMoves, _, multiMoveBenefit = findMultiShards(
-			currentAssignments,
-			namespaceState,
-			source,
-			destination,
-			sourceLoad,
-			destLoad,
-			perShardCooldown,
-			now,
-		)
-	}
+	multiMoves, _, multiMoveBenefit = findMultiShards(
+		currentAssignments,
+		namespaceState,
+		source,
+		destination,
+		sourceLoad,
+		destLoad,
+		perShardCooldown,
+		now,
+	)
 
 	var swapMoves []ShardMove
 	var swapMoveBenefit float64
-	if useSwapMove {
-		swapMoves, _, swapMoveBenefit = findSwapShards(
-			currentAssignments,
-			namespaceState,
-			source,
-			destination,
-			sourceLoad,
-			destLoad,
-			perShardCooldown,
-			now,
-		)
-	}
+	swapMoves, _, swapMoveBenefit = findSwapShards(
+		currentAssignments,
+		namespaceState,
+		source,
+		destination,
+		sourceLoad,
+		destLoad,
+		perShardCooldown,
+		now,
+	)
 
 	if singleMoveBenefit == 0 && multiMoveBenefit == 0 && swapMoveBenefit == 0 {
 		return nil, false
