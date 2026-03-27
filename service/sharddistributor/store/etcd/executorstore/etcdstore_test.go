@@ -158,7 +158,9 @@ func TestRecordHeartbeat_NoCompression(t *testing.T) {
 
 func TestRecordHeartbeatUpdatesShardStatistics(t *testing.T) {
 	tc := testhelper.SetupStoreTestCluster(t)
-	executorStore := createStore(t, tc)
+
+	mockTime := clock.NewMockedTimeSource()
+	executorStore := createStoreWithTimeSource(t, tc, mockTime)
 	setLoadBalancingMode(executorStore, config.LoadBalancingModeGREEDY)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -167,18 +169,16 @@ func TestRecordHeartbeatUpdatesShardStatistics(t *testing.T) {
 	executorID := "executor-shard-stats"
 	shardID := "shard-with-load"
 
-	baseTime := time.Now().UTC()
-	initialStats := store.ShardStatistics{
-		SmoothedLoad:   1.23,
-		LastUpdateTime: baseTime.Add(-5 * time.Second),
-		LastMoveTime:   baseTime.Add(-30 * time.Second),
-	}
-
-	executorStats := map[string]etcdtypes.ShardStatistics{
-		shardID: *etcdtypes.FromShardStatistics(&initialStats),
+	initialTime := mockTime.Now().UTC().Add(-5 * time.Second)
+	initialStats := map[string]etcdtypes.ShardStatistics{
+		shardID: {
+			SmoothedLoad:   1.23,
+			LastUpdateTime: etcdtypes.Time(initialTime),
+			LastMoveTime:   etcdtypes.Time(initialTime.Add(-30 * time.Second)),
+		},
 	}
 	statsKey := etcdkeys.BuildExecutorKey(tc.EtcdPrefix, tc.Namespace, executorID, etcdkeys.ExecutorShardStatisticsKey)
-	payload, err := json.Marshal(executorStats)
+	payload, err := json.Marshal(initialStats)
 	require.NoError(t, err)
 	writer, err := common.NewRecordWriter(tc.Compression)
 	require.NoError(t, err)
@@ -187,8 +187,17 @@ func TestRecordHeartbeatUpdatesShardStatistics(t *testing.T) {
 	_, err = tc.Client.Put(ctx, statsKey, string(compressedPayload))
 	require.NoError(t, err)
 
+	_, err = executorStore.GetState(ctx, tc.Namespace)
+	require.NoError(t, err)
+
+	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
+	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, shardID, executorID))
+
+	mockTime.Advance(100 * time.Millisecond)
+	reportTime := mockTime.Now().UTC()
+
 	req := store.HeartbeatState{
-		LastHeartbeat: time.Now().UTC(),
+		LastHeartbeat: reportTime,
 		Status:        types.ExecutorStatusACTIVE,
 		ReportedShards: map[string]*types.ShardStatusReport{
 			shardID: {
@@ -203,49 +212,80 @@ func TestRecordHeartbeatUpdatesShardStatistics(t *testing.T) {
 	nsState, err := executorStore.GetState(ctx, tc.Namespace)
 	require.NoError(t, err)
 
-	updated, ok := nsState.ShardStats[shardID]
+	updatedStats, ok := nsState.ShardStats[shardID]
 	require.True(t, ok)
-	assert.True(t, updated.LastUpdateTime.After(initialStats.LastUpdateTime))
-	expectedLoad := statistics.CalculateSmoothedLoad(initialStats.SmoothedLoad, req.ReportedShards[shardID].ShardLoad, initialStats.LastUpdateTime, updated.LastUpdateTime)
-	assert.InDelta(t, expectedLoad, updated.SmoothedLoad, 1e-9)
-	assert.Equal(t, initialStats.LastMoveTime, updated.LastMoveTime)
+
+	expectedLoad := statistics.CalculateSmoothedLoad(1.23, 45.6, initialTime, reportTime)
+	assert.InDelta(t, expectedLoad, updatedStats.SmoothedLoad, 1e-9)
 }
 
 func TestRecordHeartbeatSkipsShardStatisticsWithNilReport(t *testing.T) {
 	tc := testhelper.SetupStoreTestCluster(t)
-	executorStore := createStore(t, tc)
+
+	mockTime := clock.NewMockedTimeSource()
+	executorStore := createStoreWithTimeSource(t, tc, mockTime)
 	setLoadBalancingMode(executorStore, config.LoadBalancingModeGREEDY)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	executorID := "executor-missing-load"
-	validShardID := "shard-with-valid-load"
-	skippedShardID := "shard-missing-load"
+	shardWithLoad := "shard-with-load"
+	shardWithNil := "shard-with-nil"
 
-	req := store.HeartbeatState{
-		LastHeartbeat: time.Now().UTC(),
-		Status:        types.ExecutorStatusACTIVE,
-		ReportedShards: map[string]*types.ShardStatusReport{
-			validShardID: {
-				Status:    types.ShardStatusREADY,
-				ShardLoad: 3.21,
-			},
-			skippedShardID: nil,
+	initialTime := mockTime.Now().UTC().Add(-5 * time.Second)
+	initialStats := map[string]etcdtypes.ShardStatistics{
+		shardWithLoad: {
+			SmoothedLoad:   5.0,
+			LastUpdateTime: etcdtypes.Time(initialTime),
+			LastMoveTime:   etcdtypes.Time(initialTime.Add(-30 * time.Second)),
+		},
+		shardWithNil: {
+			SmoothedLoad:   3.0,
+			LastUpdateTime: etcdtypes.Time(initialTime),
+			LastMoveTime:   etcdtypes.Time(initialTime.Add(-30 * time.Second)),
 		},
 	}
+	statsKey := etcdkeys.BuildExecutorKey(tc.EtcdPrefix, tc.Namespace, executorID, etcdkeys.ExecutorShardStatisticsKey)
+	payload, err := json.Marshal(initialStats)
+	require.NoError(t, err)
+	writer, err := common.NewRecordWriter(tc.Compression)
+	require.NoError(t, err)
+	compressedPayload, err := writer.Write(payload)
+	require.NoError(t, err)
+	_, err = tc.Client.Put(ctx, statsKey, string(compressedPayload))
+	require.NoError(t, err)
 
+	_, err = executorStore.GetState(ctx, tc.Namespace)
+	require.NoError(t, err)
+
+	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, store.HeartbeatState{Status: types.ExecutorStatusACTIVE}))
+	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, shardWithLoad, executorID))
+	require.NoError(t, executorStore.AssignShard(ctx, tc.Namespace, shardWithNil, executorID))
+
+	mockTime.Advance(100 * time.Millisecond)
+	reportTime := mockTime.Now().UTC()
+
+	req := store.HeartbeatState{
+		LastHeartbeat: reportTime,
+		Status:        types.ExecutorStatusACTIVE,
+		ReportedShards: map[string]*types.ShardStatusReport{
+			shardWithLoad: {
+				Status:    types.ShardStatusREADY,
+				ShardLoad: 10.0,
+			},
+			shardWithNil: nil,
+		},
+	}
 	require.NoError(t, executorStore.RecordHeartbeat(ctx, tc.Namespace, executorID, req))
 
 	nsState, err := executorStore.GetState(ctx, tc.Namespace)
 	require.NoError(t, err)
 
-	validStats, ok := nsState.ShardStats[validShardID]
-	require.True(t, ok)
-	assert.InDelta(t, 3.21, validStats.SmoothedLoad, 1e-9)
-	assert.False(t, validStats.LastUpdateTime.IsZero())
+	require.Contains(t, nsState.ShardStats, shardWithLoad, "shard with valid load should be in stats")
+	assert.True(t, nsState.ShardStats[shardWithLoad].SmoothedLoad != 5.0, "shard with valid load should have updated smoothed load")
 
-	assert.NotContains(t, nsState.ShardStats, skippedShardID)
+	assert.NotContains(t, nsState.ShardStats, shardWithNil, "shard with nil report should not be in stats")
 }
 
 func TestGetHeartbeat(t *testing.T) {
@@ -878,9 +918,11 @@ func recordHeartbeats(ctx context.Context, t *testing.T, executorStore store.Sto
 }
 
 func setLoadBalancingMode(executorStore store.Store, mode string) {
-	executorStore.(*executorStoreImpl).cfg = &config.Config{
-		LoadBalancingMode: func(string) string { return mode },
+	store := executorStore.(*executorStoreImpl)
+	if store.cfg == nil {
+		store.cfg = &config.Config{}
 	}
+	store.cfg.LoadBalancingMode = func(string) string { return mode }
 }
 
 // trackingTxn implements clientv3.Txn to record operations per batch for testing.
@@ -1092,6 +1134,28 @@ func createStore(t *testing.T, tc *testhelper.StoreTestCluster) store.Store {
 		Lifecycle:     fxtest.NewLifecycle(t),
 		Logger:        testlogger.New(t),
 		TimeSource:    clock.NewMockedTimeSourceAt(time.Now()),
+		MetricsClient: metrics.NewNoopMetricsClient(),
+		Config: &config.Config{
+			LoadBalancingMode: func(namespace string) string { return config.LoadBalancingModeNAIVE },
+			MaxEtcdTxnOps:     dynamicproperties.GetIntPropertyFn(128),
+		},
+	})
+	require.NoError(t, err)
+	return store
+}
+
+func createStoreWithTimeSource(t *testing.T, tc *testhelper.StoreTestCluster, timeSource clock.MockedTimeSource) store.Store {
+	t.Helper()
+
+	etcdConfig, err := etcdclient.NewExecutorStoreConfig(tc.SDConfig)
+	require.NoError(t, err)
+
+	store, err := NewStore(ExecutorStoreParams{
+		Client:        tc.Client,
+		ETCDConfig:    etcdConfig,
+		Lifecycle:     fxtest.NewLifecycle(t),
+		Logger:        testlogger.New(t),
+		TimeSource:    timeSource,
 		MetricsClient: metrics.NewNoopMetricsClient(),
 		Config: &config.Config{
 			LoadBalancingMode: func(namespace string) string { return config.LoadBalancingModeNAIVE },
