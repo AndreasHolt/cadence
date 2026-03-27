@@ -122,11 +122,6 @@ type (
 		// but no executor qualifies as a destination under the normal hysteresis lower band.
 		// Default: 1.5.
 		SevereImbalanceRatio float64 `yaml:"severeImbalanceRatio"`
-
-		// DisableBenefitGating controls whether load-based balancing may accept moves that do not
-		// strictly improve the objective function (currently: sum of squared error around mean load).
-		// Default: false (benefit gating enabled).
-		DisableBenefitGating bool `yaml:"disableBenefitGating"`
 	}
 
 	// YamlNode is a lazy-unmarshaler, because *yaml.Node only exists in gopkg.in/yaml.v3, not v2,
