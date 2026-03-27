@@ -14,6 +14,7 @@ import (
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
+	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/service/sharddistributor/store"
 	"github.com/uber/cadence/service/sharddistributor/store/etcd/etcdclient"
 	"github.com/uber/cadence/service/sharddistributor/store/etcd/etcdkeys"
@@ -39,8 +40,9 @@ type namespaceShardToExecutor struct {
 	stopCh           chan struct{}
 	logger           log.Logger
 	client           etcdclient.Client
-	pubSub           *executorStatePubSub
 	timeSource       clock.TimeSource
+	pubSub           *executorStatePubSub
+	metricsClient    metrics.Client
 
 	executorStatistics *namespaceExecutorStatistics
 }
@@ -109,7 +111,7 @@ func (n *namespaceShardToExecutor) parseExecutorData(resp *clientv3.GetResponse,
 	return data, nil
 }
 
-func newNamespaceShardToExecutor(etcdPrefix, namespace string, client etcdclient.Client, stopCh chan struct{}, logger log.Logger, timeSource clock.TimeSource) (*namespaceShardToExecutor, error) {
+func newNamespaceShardToExecutor(etcdPrefix, namespace string, client etcdclient.Client, stopCh chan struct{}, logger log.Logger, timeSource clock.TimeSource, metricsClient metrics.Client) (*namespaceShardToExecutor, error) {
 	return &namespaceShardToExecutor{
 		shardToExecutor:    make(map[string]*store.ShardOwner),
 		executorState:      make(map[*store.ShardOwner][]string),
@@ -123,6 +125,7 @@ func newNamespaceShardToExecutor(etcdPrefix, namespace string, client etcdclient
 		timeSource:         timeSource,
 		pubSub:             newExecutorStatePubSub(logger, namespace),
 		executorStatistics: newNamespaceExecutorStatistics(),
+		metricsClient:      metricsClient,
 	}, nil
 }
 
@@ -296,6 +299,10 @@ func (n *namespaceShardToExecutor) watch(triggerCh chan<- struct{}) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	scope := n.metricsClient.Scope(metrics.ShardDistributorWatchScope).
+		Tagged(metrics.NamespaceTag(n.namespace)).
+		Tagged(metrics.ShardDistributorWatchTypeTag("cache_refresh"))
+
 	watchChan := n.client.Watch(
 		// WithRequireLeader ensures that the etcd cluster has a leader
 		clientv3.WithRequireLeader(ctx),
@@ -309,31 +316,43 @@ func (n *namespaceShardToExecutor) watch(triggerCh chan<- struct{}) error {
 		case <-n.stopCh:
 			n.logger.Info("stop channel closed, exiting watch loop")
 			return nil
+
 		case watchResp, ok := <-watchChan:
 			if err := watchResp.Err(); err != nil {
 				return fmt.Errorf("watch response: %w", err)
 			}
-
 			if !ok {
 				return fmt.Errorf("watch channel closed")
 			}
 
-			if n.executorStateChanges(watchResp.Events) {
-				select {
-				case triggerCh <- struct{}{}:
-				default:
-				}
+			// Track watch metrics
+			sw := scope.StartTimer(metrics.ShardDistributorWatchProcessingLatency)
+			scope.AddCounter(metrics.ShardDistributorWatchEventsReceived, int64(len(watchResp.Events)))
+
+			// Only trigger refresh if the change is related to executor assigned state or metadata
+			if !n.hasExecutorStateChanged(watchResp) {
+				sw.Stop()
+				continue
 			}
+
+			select {
+			case triggerCh <- struct{}{}:
+			default:
+				n.logger.Info("Cache is being refreshed, skipping trigger")
+			}
+			sw.Stop()
 		}
 	}
 }
 
-func (n *namespaceShardToExecutor) executorStateChanges(events []*clientv3.Event) bool {
+// hasExecutorStateChanged checks if any of the events in the watch response indicate a change to executor assigned state or metadata,
+// and if the value actually changed (not just same value written again)
+func (n *namespaceShardToExecutor) hasExecutorStateChanged(watchResp clientv3.WatchResponse) bool {
 	needsRefresh := false
-	for _, event := range events {
+	for _, event := range watchResp.Events {
 		executorID, keyType, keyErr := etcdkeys.ParseExecutorKey(n.etcdPrefix, n.namespace, string(event.Kv.Key))
 		if keyErr != nil {
-			n.logger.Error("failed to parse executor key", tag.ShardNamespace(n.namespace), tag.Error(keyErr))
+			n.logger.Warn("Received watch event with unrecognized key format", tag.Value(keyErr))
 			continue
 		}
 
@@ -400,6 +419,11 @@ func (n *namespaceShardToExecutor) applyExecutorData(data map[string]executorDat
 	n.executorState = make(map[*store.ShardOwner][]string)
 	n.executorRevision = make(map[string]int64)
 	n.shardOwners = make(map[string]*store.ShardOwner)
+
+	// Clear statistics to remove stale entries for deleted executors
+	n.executorStatistics.lock.Lock()
+	n.executorStatistics.stats = make(map[string]map[string]etcdtypes.ShardStatistics)
+	n.executorStatistics.lock.Unlock()
 
 	for executorID, executordata := range data {
 		shardOwner := getOrCreateShardOwner(n.shardOwners, executorID)
