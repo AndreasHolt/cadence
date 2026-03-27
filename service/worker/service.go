@@ -54,6 +54,7 @@ import (
 	"github.com/uber/cadence/service/worker/scanner/shardscanner"
 	"github.com/uber/cadence/service/worker/scanner/tasklist"
 	"github.com/uber/cadence/service/worker/scanner/timers"
+	"github.com/uber/cadence/service/worker/scheduler"
 )
 
 type (
@@ -84,6 +85,7 @@ type (
 		PersistenceGlobalMaxQPS             dynamicproperties.IntPropertyFn
 		PersistenceMaxQPS                   dynamicproperties.IntPropertyFn
 		EnableBatcher                       dynamicproperties.BoolPropertyFn
+		EnableScheduler                     dynamicproperties.BoolPropertyFn
 		EnableParentClosePolicyWorker       dynamicproperties.BoolPropertyFn
 		NumParentClosePolicySystemWorkflows dynamicproperties.IntPropertyFn
 		EnableFailoverManager               dynamicproperties.BoolPropertyFn
@@ -181,6 +183,7 @@ func NewConfig(params *resource.Params) *Config {
 			ESAnalyzerWorkflowTypeDomains:            dc.GetStringProperty(dynamicproperties.ESAnalyzerWorkflowTypeMetricDomains),
 		},
 		EnableBatcher:                       dc.GetBoolProperty(dynamicproperties.EnableBatcher),
+		EnableScheduler:                     dc.GetBoolProperty(dynamicproperties.EnableScheduler),
 		EnableParentClosePolicyWorker:       dc.GetBoolProperty(dynamicproperties.EnableParentClosePolicyWorker),
 		NumParentClosePolicySystemWorkflows: dc.GetIntProperty(dynamicproperties.NumParentClosePolicySystemWorkflows),
 		EnableESAnalyzer:                    dc.GetBoolProperty(dynamicproperties.EnableESAnalyzer),
@@ -244,6 +247,10 @@ func (s *Service) Start() {
 	if s.config.EnableBatcher() {
 		s.ensureDomainExists(constants.BatcherLocalDomainName)
 		s.startBatcher()
+	}
+	if s.config.EnableScheduler() {
+		sm := s.startSchedulerWorkerManager()
+		defer sm.Stop()
 	}
 	if s.config.EnableParentClosePolicyWorker() {
 		s.startParentClosePolicyProcessor()
@@ -336,6 +343,20 @@ func (s *Service) startBatcher() {
 	if err := batcher.New(params).Start(); err != nil {
 		s.GetLogger().Fatal("error starting batcher", tag.Error(err))
 	}
+}
+
+func (s *Service) startSchedulerWorkerManager() *scheduler.WorkerManager {
+	params := &scheduler.BootstrapParams{
+		ServiceClient:      s.params.PublicClient,
+		FrontendClient:     s.GetClientBean().GetFrontendClient(),
+		Logger:             s.GetLogger(),
+		DomainCache:        s.GetDomainCache(),
+		MembershipResolver: s.GetMembershipResolver(),
+		HostInfo:           s.GetHostInfo(),
+	}
+	wm := scheduler.NewWorkerManager(params, s.config.EnableScheduler)
+	wm.Start()
+	return wm
 }
 
 func (s *Service) startScanner() {
