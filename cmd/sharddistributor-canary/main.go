@@ -17,6 +17,7 @@ import (
 
 	sharddistributorv1 "github.com/uber/cadence/.gen/proto/sharddistributor/v1"
 	"github.com/uber/cadence/common/clock"
+	cadenceconfig "github.com/uber/cadence/common/config"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/service/sharddistributor/canary"
 	canaryConfig "github.com/uber/cadence/service/sharddistributor/canary/config"
@@ -47,6 +48,7 @@ func runApp(c *cli.Context) {
 	fixedNamespace := c.String("fixed-namespace")
 	ephemeralNamespace := c.String("ephemeral-namespace")
 	canaryGRPCPort := c.Int("canary-grpc-port")
+	canaryMetricsPort := c.Int("canary-metrics-port")
 
 	numFixedExecutors := c.Int("num-fixed-executors")
 	numEphemeralExecutors := c.Int("num-ephemeral-executors")
@@ -79,7 +81,7 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 			TimerType:     "histogram",
 		},
 	}
-	metricsScope := metricsConfig.NewScope(cadenceLogger, "shard-distributor-canary")
+	_ = metricsConfig.NewScope(cadenceLogger, "shard-distributor-canary")
 
 	if replayOpts.Namespace == "" {
 		replayOpts.Namespace = defaultReplayNamespace

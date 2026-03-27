@@ -71,7 +71,7 @@ func (p *ShardProcessor) GetShardReport() executorclient.ShardReport {
 			load = 0
 		}
 	} else {
-		load = p.shardLoad // We get a load from shardID
+		load = p.calculateLoad()
 	}
 	return executorclient.ShardReport{
 		ShardLoad: load,

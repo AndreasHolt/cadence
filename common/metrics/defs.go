@@ -3879,7 +3879,6 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		ShardDistributorAssignmentLoadMaxOverMean:         {metricName: "shard_distributor_assignment_load_max_over_mean", metricType: Gauge},
 		ShardDistributorAssignmentLoadCV:                  {metricName: "shard_distributor_assignment_load_cv", metricType: Gauge},
 		ShardDistributorAssignmentSmoothedLoadMaxOverMean: {metricName: "shard_distributor_assignment_smoothed_load_max_over_mean", metricType: Gauge},
-		ShardDistributorAssignmentSmoothedLoadCV:          {metricName: "shard_distributor_assignment_smoothed_load_cv", metricType: Gauge},
 		ShardDistributorAssignmentReportedLoadMissingRatio: {
 			metricName: "shard_distributor_assignment_reported_load_missing_ratio",
 			metricType: Gauge,
@@ -3895,25 +3894,7 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 
 		ShardDistributorTotalExecutors:             {metricName: "shard_distributor_total_executors", metricType: Gauge},
 		ShardDistributorOldestExecutorHeartbeatLag: {metricName: "shard_distributor_oldest_executor_heartbeat_lag", metricType: Gauge},
-		ShardDistributorAssignmentLoadMaxOverMean:  {metricName: "shard_distributor_assignment_load_max_over_mean", metricType: Gauge},
-		ShardDistributorAssignmentLoadCV:           {metricName: "shard_distributor_assignment_load_cv", metricType: Gauge},
-		ShardDistributorAssignmentSmoothedLoadMaxOverMean: {
-			metricName: "shard_distributor_assignment_smoothed_load_max_over_mean",
-			metricType: Gauge,
-		},
-		ShardDistributorAssignmentSmoothedLoadCV: {metricName: "shard_distributor_assignment_smoothed_load_cv", metricType: Gauge},
-		ShardDistributorAssignmentReportedLoadMissingRatio: {
-			metricName: "shard_distributor_assignment_reported_load_missing_ratio",
-			metricType: Gauge,
-		},
-		ShardDistributorAssignmentSmoothedLoadMissingRatio: {
-			metricName: "shard_distributor_assignment_smoothed_load_missing_ratio",
-			metricType: Gauge,
-		},
-		ShardDistributorAssignmentSmoothedLoadStaleRatio: {
-			metricName: "shard_distributor_assignment_smoothed_load_stale_ratio",
-			metricType: Gauge,
-		},
+		ShardDistributorAssignmentSmoothedLoadCV:   {metricName: "shard_distributor_assignment_smoothed_load_cv", metricType: Gauge},
 
 		ShardDistributorExecutorLoad: {metricName: "shard_distributor_executor_load", metricType: Gauge},
 		ShardDistributorShardLoad:    {metricName: "shard_distributor_shard_load", metricType: Gauge},
