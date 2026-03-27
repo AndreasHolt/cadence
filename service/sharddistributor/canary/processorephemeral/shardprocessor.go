@@ -4,8 +4,6 @@ import (
 	"context"
 	"math"
 	"math/rand"
-	"os"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,6 +12,7 @@ import (
 
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/types"
+	canarycommon "github.com/uber/cadence/service/sharddistributor/canary/common"
 	"github.com/uber/cadence/service/sharddistributor/client/executorclient"
 )
 
@@ -65,9 +64,15 @@ var _ executorclient.ShardProcessor = (*ShardProcessor)(nil)
 
 // GetShardReport implements executorclient.ShardProcessor.
 func (p *ShardProcessor) GetShardReport() executorclient.ShardReport {
+	load := 1.0
+	if canarycommon.GetEphemeralHotLoadEnabled() {
+		load = p.calculateLoad()
+	} else {
+		load = canarycommon.ShardLoadFromID(p.shardID)
+	}
 	return executorclient.ShardReport{
-		ShardLoad: p.calculateLoad(),                  // We return a simulated load
-		Status:    types.ShardStatus(p.status.Load()), // Report the status of the shard
+		ShardLoad: load,
+		Status:    types.ShardStatus(p.status.Load()),
 	}
 }
 
@@ -116,10 +121,9 @@ func (p *ShardProcessor) process() {
 }
 
 func (p *ShardProcessor) calculateLoad() float64 {
-
-	heavyMultiplier := getEnvFloat("SD_EPH_HEAVY_MULTIPLIER", 6.0)
-	noisePct := getEnvFloat("SD_EPH_LOAD_NOISE_PCT", 0.10)
-	execScale := getEnvFloat("SD_EXEC_LOAD_SCALE", 1.0)
+	heavyMultiplier := canarycommon.GetEnvFloat("SD_EPH_HEAVY_MULTIPLIER", 6.0)
+	noisePct := canarycommon.GetEnvFloat("SD_EPH_LOAD_NOISE_PCT", 0.10)
+	execScale := canarycommon.GetEnvFloat("SD_EXEC_LOAD_SCALE", 1.0)
 
 	load := 1.0
 	if p.isHeavy {
@@ -136,13 +140,4 @@ func (p *ShardProcessor) calculateLoad() float64 {
 	load *= execScale
 
 	return math.Max(0.1, load)
-}
-
-func getEnvFloat(key string, defaultValue float64) float64 {
-	if val := os.Getenv(key); val != "" {
-		if f, err := strconv.ParseFloat(val, 64); err == nil {
-			return f
-		}
-	}
-	return defaultValue
 }

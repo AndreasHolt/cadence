@@ -12,6 +12,7 @@ import (
 
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/types"
+	canarycommon "github.com/uber/cadence/service/sharddistributor/canary/common"
 )
 
 func TestNewShardProcessor(t *testing.T) {
@@ -78,7 +79,7 @@ func Test_shardLoadFromID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.shardID, func(t *testing.T) {
-			got := shardLoadFromID(tt.shardID)
+			got := canarycommon.ShardLoadFromID(tt.shardID)
 			assert.Equal(t, tt.want, got)
 		})
 	}
