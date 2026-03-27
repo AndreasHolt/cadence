@@ -887,8 +887,8 @@ func makeShards(num int64) []string {
 	}
 	return shards
 }
-func (p *namespaceProcessor) emitAssignmentImbalanceMetrics(
 
+func (p *namespaceProcessor) emitAssignmentImbalanceMetrics(
 	metricsLoopScope metrics.Scope,
 	assignments map[string][]string,
 	namespaceState *store.NamespaceState,

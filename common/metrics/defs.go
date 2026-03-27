@@ -3892,6 +3892,25 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 
 		ShardDistributorTotalExecutors:             {metricName: "shard_distributor_total_executors", metricType: Gauge},
 		ShardDistributorOldestExecutorHeartbeatLag: {metricName: "shard_distributor_oldest_executor_heartbeat_lag", metricType: Gauge},
+		ShardDistributorAssignmentLoadMaxOverMean:  {metricName: "shard_distributor_assignment_load_max_over_mean", metricType: Gauge},
+		ShardDistributorAssignmentLoadCV:           {metricName: "shard_distributor_assignment_load_cv", metricType: Gauge},
+		ShardDistributorAssignmentSmoothedLoadMaxOverMean: {
+			metricName: "shard_distributor_assignment_smoothed_load_max_over_mean",
+			metricType: Gauge,
+		},
+		ShardDistributorAssignmentSmoothedLoadCV: {metricName: "shard_distributor_assignment_smoothed_load_cv", metricType: Gauge},
+		ShardDistributorAssignmentReportedLoadMissingRatio: {
+			metricName: "shard_distributor_assignment_reported_load_missing_ratio",
+			metricType: Gauge,
+		},
+		ShardDistributorAssignmentSmoothedLoadMissingRatio: {
+			metricName: "shard_distributor_assignment_smoothed_load_missing_ratio",
+			metricType: Gauge,
+		},
+		ShardDistributorAssignmentSmoothedLoadStaleRatio: {
+			metricName: "shard_distributor_assignment_smoothed_load_stale_ratio",
+			metricType: Gauge,
+		},
 
 		ShardDistributorStoreExecutorNotFound:             {metricName: "shard_distributor_store_executor_not_found", metricType: Counter},
 		ShardDistributorStoreFailuresPerNamespace:         {metricName: "shard_distributor_store_failures_per_namespace", metricType: Counter},
