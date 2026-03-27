@@ -38,7 +38,7 @@ func NewShardProcessor(shardID string, timeSource clock.TimeSource, logger *zap.
 	}
 
 	// Decide if this ephemeral shard is "heavy"
-	heavyProb := getEnvFloat("SD_EPH_HEAVY_PROB", 0.20)
+	heavyProb := canarycommon.GetEnvFloat("SD_EPH_HEAVY_PROB", 0.20)
 	if rand.Float64() < heavyProb {
 		p.isHeavy = true
 	}
