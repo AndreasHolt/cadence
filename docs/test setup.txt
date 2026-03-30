@@ -22,7 +22,13 @@ CANARY_REPLAY_SPEED="${CANARY_REPLAY_SPEED:-1.0}"
     --replay-num-fixed-executors "$CANARY_EXECUTORS" \
     --replay-speed "$CANARY_REPLAY_SPEED"
 
-
+Simply:
+./sharddistributor-canary start \
+    --endpoint 127.0.0.1:7943 \
+    --replay-csv 21-12_00-06_fixed.csv \
+    --replay-namespace shard-distributor-replay \
+    --replay-num-fixed-executors 3 \
+    --replay-speed 1.0
 
 
 Terminal 4:
