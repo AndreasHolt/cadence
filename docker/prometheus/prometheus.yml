@@ -5,10 +5,10 @@ global:
 scrape_configs:
   - job_name: 'prometheus'
     static_configs:
-      - targets: # addresses to scrape
-          - 'cadence:9090'
-          - 'cadence:8000'
-          - 'cadence:8001'
-          - 'cadence:8002'
-          - 'cadence:8003'
-          - 'host.docker.internal:8004' # Endpoint for Cadence samples running on localhost 
+      - targets:
+          - 'host.docker.internal:9090'
+          - 'host.docker.internal:8000'
+          - 'host.docker.internal:8001'
+          - 'host.docker.internal:8002'
+          - 'host.docker.internal:8003'
+          - 'host.docker.internal:8004' 

@@ -177,7 +177,6 @@ func opts(fixedNamespace, ephemeralNamespace, endpoint string, canaryGRPCPort in
 			yarpc.NewDispatcher,
 			func(d *yarpc.Dispatcher) yarpc.ClientConfig { return d }, // Reprovide the dispatcher as a client config
 		),
-		fx.Provide(zap.NewDevelopment),
 		fx.Provide(log.NewLogger),
 
 		// We do decorate instead of Invoke because we want to start and stop the dispatcher at the

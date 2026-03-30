@@ -4,32 +4,32 @@ services:
       statsd: ~
       prometheus:
         timerType: "histogram"
-        listenAddress: "127.0.0.1:8000"
+        listenAddress: "0.0.0.0:8000"
 
   matching:
     metrics:
       statsd: ~
       prometheus:
         timerType: "histogram"
-        listenAddress: "127.0.0.1:8001"
+        listenAddress: "0.0.0.0:8001"
 
   history:
     metrics:
       statsd: ~
       prometheus:
         timerType: "histogram"
-        listenAddress: "127.0.0.1:8002"
+        listenAddress: "0.0.0.0:8002"
 
   worker:
     metrics:
       statsd: ~
       prometheus:
         timerType: "histogram"
-        listenAddress: "127.0.0.1:8003"
+        listenAddress: "0.0.0.0:8003"
 
   shard-distributor:
     metrics:
       statsd: ~
       prometheus:
         timerType: "histogram"
-        listenAddress: "127.0.0.1:8004"
+        listenAddress: "0.0.0.0:8004"

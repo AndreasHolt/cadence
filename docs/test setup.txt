@@ -1,0 +1,37 @@
+Terminal 1:
+etcd
+
+Terminal 2:
+make cadence-server; ./cadence-server --zone prometheus start --services shard-distributor
+
+Terminal 3:
+make start-sharddistributor-canary
+or
+./scripts/run_hot_canary.sh 4
+or
+CANARY_ENDPOINT="${CANARY_ENDPOINT:-127.0.0.1:7943}"
+CANARY_CSV="${CANARY_CSV:-$ROOT_DIR/21-12_00-06_fixed.csv}"
+CANARY_NAMESPACE="${CANARY_NAMESPACE:-shard-distributor-replay}"
+CANARY_EXECUTORS="${CANARY_EXECUTORS:-3}"
+CANARY_REPLAY_SPEED="${CANARY_REPLAY_SPEED:-1.0}"
+
+./sharddistributor-canary start \
+    --endpoint "$CANARY_ENDPOINT" \
+    --replay-csv "$CANARY_CSV" \
+    --replay-namespace "$CANARY_NAMESPACE" \
+    --replay-num-fixed-executors "$CANARY_EXECUTORS" \
+    --replay-speed "$CANARY_REPLAY_SPEED"
+
+
+
+
+Terminal 4:
+Start:
+docker compose -f docker/docker-compose.yml up -d grafana prometheus
+
+Strop:
+docker compose -f docker/docker-compose.yml stop grafana prometheus
+
+Remove data:
+docker compose -f docker/docker-compose.yml rm -f -v prometheus grafana
+

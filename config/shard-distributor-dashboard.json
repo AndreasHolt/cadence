@@ -83,7 +83,7 @@
         "type": "query",
         "name": "namespace",
         "label": "Namespace",
-        "datasource": "prometheus",
+        "datasource": "Prometheus",
         "query": "label_values(shard_distributor_active_shards, namespace)",
         "refresh": 2,
         "multi": true,
