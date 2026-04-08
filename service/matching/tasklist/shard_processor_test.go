@@ -28,11 +28,20 @@ type shardProcessorTestData struct {
 	shardProcessor ShardProcessor
 }
 
+type shardLoadManager struct {
+	*MockManager
+	load float64
+}
+
+func (m *shardLoadManager) shardLoad() float64 {
+	return m.load
+}
+
 func newShardProcessorTestData(t *testing.T, taskListID *Identifier) shardProcessorTestData {
 	ctrl := gomock.NewController(t)
 
 	mockRegistry := NewMockTaskListRegistry(ctrl)
-	mockRegistry.EXPECT().ManagersByTaskListName(taskListID.GetName()).Return([]Manager{}).AnyTimes()
+	mockRegistry.EXPECT().AllManagers().Return([]Manager{}).AnyTimes()
 
 	params := ShardProcessorParams{
 		ShardID:           taskListID.GetName(),
@@ -74,4 +83,60 @@ func TestSetShardStatus(t *testing.T) {
 	require.NotNil(t, shardReport)
 	require.Equal(t, float64(0), shardReport.ShardLoad)
 	require.Equal(t, types.ShardStatusREADY, shardReport.Status)
+}
+
+func TestGetShardReportUsesManagerShardLoad(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockRegistry := NewMockTaskListRegistry(ctrl)
+	mockManager := NewMockManager(ctrl)
+	manager := &shardLoadManager{MockManager: mockManager, load: 7.5}
+	mockManager.EXPECT().TaskListID().Return(testIdentifier).AnyTimes()
+
+	mockRegistry.EXPECT().AllManagers().Return([]Manager{manager}).AnyTimes()
+
+	params := ShardProcessorParams{
+		ShardID:           testIdentifier.GetName(),
+		TaskListsRegistry: mockRegistry,
+		ReportTTL:         0,
+		TimeSource:        clock.NewRealTimeSource(),
+	}
+
+	shardProcessor, err := NewShardProcessor(params)
+	require.NoError(t, err)
+
+	shardReport := shardProcessor.GetShardReport()
+	require.Equal(t, 7.5, shardReport.ShardLoad)
+}
+
+func TestGetShardReportAggregatesPartitionedManagersByRoot(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockRegistry := NewMockTaskListRegistry(ctrl)
+
+	rootID := mustNewIdentifier("domain-id", "3", persistence.TaskListTypeDecision)
+	partitionID := mustNewIdentifier("domain-id", "/__cadence_sys/3/1", persistence.TaskListTypeDecision)
+	otherID := mustNewIdentifier("domain-id", "4", persistence.TaskListTypeDecision)
+
+	rootMgr := &shardLoadManager{MockManager: NewMockManager(ctrl), load: 2.0}
+	rootMgr.MockManager.EXPECT().TaskListID().Return(rootID).AnyTimes()
+
+	partitionMgr := &shardLoadManager{MockManager: NewMockManager(ctrl), load: 5.0}
+	partitionMgr.MockManager.EXPECT().TaskListID().Return(partitionID).AnyTimes()
+
+	otherMgr := &shardLoadManager{MockManager: NewMockManager(ctrl), load: 11.0}
+	otherMgr.MockManager.EXPECT().TaskListID().Return(otherID).AnyTimes()
+
+	mockRegistry.EXPECT().AllManagers().Return([]Manager{rootMgr, partitionMgr, otherMgr}).AnyTimes()
+
+	params := ShardProcessorParams{
+		ShardID:           "3",
+		TaskListsRegistry: mockRegistry,
+		ReportTTL:         0,
+		TimeSource:        clock.NewRealTimeSource(),
+	}
+
+	shardProcessor, err := NewShardProcessor(params)
+	require.NoError(t, err)
+
+	shardReport := shardProcessor.GetShardReport()
+	require.Equal(t, 7.0, shardReport.ShardLoad)
 }

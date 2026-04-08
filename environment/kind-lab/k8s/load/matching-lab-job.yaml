@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: matching-lab
+  namespace: cadence-kind-lab
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: matching-lab
+        app.kubernetes.io/part-of: cadence-kind-lab
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: matching-lab
+          image: cadence-kind-lab:dev
+          command:
+            - cadence-matching-lab
+            - --config
+            - /etc/cadence/kind-lab/hotspot.yaml
+          volumeMounts:
+            - name: cadence-config
+              mountPath: /etc/cadence/kind-lab/hotspot.yaml
+              subPath: hotspot.yaml
+      volumes:
+        - name: cadence-config
+          configMap:
+            name: cadence-kind-lab-config

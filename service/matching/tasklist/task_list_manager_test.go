@@ -617,6 +617,71 @@ func TestAddTaskStandby(t *testing.T) {
 	require.False(t, syncMatch)
 }
 
+func TestAddTaskForwardedCountsTowardQPS(t *testing.T) {
+	controller := gomock.NewController(t)
+	logger := testlogger.New(t)
+
+	tlm := createTestTaskListManager(t, logger, controller)
+	require.NoError(t, tlm.Start(context.Background()))
+
+	mockQPS := stats.NewMockQPSTrackerGroup(controller)
+	mockQPS.EXPECT().ReportCounter(int64(1)).Times(1)
+	mockQPS.EXPECT().QPS().Return(float64(1)).Times(1)
+	tlm.qpsTracker = mockQPS
+
+	tlm.taskWriter.Stop()
+
+	addTaskParam := AddTaskParams{
+		ForwardedFrom: "from-child-partition",
+		TaskInfo: &persistence.TaskInfo{
+			DomainID:                      uuid.New(),
+			WorkflowID:                    uuid.New(),
+			RunID:                         uuid.New(),
+			ScheduleID:                    2,
+			ScheduleToStartTimeoutSeconds: 5,
+			CreatedTime:                   time.Now(),
+		},
+	}
+
+	_, err := tlm.AddTask(context.Background(), addTaskParam)
+	require.Error(t, err)
+}
+
+func TestGetTaskCountsTowardShardLoad(t *testing.T) {
+	controller := gomock.NewController(t)
+	logger := testlogger.New(t)
+
+	tlm := createTestTaskListManager(t, logger, controller)
+
+	mockMatcher := NewMockTaskMatcher(controller)
+	mockMatcher.EXPECT().Poll(gomock.Any(), "").Return(&InternalTask{}, nil).Times(1)
+	tlm.matcher = mockMatcher
+
+	mockServedQPS := stats.NewMockQPSTracker(controller)
+	mockServedQPS.EXPECT().ReportCounter(int64(1)).Times(1)
+	tlm.servedQpsTracker = mockServedQPS
+
+	_, err := tlm.GetTask(context.Background(), nil)
+	require.NoError(t, err)
+}
+
+func TestShardLoadUsesStrongerTracker(t *testing.T) {
+	controller := gomock.NewController(t)
+	logger := testlogger.New(t)
+
+	tlm := createTestTaskListManager(t, logger, controller)
+
+	mockQPS := stats.NewMockQPSTrackerGroup(controller)
+	mockQPS.EXPECT().QPS().Return(3.0).Times(1)
+	tlm.qpsTracker = mockQPS
+
+	mockServedQPS := stats.NewMockQPSTracker(controller)
+	mockServedQPS.EXPECT().QPS().Return(7.0).Times(1)
+	tlm.servedQpsTracker = mockServedQPS
+
+	require.Equal(t, 7.0, tlm.shardLoad())
+}
+
 // return a client side tasklist throttle error from the rate limiter.
 // The expected behaviour is to retry
 func TestRateLimitErrorsFromTasklistDispatch(t *testing.T) {

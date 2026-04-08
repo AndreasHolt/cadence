@@ -145,8 +145,9 @@ type (
 		registry      TaskListRegistry
 		throttleRetry *backoff.ThrottleRetry
 
-		qpsTracker     stats.QPSTrackerGroup
-		adaptiveScaler AdaptiveScaler
+		qpsTracker       stats.QPSTrackerGroup
+		servedQpsTracker stats.QPSTracker
+		adaptiveScaler   AdaptiveScaler
 
 		partitionConfigLock sync.RWMutex
 		partitionConfig     *types.TaskListPartitionConfig
@@ -227,6 +228,7 @@ func NewManager(p ManagerParams) (Manager, error) {
 	}
 
 	tlMgr.qpsTracker = stats.NewEmaFixedWindowQPSTracker(p.TimeSource, 0.5, taskListConfig.QPSTrackerInterval(), baseEvent)
+	tlMgr.servedQpsTracker = stats.NewEmaFixedWindowQPSTracker(p.TimeSource, 0.5, taskListConfig.QPSTrackerInterval(), baseEvent)
 	if p.TaskList.IsRoot() && p.TaskListKind == types.TaskListKindNormal {
 		adaptiveScalerScope := common.NewPerTaskListScope(domainName, p.TaskList.GetName(), p.TaskListKind, p.MetricsClient, metrics.MatchingAdaptiveScalerScope).
 			Tagged(getTaskListTypeTag(p.TaskList.GetType()))
@@ -306,6 +308,7 @@ func (c *taskListManagerImpl) Start(ctx context.Context) error {
 	c.liveness.Start()
 	c.taskReader.Start()
 	c.qpsTracker.Start()
+	c.servedQpsTracker.Start()
 	if c.adaptiveScaler != nil {
 		c.adaptiveScaler.Start()
 	}
@@ -328,6 +331,7 @@ func (c *taskListManagerImpl) Stop() {
 		c.adaptiveScaler.Stop()
 	}
 	c.qpsTracker.Stop()
+	c.servedQpsTracker.Stop()
 	c.liveness.Stop()
 	c.taskWriter.Stop()
 	c.taskReader.Stop()
@@ -404,6 +408,14 @@ func (c *taskListManagerImpl) LoadBalancerHints() *types.LoadBalancerHints {
 
 func (c *taskListManagerImpl) QueriesPerSecond() float64 {
 	return c.qpsTracker.QPS()
+}
+
+func (c *taskListManagerImpl) shardLoad() float64 {
+	load := c.qpsTracker.QPS()
+	if servedLoad := c.servedQpsTracker.QPS(); servedLoad > load {
+		load = servedLoad
+	}
+	return load
 }
 
 func isTaskListPartitionConfigEqual(a types.TaskListPartitionConfig, b types.TaskListPartitionConfig) bool {
@@ -548,13 +560,13 @@ func (c *taskListManagerImpl) AddTask(ctx context.Context, params AddTaskParams)
 	if params.ForwardedFrom == "" {
 		// request sent by history service
 		c.liveness.MarkAlive()
-		if isolationGroup, ok := params.TaskInfo.PartitionConfig[isolationgroup.GroupKey]; ok {
-			c.qpsTracker.ReportGroup(isolationGroup, 1)
-		} else {
-			c.qpsTracker.ReportCounter(1)
-		}
-		c.scope.UpdateGauge(metrics.EstimatedAddTaskQPSGauge, c.qpsTracker.QPS())
 	}
+	if isolationGroup, ok := params.TaskInfo.PartitionConfig[isolationgroup.GroupKey]; ok {
+		c.qpsTracker.ReportGroup(isolationGroup, 1)
+	} else {
+		c.qpsTracker.ReportCounter(1)
+	}
+	c.scope.UpdateGauge(metrics.EstimatedAddTaskQPSGauge, c.qpsTracker.QPS())
 
 	// Sync match flow
 	var syncMatch bool
@@ -686,6 +698,7 @@ func (c *taskListManagerImpl) GetTask(
 	if err != nil {
 		return nil, fmt.Errorf("couldn't get task: %w", err)
 	}
+	c.servedQpsTracker.ReportCounter(1)
 	task.domainName = c.domainName
 	task.BacklogCountHint = c.taskAckManager.GetBacklogCount()
 	return task, nil

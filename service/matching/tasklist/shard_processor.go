@@ -12,6 +12,10 @@ import (
 	"github.com/uber/cadence/service/sharddistributor/client/executorclient"
 )
 
+type shardLoadReporter interface {
+	shardLoad() float64
+}
+
 type ShardProcessorParams struct {
 	ShardID           string
 	TaskListsRegistry TaskListRegistry
@@ -61,7 +65,7 @@ func (sp *shardProcessorImpl) Start(ctx context.Context) error {
 
 // Stop is stopping the tasklist when a shard is not assigned to this executor anymore.
 func (sp *shardProcessorImpl) Stop() {
-	toShutDown := sp.taskListsRegistry.ManagersByTaskListName(sp.shardID)
+	toShutDown := sp.managersForShard()
 	for _, tlMgr := range toShutDown {
 		tlMgr.Stop()
 	}
@@ -89,15 +93,33 @@ func (sp *shardProcessorImpl) SetShardStatus(status types.ShardStatus) {
 func (sp *shardProcessorImpl) getShardLoad() float64 {
 	var load float64
 
-	// We assign a shard only based on the task list name
-	// so task lists of different task type (decisions/activities), of different kind (normal, sticky, ephemeral) or partitions
-	// will be assigned all to the same matching instance (executor)
-	// we need to sum the rps for each of the tasklist to calculate the load.
-	for _, tlMgr := range sp.taskListsRegistry.ManagersByTaskListName(sp.shardID) {
-		qps := tlMgr.QueriesPerSecond()
-		load = load + qps
+	// Shard ownership is keyed by the task list root name, not just the exact internal
+	// manager name. Partitioned task lists use internal names such as
+	// /__cadence_sys/<root>/<partition>, but they still belong to the same shard as the
+	// root task list.
+	for _, tlMgr := range sp.managersForShard() {
+		if reporter, ok := tlMgr.(shardLoadReporter); ok {
+			load += reporter.shardLoad()
+			continue
+		}
+		load += tlMgr.QueriesPerSecond()
 	}
 	return load
+}
+
+func (sp *shardProcessorImpl) managersForShard() []Manager {
+	var res []Manager
+	for _, tlMgr := range sp.taskListsRegistry.AllManagers() {
+		taskListID := tlMgr.TaskListID()
+		if taskListID == nil {
+			continue
+		}
+		if taskListID.GetRoot() != sp.shardID {
+			continue
+		}
+		res = append(res, tlMgr)
+	}
+	return res
 }
 
 func validateSPParams(params ShardProcessorParams) error {
