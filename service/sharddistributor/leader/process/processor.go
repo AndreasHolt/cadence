@@ -456,22 +456,28 @@ func (p *namespaceProcessor) executeRebalanceCycle(ctx context.Context, metricsL
 		return nil
 	}
 	deletedShards := p.findDeletedShards(namespaceState)
-	shardsNeedingReassignment, currentAssignments := p.findShardsNeedingReassignment(activeExecutors, namespaceState, deletedShards, staleExecutors)
+	if len(deletedShards) > 0 {
+		p.logger.Info("Identified deleted shards", tag.ShardExecutors(slices.Collect(maps.Keys(deletedShards))))
+	}
+	metricsLoopScope.AddCounter(metrics.ShardDistributorAssignLoopDeletedShards, int64(len(deletedShards)))
 
-	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignLoopNumRebalancedShards, float64(len(shardsNeedingReassignment)))
+	shardsToReassign, currentAssignments := p.findShardsToReassign(activeExecutors, namespaceState, deletedShards, staleExecutors)
 
-	// Reassign shards from deleted/stale executors and backfill empty ones
-	didAssignToEmpty := assignShardsToEmptyExecutors(currentAssignments)
-	didAssignShardsNeedingReassignment := p.assignShardsNeedingReassignment(shardsNeedingReassignment, activeExecutors, currentAssignments)
-	//isRebalancedByShardLoad := p.rebalanceByShardLoad(calcShardLoad(namespaceState), currentAssignments)
+	metricsLoopScope.AddCounter(metrics.ShardDistributorAssignLoopNumRebalancedShards, int64(len(shardsToReassign)))
+
+	// If there are deleted shards or stale executors, the distribution has changed.
+	assignedToEmptyExecutors := assignShardsToEmptyExecutors(currentAssignments)
+	updatedAssignments := p.updateAssignments(shardsToReassign, activeExecutors, currentAssignments)
+	//isRebalancedByShardLoad := p.rebalanceByShardLoad(calcShardLoad(namespaceState), currentAssignments, metricsLoopScope)
+	p.emitExecutorMetric(namespaceState, metricsLoopScope)
 
 	// Load-based changes
-	didLoadBalance, err := p.loadBalance(currentAssignments, namespaceState, deletedShards, metricsLoopScope)
+	isRebalancedByShardLoad, err := p.loadBalance(currentAssignments, namespaceState, deletedShards, metricsLoopScope)
 	if err != nil {
 		return fmt.Errorf("load balance: %w", err)
 	}
 
-	distributionChanged := len(deletedShards) > 0 || len(staleExecutors) > 0 || didAssignToEmpty || didAssignShardsNeedingReassignment || didLoadBalance // || isRebalancedByShardLoad
+	distributionChanged := len(deletedShards) > 0 || len(staleExecutors) > 0 || assignedToEmptyExecutors || updatedAssignments || isRebalancedByShardLoad
 	if !distributionChanged {
 		p.logger.Info("No changes to distribution detected. Skipping rebalance.")
 		return nil
@@ -479,7 +485,6 @@ func (p *namespaceProcessor) executeRebalanceCycle(ctx context.Context, metricsL
 
 	newState := p.getNewAssignmentsState(namespaceState, currentAssignments)
 
-	p.emitExecutorMetric(namespaceState, metricsLoopScope)
 	p.emitOldestExecutorHeartbeatLag(namespaceState, metricsLoopScope)
 
 	if p.sdConfig.GetMigrationMode(p.namespaceCfg.Name) != types.MigrationModeONBOARDED {
@@ -557,7 +562,7 @@ func (p *namespaceProcessor) findDeletedShards(namespaceState *store.NamespaceSt
 	return deletedShards
 }
 
-func (p *namespaceProcessor) findShardsNeedingReassignment(
+func (p *namespaceProcessor) findShardsToReassign(
 	activeExecutors []string,
 	namespaceState *store.NamespaceState,
 	deletedShards map[string]store.ShardState,
@@ -599,7 +604,7 @@ func (p *namespaceProcessor) findShardsNeedingReassignment(
 	return shardsNeedingReassignment, currentAssignments
 }
 
-func (*namespaceProcessor) assignShardsNeedingReassignment(shardsNeedingReassignment []string, activeExecutors []string, currentAssignments map[string][]string) bool {
+func (*namespaceProcessor) updateAssignments(shardsNeedingReassignment []string, activeExecutors []string, currentAssignments map[string][]string) bool {
 	if len(shardsNeedingReassignment) == 0 {
 		return false
 	}
@@ -627,7 +632,7 @@ func calcShardLoad(namespaceState *store.NamespaceState) map[string]float64 {
 
 // rebalanceByShardLoad does a rebalance if a difference between hottest and coldest executors' loads is more than maxDeviation
 // in this case the hottest shard will be moved to the coldest executor
-func (p *namespaceProcessor) rebalanceByShardLoad(shardLoad map[string]float64, currentAssignments map[string][]string) (distributedChanged bool) {
+func (p *namespaceProcessor) rebalanceByShardLoad(shardLoad map[string]float64, currentAssignments map[string][]string, metricsScope metrics.Scope) (distributedChanged bool) {
 	// no rebalance if there are no more than 1 executor
 	if len(currentAssignments) < 2 {
 		return false
@@ -680,6 +685,20 @@ func (p *namespaceProcessor) rebalanceByShardLoad(shardLoad map[string]float64, 
 	if coldestExecutorLoad+hottestShardLoad >= hottestExecutorLoad {
 		return false
 	}
+
+	p.logger.Info("Load-based shard move",
+		tag.ShardKey(hottestShardID),
+		tag.ShardExecutor(hottestExecutorID),
+		tag.Dynamic("destination_executor", coldestExecutorID),
+		tag.ShardLoad(fmt.Sprintf("%f", hottestShardLoad)),
+		tag.Dynamic("hottest_executor_load", hottestExecutorLoad),
+		tag.Dynamic("coldest_executor_load", coldestExecutorLoad),
+		tag.Dynamic("load_ratio", hottestExecutorLoad/coldestExecutorLoad),
+		tag.Dynamic("hottest_executor_shard_count", len(currentAssignments[hottestExecutorID])),
+		tag.Dynamic("coldest_executor_shard_count", len(currentAssignments[coldestExecutorID])),
+	)
+	metricsScope.AddCounter(metrics.ShardDistributorAssignLoopLoadBasedMoves, 1)
+	metricsScope.UpdateGauge(metrics.ShardDistributorAssignLoopMovedShardLoad, hottestShardLoad)
 
 	// remove the hottest Shard from the hottest executor
 	// put it to the coldest executor
