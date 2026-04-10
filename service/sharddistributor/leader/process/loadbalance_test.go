@@ -5,19 +5,74 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/uber/cadence/common/clock"
+	"github.com/uber/cadence/common/dynamicconfig/dynamicproperties"
+	"github.com/uber/cadence/common/log/testlogger"
+	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/sharddistributor/config"
+	"github.com/uber/cadence/service/sharddistributor/config/configtest"
 	"github.com/uber/cadence/service/sharddistributor/store"
 )
 
+func setupProcessorTestGreedy(t *testing.T, namespaceType string) *testDependencies {
+	migrationConfig := configtest.NewTestMigrationConfig(t,
+		configtest.ConfigEntry{
+			Key:   dynamicproperties.ShardDistributorMigrationMode,
+			Value: config.MigrationModeONBOARDED})
+	ctrl := gomock.NewController(t)
+	mockedClock := clock.NewMockedTimeSource()
+	deps := &testDependencies{
+		ctrl:       ctrl,
+		store:      store.NewMockStore(ctrl),
+		election:   store.NewMockElection(ctrl),
+		timeSource: mockedClock,
+		cfg:        config.Namespace{Name: "test-ns", ShardNum: 2, Type: namespaceType, Mode: config.MigrationModeONBOARDED},
+	}
+	deps.sdConfig = &config.Config{
+		LoadBalancingMode: func(namespace string) string {
+			return config.LoadBalancingModeGREEDY
+		},
+		LoadBalancingNaive: config.LoadBalancingNaiveConfig{
+			MaxDeviation: func(namespace string) float64 {
+				return 2.0
+			},
+		},
+		MigrationMode: migrationConfig.MigrationMode,
+	}
+
+	deps.factory = NewProcessorFactory(
+		testlogger.New(t),
+		metrics.NewNoopMetricsClient(),
+		mockedClock,
+		config.ShardDistribution{
+			Process: config.LeaderProcess{
+				Period:       time.Second,
+				HeartbeatTTL: time.Second,
+				LoadBalance: config.LoadBalance{
+					MoveBudgetProportion: 0.01,
+					HysteresisUpperBand:  1.15,
+					HysteresisLowerBand:  0.90,
+					SevereImbalanceRatio: 1.3,
+					PerShardCooldown:     time.Minute,
+					DisableBenefitGating: false,
+				},
+			},
+		},
+		deps.sdConfig,
+	)
+	return deps
+}
+
 // TestLoadBalance_Convergence verifies the balancer moves shards from an overloaded executor to an underloaded one.
 func TestLoadBalance_Convergence(t *testing.T) {
-	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	mocks := setupProcessorTestGreedy(t, config.NamespaceTypeEphemeral)
 	defer mocks.ctrl.Finish()
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 
@@ -79,7 +134,7 @@ func TestLoadBalance_Convergence(t *testing.T) {
 
 // TestLoadBalance_SkipsNonBeneficialHotShard verifies we skip hot shards that would not improve balance.
 func TestLoadBalance_SkipsNonBeneficialHotShard(t *testing.T) {
-	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	mocks := setupProcessorTestGreedy(t, config.NamespaceTypeEphemeral)
 	defer mocks.ctrl.Finish()
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 
@@ -118,7 +173,7 @@ func TestLoadBalance_SkipsNonBeneficialHotShard(t *testing.T) {
 
 // TestLoadBalance_NoMoveNeeded verifies the balancer does nothing when already within hysteresis bands.
 func TestLoadBalance_NoMoveNeeded(t *testing.T) {
-	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	mocks := setupProcessorTestGreedy(t, config.NamespaceTypeEphemeral)
 	defer mocks.ctrl.Finish()
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 
@@ -159,7 +214,7 @@ func TestLoadBalance_NoMoveNeeded(t *testing.T) {
 
 // TestLoadBalance_SevereImbalance_AllowsMoveWithoutDestinations verifies severe imbalance can trigger a relaxed destination set.
 func TestLoadBalance_SevereImbalance_AllowsMoveWithoutDestinations(t *testing.T) {
-	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	mocks := setupProcessorTestGreedy(t, config.NamespaceTypeEphemeral)
 	defer mocks.ctrl.Finish()
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 
@@ -227,7 +282,7 @@ func TestLoadBalance_SevereImbalance_AllowsMoveWithoutDestinations(t *testing.T)
 
 // TestLoadBalance_NoDestinations_NotSevere verifies we do not relax destinations without severe imbalance.
 func TestLoadBalance_NoDestinations_NotSevere(t *testing.T) {
-	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	mocks := setupProcessorTestGreedy(t, config.NamespaceTypeEphemeral)
 	defer mocks.ctrl.Finish()
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 
@@ -273,7 +328,7 @@ func TestLoadBalance_NoDestinations_NotSevere(t *testing.T) {
 
 // TestLoadBalance_BudgetConstraint verifies the balancer respects the move budget per pass.
 func TestLoadBalance_BudgetConstraint(t *testing.T) {
-	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	mocks := setupProcessorTestGreedy(t, config.NamespaceTypeEphemeral)
 	defer mocks.ctrl.Finish()
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 
@@ -362,7 +417,7 @@ func TestLoadBalance_BudgetConstraint(t *testing.T) {
 
 // TestLoadBalance_MultiMovePerCycle verifies multiple moves can be planned within a single pass up to the budget.
 func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
-	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	mocks := setupProcessorTestGreedy(t, config.NamespaceTypeEphemeral)
 	defer mocks.ctrl.Finish()
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 
@@ -425,7 +480,7 @@ func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
 
 // TestLoadBalance_PerShardCooldownSkipsHotShard verifies a recently moved hot shard is skipped due to cooldown.
 func TestLoadBalance_PerShardCooldownSkipsHotShard(t *testing.T) {
-	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	mocks := setupProcessorTestGreedy(t, config.NamespaceTypeEphemeral)
 	defer mocks.ctrl.Finish()
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 
@@ -477,7 +532,7 @@ func TestLoadBalance_PerShardCooldownSkipsHotShard(t *testing.T) {
 // TestLoadBalance_BenefitGatingDisabled_AllowsNonImprovingMove verifies disabling benefit gating
 // allows a move even when the objective function would not improve.
 func TestLoadBalance_BenefitGatingDisabled_AllowsNonImprovingMove(t *testing.T) {
-	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	mocks := setupProcessorTestGreedy(t, config.NamespaceTypeEphemeral)
 	defer mocks.ctrl.Finish()
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 
@@ -521,7 +576,7 @@ func TestLoadBalance_BenefitGatingDisabled_AllowsNonImprovingMove(t *testing.T) 
 
 // TestLoadBalance_NoDestinations verifies no moves are made when no executor is eligible as a destination.
 func TestLoadBalance_NoDestinations(t *testing.T) {
-	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	mocks := setupProcessorTestGreedy(t, config.NamespaceTypeEphemeral)
 	defer mocks.ctrl.Finish()
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 
@@ -567,7 +622,7 @@ func TestLoadBalance_NoDestinations(t *testing.T) {
 
 // TestLoadBalance_ExecutorRemovedFromDestination verifies destinations are removed once they cross the lower band.
 func TestLoadBalance_ExecutorRemovedFromDestination(t *testing.T) {
-	mocks := setupProcessorTest(t, config.NamespaceTypeEphemeral)
+	mocks := setupProcessorTestGreedy(t, config.NamespaceTypeEphemeral)
 	defer mocks.ctrl.Finish()
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 
