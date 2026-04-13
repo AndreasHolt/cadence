@@ -427,10 +427,10 @@ func (p *namespaceProcessor) rebalanceShards(ctx context.Context) (err error) {
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.Timeout)
 	defer cancel()
 
-	return p.executeRebalanceCycle(ctx, metricsLoopScope)
+	return p.rebalanceShardsImpl(ctx, metricsLoopScope)
 }
 
-func (p *namespaceProcessor) executeRebalanceCycle(ctx context.Context, metricsLoopScope metrics.Scope) (err error) {
+func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoopScope metrics.Scope) (err error) {
 	namespaceState, err := p.shardStore.GetState(ctx, p.namespaceCfg.Name)
 	if err != nil {
 		return fmt.Errorf("get state: %w", err)
@@ -455,6 +455,8 @@ func (p *namespaceProcessor) executeRebalanceCycle(ctx context.Context, metricsL
 		}
 		return nil
 	}
+	p.logger.Info("Active executors", tag.ShardExecutors(activeExecutors))
+
 	deletedShards := p.findDeletedShards(namespaceState)
 	if len(deletedShards) > 0 {
 		p.logger.Info("Identified deleted shards", tag.ShardExecutors(slices.Collect(maps.Keys(deletedShards))))
@@ -470,15 +472,13 @@ func (p *namespaceProcessor) executeRebalanceCycle(ctx context.Context, metricsL
 	updatedAssignments := p.updateAssignments(shardsToReassign, activeExecutors, currentAssignments)
 
 	var isRebalancedByShardLoad bool
-	if p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name) == types.LoadBalancingModeNAIVE {
-		isRebalancedByShardLoad = p.rebalanceByShardLoad(calcShardLoad(namespaceState), currentAssignments, metricsLoopScope)
-	} else if p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name) == types.LoadBalancingModeGREEDY {
+	if p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name) == types.LoadBalancingModeGREEDY {
 		isRebalancedByShardLoad, err = p.loadBalance(currentAssignments, namespaceState, deletedShards)
 		if err != nil {
 			return err
 		}
 	} else {
-		return fmt.Errorf("Invalid load balancing mode: %d", p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name))
+		isRebalancedByShardLoad = p.rebalanceByShardLoad(calcShardLoad(namespaceState), currentAssignments, metricsLoopScope)
 	}
 
 	p.emitExecutorMetric(namespaceState, metricsLoopScope)
@@ -610,7 +610,7 @@ func (p *namespaceProcessor) findShardsToReassign(
 	return shardsToReassign, currentAssignments
 }
 
-func (*namespaceProcessor) updateAssignments(shardsToReassign []string, activeExecutors []string, currentAssignments map[string][]string) bool {
+func (*namespaceProcessor) updateAssignments(shardsToReassign []string, activeExecutors []string, currentAssignments map[string][]string) (distributionChanged bool) {
 	if len(shardsToReassign) == 0 {
 		return false
 	}
