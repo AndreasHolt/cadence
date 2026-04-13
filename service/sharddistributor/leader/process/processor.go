@@ -579,7 +579,7 @@ func (p *namespaceProcessor) findShardsToReassign(
 		allShards[shardID] = struct{}{}
 	}
 
-	shardsNeedingReassignment := make([]string, 0)
+	shardsToReassign := make([]string, 0)
 	currentAssignments := make(map[string][]string)
 
 	for _, executorID := range activeExecutors {
@@ -598,25 +598,25 @@ func (p *namespaceProcessor) findShardsToReassign(
 					currentAssignments[executorID] = append(currentAssignments[executorID], shardID)
 				} else {
 					// Otherwise, reassign the shard (executor is either inactive or stale)
-					shardsNeedingReassignment = append(shardsNeedingReassignment, shardID)
+					shardsToReassign = append(shardsToReassign, shardID)
 				}
 			}
 		}
 	}
 
 	for shardID := range allShards {
-		shardsNeedingReassignment = append(shardsNeedingReassignment, shardID)
+		shardsToReassign = append(shardsToReassign, shardID)
 	}
-	return shardsNeedingReassignment, currentAssignments
+	return shardsToReassign, currentAssignments
 }
 
-func (*namespaceProcessor) updateAssignments(shardsNeedingReassignment []string, activeExecutors []string, currentAssignments map[string][]string) bool {
-	if len(shardsNeedingReassignment) == 0 {
+func (*namespaceProcessor) updateAssignments(shardsToReassign []string, activeExecutors []string, currentAssignments map[string][]string) bool {
+	if len(shardsToReassign) == 0 {
 		return false
 	}
 
 	i := rand.Intn(len(activeExecutors))
-	for _, shardID := range shardsNeedingReassignment {
+	for _, shardID := range shardsToReassign {
 		executorID := activeExecutors[i%len(activeExecutors)]
 		currentAssignments[executorID] = append(currentAssignments[executorID], shardID)
 		i++
