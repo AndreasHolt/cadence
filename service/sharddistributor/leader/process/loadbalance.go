@@ -6,27 +6,14 @@ import (
 	"slices"
 	"time"
 
-	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/sharddistributor/store"
-)
-
-const (
-	loadBalanceStopReasonNoLoad               = "no_load"
-	loadBalanceStopReasonMoveBudgetZero       = "move_budget_zero"
-	loadBalanceStopReasonMoveBudgetExhausted  = "move_budget_exhausted"
-	loadBalanceStopReasonNoSources            = "no_sources"
-	loadBalanceStopReasonNoDestinations       = "no_destinations_not_severe"
-	loadBalanceStopReasonNoActiveDestinations = "no_active_destinations"
-	loadBalanceStopReasonNoDestinationExec    = "no_destination_executor"
-	loadBalanceStopReasonNoEligibleShard      = "no_eligible_shard"
 )
 
 func (p *namespaceProcessor) loadBalance(
 	currentAssignments map[string][]string,
 	namespaceState *store.NamespaceState,
 	deletedShards map[string]store.ShardState,
-	metricsScope metrics.Scope,
 ) (bool, error) {
 
 	loads, totalLoad := computeExecutorLoads(currentAssignments, namespaceState)
@@ -236,31 +223,10 @@ func (p *namespaceProcessor) findShardToMove(
 ) (string, int, bool) {
 	bestShard := ""
 	perShardCooldown := p.cfg.LoadBalance.PerShardCooldown
-	benefitGatingDisabled := p.cfg.LoadBalance.DisableBenefitGating
 
 	sourceLoad := executorLoads[source]
 	destLoad := executorLoads[destination]
 	idx := -1
-
-	// If benefitGatingDisabled is true we allow moves that are not beneficial according to computeBenefitOfMove.
-	if benefitGatingDisabled {
-		bestLoad := -1.0
-		for i, shard := range currentAssignments[source] {
-			stats, ok := namespaceState.ShardStats[shard]
-			if !ok {
-				continue
-			}
-			if perShardCooldown > 0 && !stats.LastMoveTime.IsZero() && now.Sub(stats.LastMoveTime) < perShardCooldown {
-				continue
-			}
-			if stats.SmoothedLoad > bestLoad {
-				bestLoad = stats.SmoothedLoad
-				bestShard = shard
-				idx = i
-			}
-		}
-		return bestShard, idx, bestShard != ""
-	}
 
 	bestBenefit := 0.0
 	for i, shard := range currentAssignments[source] {

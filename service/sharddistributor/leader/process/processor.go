@@ -473,7 +473,7 @@ func (p *namespaceProcessor) executeRebalanceCycle(ctx context.Context, metricsL
 	if p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name) == types.LoadBalancingModeNAIVE {
 		isRebalancedByShardLoad = p.rebalanceByShardLoad(calcShardLoad(namespaceState), currentAssignments, metricsLoopScope)
 	} else if p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name) == types.LoadBalancingModeGREEDY {
-		isRebalancedByShardLoad, err = p.loadBalance(currentAssignments, namespaceState, deletedShards, metricsLoopScope)
+		isRebalancedByShardLoad, err = p.loadBalance(currentAssignments, namespaceState, deletedShards)
 		if err != nil {
 			return err
 		}
