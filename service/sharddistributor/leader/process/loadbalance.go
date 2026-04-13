@@ -23,7 +23,7 @@ func (p *namespaceProcessor) loadBalance(
 
 	meanLoad := totalLoad / float64(len(loads))
 	allShards := getShards(p.namespaceCfg, namespaceState, deletedShards)
-	moveBudget := int(math.Ceil(p.cfg.LoadBalance.MoveBudgetProportion * float64(len(allShards))))
+	moveBudget := computeMoveBudget(len(allShards), p.cfg.LoadBalance.MoveBudgetProportion)
 	shardsMoved := false
 	movesPlanned := 0
 	now := p.timeSource.Now().UTC()
@@ -186,6 +186,13 @@ func sourcesSortedByDescendingLoad(sourceExecutors map[string]struct{}, executor
 	})
 
 	return sources
+}
+
+func computeMoveBudget(totalShards int, proportion float64) int {
+	if totalShards <= 0 || proportion <= 0 {
+		return 0
+	}
+	return int(math.Ceil(proportion * float64(totalShards)))
 }
 
 func (p *namespaceProcessor) findBestDestination(destinationExecutors map[string]struct{}, executorLoads map[string]float64) string {
