@@ -51,7 +51,7 @@ const (
 	_defaultTimeout      = 1 * time.Second
 	_defaultCooldown     = 250 * time.Millisecond
 	// Default cooldown between moving the same shard / applying consecutive moves.
-	_defaultShardCooldown = time.Minute
+	_defaultPerShardCooldown = time.Minute
 	// Default fraction of total shards that may be moved per load-balance pass.
 	_defaultMoveBudgetProportion = 0.01
 	// Default hysteresis bands around mean load.
@@ -104,7 +104,7 @@ func NewProcessorFactory(
 		cfg.Process.RebalanceCooldown = _defaultCooldown
 	}
 	if cfg.Process.LoadBalance.PerShardCooldown <= 0 {
-		cfg.Process.LoadBalance.PerShardCooldown = _defaultShardCooldown
+		cfg.Process.LoadBalance.PerShardCooldown = _defaultPerShardCooldown
 	}
 	if cfg.Process.LoadBalance.MoveBudgetProportion <= 0 {
 		cfg.Process.LoadBalance.MoveBudgetProportion = _defaultMoveBudgetProportion
