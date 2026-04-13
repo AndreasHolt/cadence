@@ -23,14 +23,10 @@ func (p *namespaceProcessor) loadBalance(
 
 	meanLoad := totalLoad / float64(len(loads))
 	allShards := getShards(p.namespaceCfg, namespaceState, deletedShards)
-	moveBudget := computeMoveBudget(len(allShards), p.cfg.LoadBalance.MoveBudgetProportion)
+	moveBudget := int(math.Ceil(p.cfg.LoadBalance.MoveBudgetProportion * float64(len(allShards))))
 	shardsMoved := false
 	movesPlanned := 0
 	now := p.timeSource.Now().UTC()
-
-	if moveBudget <= 0 {
-		return false, nil
-	}
 
 	// Plan multiple moves per cycle (within budget), recomputing eligibility after each move.
 	// Stop early once sources/destinations are empty, i.e. imbalance is within hysteresis bands.
@@ -192,13 +188,6 @@ func sourcesSortedByDescendingLoad(sourceExecutors map[string]struct{}, executor
 	return sources
 }
 
-func computeMoveBudget(totalShards int, proportion float64) int {
-	if totalShards <= 0 || proportion <= 0 {
-		return 0
-	}
-	return int(math.Ceil(proportion * float64(totalShards)))
-}
-
 func (p *namespaceProcessor) findBestDestination(destinationExecutors map[string]struct{}, executorLoads map[string]float64) string {
 	minLoad := math.MaxFloat64
 	minExecutor := ""
@@ -258,8 +247,7 @@ func (p *namespaceProcessor) findShardToMove(
 // around the mean load if we move a shard with shardLoad from sourceLoad to destLoad.
 // A positive value means the move improves overall load balance.
 func computeBenefitOfMove(sourceLoad, destLoad, shardLoad float64) float64 {
-	w := shardLoad
-	return 2*w*(sourceLoad-destLoad) - 2*w*w
+	return 2*shardLoad*(sourceLoad-destLoad) - 2*shardLoad*shardLoad
 }
 
 func (p *namespaceProcessor) moveShard(currentAssignments map[string][]string, sourceExecutor string, destExecutor string, shardID string, idx int) error {
