@@ -199,4 +199,3 @@ shard-distributor-matching:
       migration_mode: local_pass
       ttl_shard: 5m
       ttl_report: 1m
-    
