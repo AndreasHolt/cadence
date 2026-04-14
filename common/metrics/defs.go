@@ -3104,6 +3104,20 @@ const (
 	ShardDistributorActiveShards
 	ShardDistributorTotalExecutors
 	ShardDistributorOldestExecutorHeartbeatLag
+	// ShardDistributorAssignmentLoadMaxOverMean measures max/mean across executor-reported assignment loads.
+	ShardDistributorAssignmentLoadMaxOverMean
+	// ShardDistributorAssignmentLoadCV measures coefficient of variation across executor-reported assignment loads.
+	ShardDistributorAssignmentLoadCV
+	// ShardDistributorAssignmentSmoothedLoadMaxOverMean measures max/mean across executor smoothed assignment loads.
+	ShardDistributorAssignmentSmoothedLoadMaxOverMean
+	// ShardDistributorAssignmentSmoothedLoadCV measures coefficient of variation across executor smoothed assignment loads.
+	ShardDistributorAssignmentSmoothedLoadCV
+	// ShardDistributorAssignmentReportedLoadMissingRatio measures assigned shards without a report on the assigned executor.
+	ShardDistributorAssignmentReportedLoadMissingRatio
+	// ShardDistributorAssignmentSmoothedLoadMissingRatio measures assigned shards missing smoothed load statistics.
+	ShardDistributorAssignmentSmoothedLoadMissingRatio
+	// ShardDistributorAssignmentSmoothedLoadStaleRatio measures assigned shards with stale smoothed load statistics.
+	ShardDistributorAssignmentSmoothedLoadStaleRatio
 
 	ShardDistributorStoreExecutorNotFound
 	ShardDistributorStoreFailuresPerNamespace
@@ -3959,6 +3973,28 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		ShardDistributorActiveShards:               {metricName: "shard_distributor_active_shards", metricType: Gauge},
 		ShardDistributorTotalExecutors:             {metricName: "shard_distributor_total_executors", metricType: Gauge},
 		ShardDistributorOldestExecutorHeartbeatLag: {metricName: "shard_distributor_oldest_executor_heartbeat_lag", metricType: Gauge},
+		ShardDistributorAssignmentLoadMaxOverMean:  {metricName: "shard_distributor_assignment_load_max_over_mean", metricType: Gauge},
+		ShardDistributorAssignmentLoadCV:           {metricName: "shard_distributor_assignment_load_cv", metricType: Gauge},
+		ShardDistributorAssignmentSmoothedLoadMaxOverMean: {
+			metricName: "shard_distributor_assignment_smoothed_load_max_over_mean",
+			metricType: Gauge,
+		},
+		ShardDistributorAssignmentSmoothedLoadCV: {
+			metricName: "shard_distributor_assignment_smoothed_load_cv",
+			metricType: Gauge,
+		},
+		ShardDistributorAssignmentReportedLoadMissingRatio: {
+			metricName: "shard_distributor_assignment_reported_load_missing_ratio",
+			metricType: Gauge,
+		},
+		ShardDistributorAssignmentSmoothedLoadMissingRatio: {
+			metricName: "shard_distributor_assignment_smoothed_load_missing_ratio",
+			metricType: Gauge,
+		},
+		ShardDistributorAssignmentSmoothedLoadStaleRatio: {
+			metricName: "shard_distributor_assignment_smoothed_load_stale_ratio",
+			metricType: Gauge,
+		},
 
 		ShardDistributorStoreExecutorNotFound:             {metricName: "shard_distributor_store_executor_not_found", metricType: Counter},
 		ShardDistributorStoreFailuresPerNamespace:         {metricName: "shard_distributor_store_failures_per_namespace", metricType: Counter},

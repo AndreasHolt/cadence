@@ -50,6 +50,12 @@ const (
 	_defaultHeartbeatTTL = 10 * time.Second
 	_defaultTimeout      = 1 * time.Second
 	_defaultCooldown     = 250 * time.Millisecond
+
+	_defaultPerShardCooldown     = time.Minute
+	_defaultMoveBudgetProportion = 0.02
+	_defaultHysteresisUpperBand  = 1.10
+	_defaultHysteresisLowerBand  = 0.90
+	_defaultSevereImbalanceRatio = 1.5
 )
 
 type processorFactory struct {
@@ -93,6 +99,21 @@ func NewProcessorFactory(
 	}
 	if cfg.Process.RebalanceCooldown == 0 {
 		cfg.Process.RebalanceCooldown = _defaultCooldown
+	}
+	if cfg.Process.LoadBalance.PerShardCooldown <= 0 {
+		cfg.Process.LoadBalance.PerShardCooldown = _defaultPerShardCooldown
+	}
+	if cfg.Process.LoadBalance.MoveBudgetProportion <= 0 {
+		cfg.Process.LoadBalance.MoveBudgetProportion = _defaultMoveBudgetProportion
+	}
+	if cfg.Process.LoadBalance.HysteresisUpperBand <= 0 {
+		cfg.Process.LoadBalance.HysteresisUpperBand = _defaultHysteresisUpperBand
+	}
+	if cfg.Process.LoadBalance.HysteresisLowerBand <= 0 {
+		cfg.Process.LoadBalance.HysteresisLowerBand = _defaultHysteresisLowerBand
+	}
+	if cfg.Process.LoadBalance.SevereImbalanceRatio <= 0 {
+		cfg.Process.LoadBalance.SevereImbalanceRatio = _defaultSevereImbalanceRatio
 	}
 
 	return &processorFactory{
@@ -446,7 +467,10 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	// If there are deleted shards or stale executors, the distribution has changed.
 	assignedToEmptyExecutors := assignShardsToEmptyExecutors(currentAssignments)
 	updatedAssignments := p.updateAssignments(shardsToReassign, activeExecutors, currentAssignments)
-	isRebalancedByShardLoad := p.rebalanceByShardLoad(calcShardLoad(namespaceState), currentAssignments, metricsLoopScope)
+	isRebalancedByShardLoad, err := p.rebalanceByLoadMode(namespaceState, deletedShards, currentAssignments, metricsLoopScope)
+	if err != nil {
+		return fmt.Errorf("rebalance by load: %w", err)
+	}
 	p.emitExecutorMetric(namespaceState, metricsLoopScope)
 
 	distributionChanged := len(deletedShards) > 0 || len(staleExecutors) > 0 || assignedToEmptyExecutors || updatedAssignments || isRebalancedByShardLoad
@@ -589,6 +613,24 @@ func (*namespaceProcessor) updateAssignments(shardsToReassign []string, activeEx
 	}
 
 	return true
+}
+
+func (p *namespaceProcessor) rebalanceByLoadMode(
+	namespaceState *store.NamespaceState,
+	deletedShards map[string]store.ShardState,
+	currentAssignments map[string][]string,
+	metricsScope metrics.Scope,
+) (bool, error) {
+	switch p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name) {
+	case types.LoadBalancingModeGREEDY:
+		rebalanced, err := p.loadBalance(currentAssignments, namespaceState, deletedShards, metricsScope)
+		p.emitAssignmentImbalanceMetrics(metricsScope, currentAssignments, namespaceState)
+		return rebalanced, err
+	case types.LoadBalancingModeNAIVE:
+		return p.rebalanceByShardLoad(calcShardLoad(namespaceState), currentAssignments, metricsScope), nil
+	default:
+		return false, nil
+	}
 }
 
 // calcShardLoad returns a map of shardID to its load based on the latest reported shard loads from executors
