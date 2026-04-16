@@ -1,7 +1,6 @@
 package process
 
 import (
-	"context"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -11,118 +10,9 @@ import (
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/sharddistributor/config"
+	"github.com/uber/cadence/service/sharddistributor/statistics"
 	"github.com/uber/cadence/service/sharddistributor/store"
 )
-
-// SimulatedTimeSource is a deterministic clock for use in simulations and tests.
-// All time-advancing operations (Sleep, After, etc.) are synchronous — no goroutines.
-type SimulatedTimeSource struct {
-	current time.Time
-}
-
-func NewSimulatedTimeSource(startTime time.Time) *SimulatedTimeSource {
-	return &SimulatedTimeSource{current: startTime}
-}
-
-func (s *SimulatedTimeSource) Now() time.Time {
-	return s.current
-}
-
-func (s *SimulatedTimeSource) Advance(d time.Duration) {
-	s.current = s.current.Add(d)
-}
-
-func (s *SimulatedTimeSource) After(d time.Duration) <-chan time.Time {
-	ch := make(chan time.Time, 1)
-	s.Advance(d)
-	ch <- s.current
-	return ch
-}
-
-func (s *SimulatedTimeSource) Sleep(d time.Duration) {
-	s.Advance(d)
-}
-
-func (s *SimulatedTimeSource) SleepWithContext(_ context.Context, d time.Duration) error {
-	s.Advance(d)
-	return nil
-}
-
-func (s *SimulatedTimeSource) Since(t time.Time) time.Duration {
-	return s.current.Sub(t)
-}
-
-func (s *SimulatedTimeSource) NewTicker(d time.Duration) clock.Ticker {
-	return &simulatedTicker{d: d, timeSource: s}
-}
-
-func (s *SimulatedTimeSource) NewTimer(d time.Duration) clock.Timer {
-	return &simulatedTimer{
-		timeSource:  s,
-		triggerTime: s.current.Add(d),
-		ch:          make(chan time.Time, 1),
-	}
-}
-
-func (s *SimulatedTimeSource) AfterFunc(d time.Duration, f func()) clock.Timer {
-	timer := &simulatedTimer{
-		timeSource:  s,
-		triggerTime: s.current.Add(d),
-		ch:          make(chan time.Time, 1),
-	}
-	s.Advance(d)
-	f()
-	timer.ch <- s.current
-	return timer
-}
-
-func (s *SimulatedTimeSource) ContextWithTimeout(parent context.Context, d time.Duration) (context.Context, context.CancelFunc) {
-	s.Advance(d)
-	return context.WithCancel(parent)
-}
-
-func (s *SimulatedTimeSource) ContextWithDeadline(parent context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
-	d := deadline.Sub(s.current)
-	if d > 0 {
-		s.Advance(d)
-	}
-	return context.WithCancel(parent)
-}
-
-type simulatedTicker struct {
-	d          time.Duration
-	timeSource *SimulatedTimeSource
-	ch         chan time.Time
-}
-
-func (t *simulatedTicker) Chan() <-chan time.Time {
-	return t.ch
-}
-
-func (t *simulatedTicker) Reset(d time.Duration) {
-	t.d = d
-}
-
-func (t *simulatedTicker) Stop() {}
-
-type simulatedTimer struct {
-	timeSource  *SimulatedTimeSource
-	triggerTime time.Time
-	ch          chan time.Time
-}
-
-func (t *simulatedTimer) Chan() <-chan time.Time {
-	return t.ch
-}
-
-func (t *simulatedTimer) Reset(d time.Duration) bool {
-	t.triggerTime = t.timeSource.current.Add(d)
-	return true
-}
-
-func (t *simulatedTimer) Stop() bool {
-	return false
-}
 
 // LoadHistoryRow is a single timestamped snapshot of per-shard load values.
 type LoadHistoryRow struct {
@@ -136,7 +26,7 @@ type LoadHistoryRow struct {
 // be used in isolated unit/simulation tests.
 type BalanceTester struct {
 	processor      *namespaceProcessor
-	timeSource     *SimulatedTimeSource
+	timeSource     clock.MockedTimeSource
 	namespaceState *store.NamespaceState
 	assignments    map[string][]string
 	deletedShards  map[string]store.ShardState
@@ -147,7 +37,7 @@ func NewBalanceTester(
 	namespaceCfg config.Namespace,
 	loadBalanceCfg config.LoadBalance,
 ) *BalanceTester {
-	timeSource := NewSimulatedTimeSource(startTime)
+	timeSource := clock.NewMockedTimeSourceAt(startTime)
 
 	perShardCooldown := loadBalanceCfg.PerShardCooldown
 	if perShardCooldown <= 0 {
@@ -223,7 +113,7 @@ func (bt *BalanceTester) SetInitialAssignments(executors []string, shards []stri
 		bt.assignments[executor] = append(bt.assignments[executor], shard)
 		bt.namespaceState.ShardStats[shard] = store.ShardStatistics{
 			SmoothedLoad:   0,
-			LastUpdateTime: bt.timeSource.Now(),
+			LastUpdateTime: time.Time{},
 		}
 		bt.namespaceState.ShardAssignments[executor].AssignedShards[shard] = &types.ShardAssignment{
 			Status: types.AssignmentStatusREADY,
@@ -234,15 +124,23 @@ func (bt *BalanceTester) SetInitialAssignments(executors []string, shards []stri
 // ApplyLoad advances the clock to the row's timestamp and updates the
 // smoothed load for each shard using an exponential moving average (alpha=0.2).
 func (bt *BalanceTester) ApplyLoad(row LoadHistoryRow) {
-	bt.timeSource.current = row.Timestamp
+	d := row.Timestamp.Sub(bt.timeSource.Now())
+	if d > 0 {
+		bt.timeSource.Advance(d)
+	}
 
 	for shardID, load := range row.ShardLoads {
 		stats, ok := bt.namespaceState.ShardStats[shardID]
 		if !ok {
-			stats = store.ShardStatistics{}
+			stats = store.ShardStatistics{LastUpdateTime: time.Time{}}
 		}
-		const alpha = 0.2
-		stats.SmoothedLoad = alpha*load + (1-alpha)*stats.SmoothedLoad
+
+		stats.SmoothedLoad = statistics.CalculateSmoothedLoad(
+			stats.SmoothedLoad,
+			load,
+			stats.LastUpdateTime,
+			bt.timeSource.Now(),
+		)
 		stats.LastUpdateTime = bt.timeSource.Now()
 		bt.namespaceState.ShardStats[shardID] = stats
 	}
@@ -271,6 +169,9 @@ func (bt *BalanceTester) Rebalance() (int, error) {
 			for _, shard := range shards {
 				if prevLoc[shard] != "" && prevLoc[shard] != exec {
 					moves++
+					stats := bt.namespaceState.ShardStats[shard]
+					stats.LastMoveTime = bt.timeSource.Now()
+					bt.namespaceState.ShardStats[shard] = stats
 				}
 			}
 		}
@@ -304,7 +205,7 @@ func (bt *BalanceTester) GetAssignments() map[string][]string {
 	return bt.assignments
 }
 
-func (bt *BalanceTester) GetTimeSource() *SimulatedTimeSource {
+func (bt *BalanceTester) GetTimeSource() clock.MockedTimeSource {
 	return bt.timeSource
 }
 
@@ -368,7 +269,7 @@ func RunBalanceSimulation(
 	return tester.GetAssignments(), nil
 }
 
-// LoadCSVHistory reads a CSV file in the format used by combined_4x_fixed.csv:
+// LoadCSVHistory reads a CSV file in the format:
 //
 //	<timestamp>, <shard_0_load>, <shard_1_load>, ...
 //

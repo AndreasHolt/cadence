@@ -122,6 +122,10 @@ type (
 		// but no executor qualifies as a destination under the normal hysteresis lower band.
 		// Default: 1.5.
 		SevereImbalanceRatio float64 `yaml:"severeImbalanceRatio"`
+
+		// UseSwap enables the use of swap moves (moving two shards at once to reduce imbalance).
+		// Default: false.
+		UseSwap bool `yaml:"useSwap"`
 	}
 
 	// YamlNode is a lazy-unmarshaler, because *yaml.Node only exists in gopkg.in/yaml.v3, not v2,

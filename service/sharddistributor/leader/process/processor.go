@@ -59,6 +59,8 @@ const (
 	_defaultHysteresisLowerBand = 0.95
 	// Default threshold for triggering severe-imbalance escape hatch.
 	_defaultSevereImbalanceRatio = 1.5
+	// Default use of swap moves.
+	_defaultUseSwap = false
 )
 
 type processorFactory struct {
@@ -117,6 +119,9 @@ func NewProcessorFactory(
 	}
 	if cfg.Process.LoadBalance.SevereImbalanceRatio <= 0 {
 		cfg.Process.LoadBalance.SevereImbalanceRatio = _defaultSevereImbalanceRatio
+	}
+	if cfg.Process.LoadBalance.UseSwap == false {
+		cfg.Process.LoadBalance.UseSwap = _defaultUseSwap
 	}
 
 	return &processorFactory{

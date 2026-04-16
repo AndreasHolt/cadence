@@ -254,16 +254,18 @@ func (p *namespaceProcessor) findShardsToMove(
 
 	var swapMoves []ShardMove
 	var swapMoveBenefit float64
-	swapMoves, _, swapMoveBenefit = findSwapShards(
-		currentAssignments,
-		namespaceState,
-		source,
-		destination,
-		sourceLoad,
-		destLoad,
-		perShardCooldown,
-		now,
-	)
+	if p.cfg.LoadBalance.UseSwap {
+		swapMoves, _, swapMoveBenefit = findSwapShards(
+			currentAssignments,
+			namespaceState,
+			source,
+			destination,
+			sourceLoad,
+			destLoad,
+			perShardCooldown,
+			now,
+		)
+	}
 
 	if singleMoveBenefit == 0 && swapMoveBenefit == 0 {
 		return nil, false

@@ -64,6 +64,7 @@ func run() error {
 		upperBand         float64
 		lowerBand         float64
 		severeRatio       float64
+		useSwap           bool
 	)
 
 	flag.StringVar(&csvPath, "csv", "", "Path to input CSV file (required)")
@@ -76,6 +77,7 @@ func run() error {
 	flag.Float64Var(&upperBand, "upper-band", 1.15, "Hysteresis upper-band multiplier")
 	flag.Float64Var(&lowerBand, "lower-band", 0.90, "Hysteresis lower-band multiplier")
 	flag.Float64Var(&severeRatio, "severe-ratio", 1.3, "Severe-imbalance escape-hatch ratio")
+	flag.BoolVar(&useSwap, "use-swap", false, "Use swap moves")
 	flag.Parse()
 
 	if csvPath == "" {
@@ -112,6 +114,7 @@ func run() error {
 		HysteresisUpperBand:  upperBand,
 		HysteresisLowerBand:  lowerBand,
 		SevereImbalanceRatio: severeRatio,
+		UseSwap:              useSwap,
 	}
 	nsCfg := config.Namespace{
 		Name: "balance-sim",
