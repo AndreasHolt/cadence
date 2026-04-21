@@ -19,3 +19,23 @@ func HeartbeatMetadata(metadata map[string]string, goMaxProcs int) map[string]st
 
 	return heartbeatMetadata
 }
+
+// WeightFromMetadata returns the executor capacity weight parsed from heartbeat
+// metadata. Missing or invalid metadata falls back to the neutral weight of 1.
+func WeightFromMetadata(metadata map[string]string) float64 {
+	if len(metadata) == 0 {
+		return 1
+	}
+
+	rawGoMaxProcs, ok := metadata[GoMaxProcsMetadataKey]
+	if !ok {
+		return 1
+	}
+
+	goMaxProcs, err := strconv.Atoi(rawGoMaxProcs)
+	if err != nil || goMaxProcs <= 0 {
+		return 1
+	}
+
+	return float64(goMaxProcs)
+}

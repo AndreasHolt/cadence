@@ -16,6 +16,7 @@ import (
 	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/types"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/config"
 	"github.com/uber/cadence/service/sharddistributor/config/configtest"
 	"github.com/uber/cadence/service/sharddistributor/store"
@@ -67,6 +68,12 @@ func setupProcessorTestGreedy(t *testing.T, namespaceType string) *testDependenc
 		deps.sdConfig,
 	)
 	return deps
+}
+
+func metadataWithGoMaxProcs(goMaxProcs int) map[string]string {
+	return map[string]string{
+		capacity.GoMaxProcsMetadataKey: fmt.Sprintf("%d", goMaxProcs),
+	}
 }
 
 // TestLoadBalance_Convergence verifies the balancer moves shards from an overloaded executor to an underloaded one.
@@ -205,6 +212,49 @@ func TestLoadBalance_NoMoveNeeded(t *testing.T) {
 	}, nil)
 
 	// Expect AssignShards to NOT be called
+	mocks.store.EXPECT().AssignShards(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	err := processor.rebalanceShards(context.Background())
+	require.NoError(t, err)
+}
+
+// TestLoadBalance_HigherCapacityExecutorKeepsMoreLoad verifies that GREEDY
+// treats a higher-capacity executor as entitled to a proportionally larger share
+// of total load before planning moves away from it.
+func TestLoadBalance_HigherCapacityExecutorKeepsMoreLoad(t *testing.T) {
+	mocks := setupProcessorTestGreedy(t, config.NamespaceTypeEphemeral)
+	defer mocks.ctrl.Finish()
+	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+
+	execSmall, execLarge := "exec-small", "exec-large"
+	now := mocks.timeSource.Now()
+
+	assignments := map[string]store.AssignedState{
+		execSmall: {AssignedShards: make(map[string]*types.ShardAssignment)},
+		execLarge: {AssignedShards: make(map[string]*types.ShardAssignment)},
+	}
+	shardStats := make(map[string]store.ShardStatistics)
+
+	for i := range 10 {
+		shardID := fmt.Sprintf("small-%d", i)
+		assignments[execSmall].AssignedShards[shardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
+		shardStats[shardID] = store.ShardStatistics{SmoothedLoad: 1.0, LastUpdateTime: now}
+	}
+	for i := range 20 {
+		shardID := fmt.Sprintf("large-%d", i)
+		assignments[execLarge].AssignedShards[shardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
+		shardStats[shardID] = store.ShardStatistics{SmoothedLoad: 1.0, LastUpdateTime: now}
+	}
+
+	mocks.store.EXPECT().GetState(gomock.Any(), mocks.cfg.Name).Return(&store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execSmall: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now, Metadata: metadataWithGoMaxProcs(1)},
+			execLarge: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now, Metadata: metadataWithGoMaxProcs(2)},
+		},
+		ShardAssignments: assignments,
+		ShardStats:       shardStats,
+	}, nil)
+
 	mocks.store.EXPECT().AssignShards(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 	err := processor.rebalanceShards(context.Background())
