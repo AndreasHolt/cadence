@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"math/rand"
 	"slices"
 	"sort"
@@ -53,8 +54,8 @@ const (
 	_defaultPerShardCooldown     = time.Minute
 	_defaultMoveBudgetProportion = 0.01
 	_defaultHysteresisUpperBand  = 1.15
-	_defaultHysteresisLowerBand  = 0.95
-	_defaultSevereImbalanceRatio = 1.5
+	_defaultHysteresisLowerBand  = 0.90
+	_defaultSevereImbalanceRatio = 1.3
 )
 
 type processorFactory struct {
@@ -99,6 +100,19 @@ func NewProcessorFactory(
 	if cfg.Process.RebalanceCooldown == 0 {
 		cfg.Process.RebalanceCooldown = _defaultCooldown
 	}
+
+	setGreedyDefaults(&cfg)
+
+	return &processorFactory{
+		logger:        logger,
+		timeSource:    timeSource,
+		cfg:           cfg.Process,
+		metricsClient: metricsClient,
+		sdConfig:      sdConfig,
+	}
+}
+
+func setGreedyDefaults(cfg *config.ShardDistribution) {
 	if cfg.Process.LoadBalance.PerShardCooldown <= 0 {
 		cfg.Process.LoadBalance.PerShardCooldown = _defaultPerShardCooldown
 	}
@@ -113,14 +127,6 @@ func NewProcessorFactory(
 	}
 	if cfg.Process.LoadBalance.SevereImbalanceRatio <= 0 {
 		cfg.Process.LoadBalance.SevereImbalanceRatio = _defaultSevereImbalanceRatio
-	}
-
-	return &processorFactory{
-		logger:        logger,
-		timeSource:    timeSource,
-		cfg:           cfg.Process,
-		metricsClient: metricsClient,
-		sdConfig:      sdConfig,
 	}
 }
 
@@ -471,7 +477,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	loadBalancingMode := p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name)
 	switch loadBalancingMode {
 	case types.LoadBalancingModeGREEDY:
-		isRebalancedByShardLoad, err = p.rebalanceGreedyBySmoothedLoad(currentAssignments, namespaceState, deletedShards, metricsLoopScope)
+		isRebalancedByShardLoad, err = p.rebalanceGreedyBySmoothedLoad(namespaceState, currentAssignments, metricsLoopScope)
 		if err != nil {
 			return fmt.Errorf("load balance: %w", err)
 		}
@@ -482,6 +488,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	}
 
 	p.emitExecutorMetric(namespaceState, metricsLoopScope)
+	p.emitAssignmentImbalanceMetrics(metricsLoopScope, currentAssignments, namespaceState)
 
 	distributionChanged := len(deletedShards) > 0 || len(staleExecutors) > 0 || assignedToEmptyExecutors || updatedAssignments || isRebalancedByShardLoad
 	if !distributionChanged {
@@ -816,4 +823,115 @@ func makeShards(num int64) []string {
 		shards[i] = strconv.FormatInt(i, 10)
 	}
 	return shards
+}
+
+func (p *namespaceProcessor) emitAssignmentImbalanceMetrics(
+	metricsLoopScope metrics.Scope,
+	assignments map[string][]string,
+	namespaceState *store.NamespaceState,
+) {
+	if metricsLoopScope == nil || namespaceState == nil {
+		return
+	}
+
+	now := p.timeSource.Now().UTC()
+	staleAfter := p.cfg.HeartbeatTTL
+
+	reportedLoads := make([]float64, 0, len(assignments))
+	smoothedLoads := make([]float64, 0, len(assignments))
+
+	totalAssigned := 0
+	smoothedMissing := 0
+	smoothedStale := 0
+
+	for executorID, shards := range assignments {
+		reportedLoad := 0.0
+		smoothedLoad := 0.0
+
+		heartbeat, heartbeatOK := namespaceState.Executors[executorID]
+		for _, shardID := range shards {
+			totalAssigned++
+
+			if !heartbeatOK || heartbeat.ReportedShards == nil {
+				continue
+			} else if shardReport, ok := heartbeat.ReportedShards[shardID]; ok && shardReport != nil {
+				reportedLoad += shardReport.ShardLoad
+			}
+
+			if namespaceState.ShardStats == nil {
+				smoothedMissing++
+				continue
+			}
+			stats, ok := namespaceState.ShardStats[shardID]
+			if !ok || stats.LastUpdateTime.IsZero() {
+				smoothedMissing++
+				continue
+			}
+			if staleAfter > 0 && now.Sub(stats.LastUpdateTime) > staleAfter {
+				smoothedStale++
+			}
+			smoothedLoad += stats.SmoothedLoad
+		}
+
+		reportedLoads = append(reportedLoads, reportedLoad)
+		smoothedLoads = append(smoothedLoads, smoothedLoad)
+	}
+
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentLoadMaxOverMean, maxOverMean(reportedLoads))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentLoadCV, coefficientOfVariation(reportedLoads))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadMaxOverMean, maxOverMean(smoothedLoads))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadCV, coefficientOfVariation(smoothedLoads))
+
+	if totalAssigned == 0 {
+		metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadMissingRatio, 0)
+		metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadStaleRatio, 0)
+		return
+	}
+
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadMissingRatio, float64(smoothedMissing)/float64(totalAssigned))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadStaleRatio, float64(smoothedStale)/float64(totalAssigned))
+}
+
+func maxOverMean(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	total := 0.0
+	maxValue := 0.0
+	for _, value := range values {
+		total += value
+		if value > maxValue {
+			maxValue = value
+		}
+	}
+	mean := total / float64(len(values))
+	if mean == 0 {
+		return 0
+	}
+	return maxValue / mean
+}
+
+func coefficientOfVariation(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	total := 0.0
+	for _, value := range values {
+		total += value
+	}
+	mean := total / float64(len(values))
+	if mean == 0 {
+		return 0
+	}
+
+	variance := 0.0
+	for _, value := range values {
+		delta := value - mean
+		variance += delta * delta
+	}
+	variance /= float64(len(values))
+
+	return math.Sqrt(variance) / mean
 }

@@ -1549,6 +1549,9 @@ const (
 	// ShardDistributorWatchScope tracks etcd watch stream processing
 	ShardDistributorWatchScope
 
+	// ShardDistributorLeaderScope tracks leader election state
+	ShardDistributorLeaderScope
+
 	NumShardDistributorScopes
 )
 
@@ -2264,6 +2267,7 @@ var ScopeDefs = map[ServiceIdx]map[ScopeIdx]scopeDefinition{
 		ShardDistributorStoreSubscribeToAssignmentChangesScope:     {operation: "StoreSubscribeToAssignmentChanges"},
 		ShardDistributorStoreDeleteAssignedStatesScope:             {operation: "StoreDeleteAssignedStates"},
 		ShardDistributorWatchScope:                                 {operation: "Watch"},
+		ShardDistributorLeaderScope:                                {operation: "Leader"},
 	},
 }
 
@@ -2334,6 +2338,7 @@ const (
 	PersistenceLatencyPerDomain
 	PersistenceLatencyPerDomainHistogram
 	PersistenceLatencyPerShard
+	PersistenceLatencyPerShardHistogram
 	PersistenceErrShardExistsCounterPerDomain
 	PersistenceErrShardOwnershipLostCounterPerDomain
 	PersistenceErrConditionFailedCounterPerDomain
@@ -3129,6 +3134,21 @@ const (
 	// ShardDistributorAssignLoopMovedShardLoad tracks the load of a shard that was moved due to load rebalancing
 	ShardDistributorAssignLoopMovedShardLoad
 
+	// ShardDistributorAssignmentLoadMaxOverMean measures max/mean across executor reported loads
+	ShardDistributorAssignmentLoadMaxOverMean
+	// ShardDistributorAssignmentLoadCV measures coefficient of variation across executor reported loads
+	ShardDistributorAssignmentLoadCV
+	// ShardDistributorAssignmentSmoothedLoadMaxOverMean measures max/mean across executor smoothed loads
+	ShardDistributorAssignmentSmoothedLoadMaxOverMean
+	// ShardDistributorAssignmentSmoothedLoadCV measures coefficient of variation across executor smoothed loads
+	ShardDistributorAssignmentSmoothedLoadCV
+	// ShardDistributorAssignmentSmoothedLoadMissingRatio measures the fraction of assigned shards with no smoothed load
+	ShardDistributorAssignmentSmoothedLoadMissingRatio
+	// ShardDistributorAssignmentSmoothedLoadStaleRatio measures the fraction of assigned shards with stale smoothed load
+	ShardDistributorAssignmentSmoothedLoadStaleRatio
+	// ShardDistributorIsLeader reports whether this instance is currently the leader (1) or not (0) for a namespace
+	ShardDistributorIsLeader
+
 	NumShardDistributorMetrics
 )
 
@@ -3198,6 +3218,7 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		PersistenceLatencyPerDomain:                                  {metricName: "persistence_latency_per_domain", metricRollupName: "persistence_latency", metricType: Timer},
 		PersistenceLatencyPerDomainHistogram:                         {metricName: "persistence_latency_per_domain_ns", metricRollupName: "persistence_latency_ns", metricType: Histogram, exponentialBuckets: Default1ms100s},
 		PersistenceLatencyPerShard:                                   {metricName: "persistence_latency_per_shard", metricType: Timer},
+		PersistenceLatencyPerShardHistogram:                          {metricName: "persistence_latency_per_shard_ns", metricType: Histogram, exponentialBuckets: Low1ms100s},
 		PersistenceErrShardExistsCounterPerDomain:                    {metricName: "persistence_errors_shard_exists_per_domain", metricRollupName: "persistence_errors_shard_exists", metricType: Counter},
 		PersistenceErrShardOwnershipLostCounterPerDomain:             {metricName: "persistence_errors_shard_ownership_lost_per_domain", metricRollupName: "persistence_errors_shard_ownership_lost", metricType: Counter},
 		PersistenceErrConditionFailedCounterPerDomain:                {metricName: "persistence_errors_condition_failed_per_domain", metricRollupName: "persistence_errors_condition_failed", metricType: Counter},
@@ -3974,6 +3995,20 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		ShardDistributorAssignLoopLoadBasedMoves: {metricName: "shard_distributor_shard_assign_load_based_moves", metricType: Counter},
 		ShardDistributorAssignLoopDeletedShards:  {metricName: "shard_distributor_shard_assign_deleted_shards", metricType: Gauge},
 		ShardDistributorAssignLoopMovedShardLoad: {metricName: "shard_distributor_shard_assign_moved_shard_load", metricType: Gauge},
+
+		ShardDistributorAssignmentLoadMaxOverMean:         {metricName: "shard_distributor_assignment_load_max_over_mean", metricType: Gauge},
+		ShardDistributorAssignmentLoadCV:                  {metricName: "shard_distributor_assignment_load_cv", metricType: Gauge},
+		ShardDistributorAssignmentSmoothedLoadMaxOverMean: {metricName: "shard_distributor_assignment_smoothed_load_max_over_mean", metricType: Gauge},
+		ShardDistributorAssignmentSmoothedLoadCV:          {metricName: "shard_distributor_assignment_smoothed_load_cv", metricType: Gauge},
+		ShardDistributorAssignmentSmoothedLoadMissingRatio: {
+			metricName: "shard_distributor_assignment_smoothed_load_missing_ratio",
+			metricType: Gauge,
+		},
+		ShardDistributorAssignmentSmoothedLoadStaleRatio: {
+			metricName: "shard_distributor_assignment_smoothed_load_stale_ratio",
+			metricType: Gauge,
+		},
+		ShardDistributorIsLeader: {metricName: "shard_distributor_is_leader", metricType: Gauge},
 	},
 }
 
