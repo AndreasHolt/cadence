@@ -36,6 +36,10 @@ import (
 	"github.com/uber/cadence/service/sharddistributor/client/clientcommon"
 )
 
+type latencyObserver interface {
+	ObserveRequestLatency(time.Duration)
+}
+
 // Service represents the cadence-matching service
 type Service struct {
 	resource.Resource
@@ -116,7 +120,12 @@ func (s *Service) Start() {
 		s.drainObserver,
 	)
 
-	s.handler = handler.NewHandler(engine, s.config, s.GetDomainCache(), s.GetMetricsClient(), s.GetLogger(), s.GetThrottledLogger())
+	var observeLatency func(time.Duration)
+	if observer, ok := engine.(latencyObserver); ok {
+		observeLatency = observer.ObserveRequestLatency
+	}
+
+	s.handler = handler.NewHandler(engine, s.config, s.GetDomainCache(), s.GetMetricsClient(), s.GetLogger(), s.GetThrottledLogger(), observeLatency)
 
 	thriftHandler := thrift.NewThriftHandler(s.handler)
 	thriftHandler.Register(s.GetDispatcher())

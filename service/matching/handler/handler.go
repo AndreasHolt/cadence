@@ -23,6 +23,7 @@ package handler
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/cache"
@@ -38,6 +39,7 @@ type (
 	// handlerImpl is an implementation for matching service independent of wire protocol
 	handlerImpl struct {
 		engine            Engine
+		observeLatency    func(time.Duration)
 		metricsClient     metrics.Client
 		startWG           sync.WaitGroup
 		userRateLimiter   quotas.Policy
@@ -60,6 +62,7 @@ func NewHandler(
 	metricsClient metrics.Client,
 	logger log.Logger,
 	throttledLogger log.Logger,
+	observeLatency func(time.Duration),
 ) Handler {
 	handler := &handlerImpl{
 		metricsClient: metricsClient,
@@ -80,6 +83,7 @@ func NewHandler(
 			nil,
 		),
 		engine:          engine,
+		observeLatency:  observeLatency,
 		logger:          logger,
 		throttledLogger: throttledLogger,
 		domainCache:     domainCache,
@@ -130,6 +134,12 @@ func (h *handlerImpl) AddActivityTask(
 	request *types.AddActivityTaskRequest,
 ) (resp *types.AddActivityTaskResponse, retError error) {
 	defer func() { log.CapturePanic(recover(), h.logger, &retError) }()
+	startTime := time.Now()
+	defer func() {
+		if h.observeLatency != nil {
+			h.observeLatency(time.Since(startTime))
+		}
+	}()
 
 	domainName := h.domainName(request.GetDomainUUID())
 	hCtx := h.newHandlerContext(
@@ -160,6 +170,12 @@ func (h *handlerImpl) AddDecisionTask(
 	request *types.AddDecisionTaskRequest,
 ) (resp *types.AddDecisionTaskResponse, retError error) {
 	defer func() { log.CapturePanic(recover(), h.logger, &retError) }()
+	startTime := time.Now()
+	defer func() {
+		if h.observeLatency != nil {
+			h.observeLatency(time.Since(startTime))
+		}
+	}()
 
 	domainName := h.domainName(request.GetDomainUUID())
 	hCtx := h.newHandlerContext(
