@@ -12,6 +12,11 @@ import (
 	"github.com/uber/cadence/service/sharddistributor/store"
 )
 
+const (
+	minRelativeLatency = 0.8
+	maxRelativeLatency = 1.25
+)
+
 func (p *namespaceProcessor) rebalanceGreedyBySmoothedLoad(
 	namespaceState *store.NamespaceState,
 	currentAssignments map[string][]string,
@@ -148,10 +153,47 @@ func computeExecutorLoads(currentAssignments map[string][]string, namespaceState
 
 func computeExecutorCapacityWeights(currentAssignments map[string][]string, namespaceState *store.NamespaceState) map[string]float64 {
 	executorCapacityWeights := make(map[string]float64, len(currentAssignments))
+	meanLatencyMs := computeMeanLatencyMs(currentAssignments, namespaceState)
+
 	for executorID := range currentAssignments {
-		executorCapacityWeights[executorID] = capacity.WeightFromMetadata(namespaceState.Executors[executorID].Metadata)
+		weight := capacity.WeightFromMetadata(namespaceState.Executors[executorID].Metadata)
+		if meanLatencyMs > 0 {
+			latencyMs := capacity.LatencyEWmaMsFromMetadata(namespaceState.Executors[executorID].Metadata)
+			if latencyMs > 0 {
+				relativeLatency := clamp(latencyMs/meanLatencyMs, minRelativeLatency, maxRelativeLatency)
+				weight = weight / math.Sqrt(relativeLatency)
+			}
+		}
+		executorCapacityWeights[executorID] = weight
 	}
 	return executorCapacityWeights
+}
+
+func computeMeanLatencyMs(currentAssignments map[string][]string, namespaceState *store.NamespaceState) float64 {
+	totalLatencyMs := 0.0
+	count := 0
+	for executorID := range currentAssignments {
+		latencyMs := capacity.LatencyEWmaMsFromMetadata(namespaceState.Executors[executorID].Metadata)
+		if latencyMs <= 0 {
+			continue
+		}
+		totalLatencyMs += latencyMs
+		count++
+	}
+	if count == 0 {
+		return 0
+	}
+	return totalLatencyMs / float64(count)
+}
+
+func clamp(value, minValue, maxValue float64) float64 {
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
 }
 
 func computeTargetLoads(executorLoads map[string]float64, executorCapacityWeights map[string]float64, totalLoad float64) map[string]float64 {

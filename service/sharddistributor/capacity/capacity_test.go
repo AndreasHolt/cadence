@@ -92,3 +92,51 @@ func TestWeightFromMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestLatencyEWmaMsFromMetadata(t *testing.T) {
+	tests := []struct {
+		name            string
+		metadata        map[string]string
+		expectedLatency float64
+	}{
+		{
+			name:            "missing metadata falls back to zero",
+			metadata:        nil,
+			expectedLatency: 0,
+		},
+		{
+			name: "missing latency key falls back to zero",
+			metadata: map[string]string{
+				"zone": "a",
+			},
+			expectedLatency: 0,
+		},
+		{
+			name: "invalid latency falls back to zero",
+			metadata: map[string]string{
+				LatencyEWmaMsMetadataKey: "invalid",
+			},
+			expectedLatency: 0,
+		},
+		{
+			name: "negative latency falls back to zero",
+			metadata: map[string]string{
+				LatencyEWmaMsMetadataKey: "-1",
+			},
+			expectedLatency: 0,
+		},
+		{
+			name: "valid latency is parsed",
+			metadata: map[string]string{
+				LatencyEWmaMsMetadataKey: "12.5",
+			},
+			expectedLatency: 12.5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expectedLatency, LatencyEWmaMsFromMetadata(tt.metadata))
+		})
+	}
+}

@@ -5,6 +5,8 @@ import "strconv"
 const (
 	// GoMaxProcsMetadataKey stores the executor's current process-level GOMAXPROCS value.
 	GoMaxProcsMetadataKey = "capacity.gomaxprocs"
+	// LatencyEWmaMsMetadataKey stores the executor's smoothed request latency in milliseconds.
+	LatencyEWmaMsMetadataKey = "pressure.latency_ewma_ms"
 )
 
 // HeartbeatMetadata returns a copy of metadata extended with capacity-related
@@ -38,4 +40,24 @@ func WeightFromMetadata(metadata map[string]string) float64 {
 	}
 
 	return float64(goMaxProcs)
+}
+
+// LatencyEWmaMsFromMetadata returns the executor's smoothed request latency in milliseconds.
+// Missing or invalid metadata falls back to 0, which callers should treat as "no signal".
+func LatencyEWmaMsFromMetadata(metadata map[string]string) float64 {
+	if len(metadata) == 0 {
+		return 0
+	}
+
+	rawLatency, ok := metadata[LatencyEWmaMsMetadataKey]
+	if !ok {
+		return 0
+	}
+
+	latencyMs, err := strconv.ParseFloat(rawLatency, 64)
+	if err != nil || latencyMs < 0 {
+		return 0
+	}
+
+	return latencyMs
 }

@@ -76,6 +76,31 @@ func metadataWithGoMaxProcs(goMaxProcs int) map[string]string {
 	}
 }
 
+func metadataWithGoMaxProcsAndLatency(goMaxProcs int, latencyMs float64) map[string]string {
+	metadata := metadataWithGoMaxProcs(goMaxProcs)
+	metadata[capacity.LatencyEWmaMsMetadataKey] = fmt.Sprintf("%.3f", latencyMs)
+	return metadata
+}
+
+func TestComputeExecutorCapacityWeights_AdjustsByLatency(t *testing.T) {
+	currentAssignments := map[string][]string{
+		"fast": {"shard-1"},
+		"slow": {"shard-2"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			"fast": {Metadata: metadataWithGoMaxProcsAndLatency(4, 20)},
+			"slow": {Metadata: metadataWithGoMaxProcsAndLatency(4, 80)},
+		},
+	}
+
+	weights := computeExecutorCapacityWeights(currentAssignments, namespaceState)
+
+	require.Greater(t, weights["fast"], weights["slow"])
+	require.InDelta(t, 4.472135, weights["fast"], 0.0001)
+	require.InDelta(t, 3.577709, weights["slow"], 0.0001)
+}
+
 // TestLoadBalance_Convergence verifies the balancer moves shards from an overloaded executor to an underloaded one.
 func TestLoadBalance_Convergence(t *testing.T) {
 	mocks := setupProcessorTestGreedy(t, config.NamespaceTypeEphemeral)
