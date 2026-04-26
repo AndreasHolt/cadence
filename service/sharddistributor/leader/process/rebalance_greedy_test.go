@@ -72,7 +72,7 @@ func setupProcessorTestGreedy(t *testing.T, namespaceType string) *testDependenc
 
 func metadataWithGoMaxProcs(goMaxProcs int) map[string]string {
 	return map[string]string{
-		capacity.GoMaxProcsMetadataKey: fmt.Sprintf("%d", goMaxProcs),
+		capacity.RuntimeMetadataKey: fmt.Sprintf(`{"gomaxprocs":%d}`, goMaxProcs),
 	}
 }
 

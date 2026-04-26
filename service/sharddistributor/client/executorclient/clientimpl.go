@@ -110,6 +110,7 @@ type executorImpl[SP ShardProcessor] struct {
 	migrationMode          atomic.Int32
 	metadata               syncExecutorMetadata
 	drainObserver          clientcommon.DrainSignalObserver
+	processCPUSampler      capacity.ProcessCPUSampler
 }
 
 func (e *executorImpl[SP]) setMigrationMode(mode types.MigrationMode) {
@@ -347,7 +348,17 @@ func (e *executorImpl[SP]) sendHeartbeat(ctx context.Context, status types.Execu
 	})
 
 	e.hostMetrics.Gauge(metricsconstants.ShardDistributorExecutorOwnedShards).Update(float64(len(shardStatusReports)))
-	heartbeatMetadata := capacity.HeartbeatMetadata(e.metadata.Get(), runtime.GOMAXPROCS(0))
+
+	processCPUSeconds, hasProcessCPU := 0.0, false
+	if e.processCPUSampler != nil {
+		processCPUSeconds, hasProcessCPU = e.processCPUSampler.Sample()
+	}
+	heartbeatMetadata := capacity.HeartbeatMetadata(e.metadata.Get(), capacity.HeartbeatMetadataOptions{
+		GoMaxProcs:        runtime.GOMAXPROCS(0),
+		ProcessCPUSeconds: processCPUSeconds,
+		HasProcessCPU:     hasProcessCPU,
+		SampleUnixNanos:   e.timeSource.Now().UnixNano(),
+	})
 
 	// Create the request
 	request := &types.ExecutorHeartbeatRequest{

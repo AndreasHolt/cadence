@@ -16,6 +16,7 @@ import (
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/types"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/client/clientcommon"
 	"github.com/uber/cadence/service/sharddistributor/client/executorclient/metricsconstants"
 )
@@ -83,6 +84,7 @@ type Params[SP ShardProcessor] struct {
 	TimeSource            clock.TimeSource
 	Metadata              ExecutorMetadata                 `optional:"true"`
 	DrainObserver         clientcommon.DrainSignalObserver `optional:"true"`
+	ProcessCPUSampler     capacity.ProcessCPUSampler       `optional:"true"`
 }
 
 // NewExecutorWithNamespace creates an executor for a specific namespace
@@ -155,7 +157,11 @@ func newExecutorWithConfig[SP ShardProcessor](params Params[SP], namespaceConfig
 		metadata: syncExecutorMetadata{
 			data: params.Metadata,
 		},
-		drainObserver: params.DrainObserver,
+		drainObserver:     params.DrainObserver,
+		processCPUSampler: params.ProcessCPUSampler,
+	}
+	if executor.processCPUSampler == nil {
+		executor.processCPUSampler = capacity.NewProcessCPUSampler()
 	}
 	executor.setMigrationMode(namespaceConfig.GetMigrationMode())
 
