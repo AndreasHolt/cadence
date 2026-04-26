@@ -21,9 +21,10 @@ func (p *namespaceProcessor) rebalanceGreedyBySmoothedLoad(
 	if len(loads) == 0 {
 		return false, nil
 	}
-	p.updateExecutorCPUObservations(namespaceState)
+	cpuObservations := p.updateExecutorCPUObservations(namespaceState)
+	cpuCostEstimates := p.updateExecutorCPUCostEstimates(loads, cpuObservations, namespaceState)
 
-	executorCapacityWeights := computeExecutorCapacityWeights(currentAssignments, namespaceState)
+	executorCapacityWeights := computeExecutorCapacityWeights(currentAssignments, namespaceState, cpuCostEstimates)
 	targetLoads := computeTargetLoads(loads, executorCapacityWeights, totalLoad)
 	totalShards := 0
 	for _, shards := range currentAssignments {
@@ -147,12 +148,62 @@ func computeExecutorLoads(currentAssignments map[string][]string, namespaceState
 	return loads, total
 }
 
-func computeExecutorCapacityWeights(currentAssignments map[string][]string, namespaceState *store.NamespaceState) map[string]float64 {
+func computeExecutorCapacityWeights(
+	currentAssignments map[string][]string,
+	namespaceState *store.NamespaceState,
+	cpuCostEstimates map[string]executorCPUCostEstimate,
+) map[string]float64 {
 	executorCapacityWeights := make(map[string]float64, len(currentAssignments))
+	meanCPUCost, hasMeanCPUCost := meanExecutorCPUCost(currentAssignments, namespaceState, cpuCostEstimates)
 	for executorID := range currentAssignments {
-		executorCapacityWeights[executorID] = capacity.WeightFromMetadata(namespaceState.Executors[executorID].Metadata)
+		weight := capacity.WeightFromMetadata(namespaceState.Executors[executorID].Metadata)
+		if hasMeanCPUCost {
+			weight *= executorCPUCostCorrection(cpuCostEstimates[executorID], meanCPUCost)
+		}
+		executorCapacityWeights[executorID] = weight
 	}
 	return executorCapacityWeights
+}
+
+func meanExecutorCPUCost(
+	currentAssignments map[string][]string,
+	namespaceState *store.NamespaceState,
+	cpuCostEstimates map[string]executorCPUCostEstimate,
+) (float64, bool) {
+	weightedCPUCost := 0.0
+	totalWeight := 0.0
+	for executorID := range currentAssignments {
+		estimate := cpuCostEstimates[executorID]
+		if !canApplyExecutorCPUCostEstimate(estimate) {
+			continue
+		}
+		weight := capacity.WeightFromMetadata(namespaceState.Executors[executorID].Metadata)
+		weightedCPUCost += estimate.cpuCostPerLoadUnit * weight
+		totalWeight += weight
+	}
+	if totalWeight <= 0 {
+		return 0, false
+	}
+	return weightedCPUCost / totalWeight, true
+}
+
+func executorCPUCostCorrection(estimate executorCPUCostEstimate, meanCPUCost float64) float64 {
+	if !canApplyExecutorCPUCostEstimate(estimate) ||
+		meanCPUCost <= 0 ||
+		math.IsNaN(meanCPUCost) ||
+		math.IsInf(meanCPUCost, 0) {
+		return 1
+	}
+
+	correction := meanCPUCost / estimate.cpuCostPerLoadUnit
+	return min(max(correction, minExecutorCPUCostCorrection), maxExecutorCPUCostCorrection)
+}
+
+func canApplyExecutorCPUCostEstimate(estimate executorCPUCostEstimate) bool {
+	return estimate.sampleWeight >= minExecutorCPUCostApplyWeight &&
+		estimate.cpuCostPerLoadUnit > 0 &&
+		!math.IsNaN(estimate.cpuCostPerLoadUnit) &&
+		!math.IsInf(estimate.cpuCostPerLoadUnit, 0)
 }
 
 func computeTargetLoads(executorLoads map[string]float64, executorCapacityWeights map[string]float64, totalLoad float64) map[string]float64 {

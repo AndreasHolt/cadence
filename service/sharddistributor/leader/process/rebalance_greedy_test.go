@@ -76,6 +76,110 @@ func metadataWithGoMaxProcs(goMaxProcs int) map[string]string {
 	}
 }
 
+func TestComputeExecutorCapacityWeightsAppliesCPUCostCorrection(t *testing.T) {
+	currentAssignments := map[string][]string{
+		"fast": {},
+		"slow": {},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			"fast": {Metadata: metadataWithGoMaxProcs(4)},
+			"slow": {Metadata: metadataWithGoMaxProcs(4)},
+		},
+	}
+	cpuCostEstimates := map[string]executorCPUCostEstimate{
+		"fast": {
+			cpuCostPerLoadUnit: 0.10,
+			sampleWeight:       minExecutorCPUCostApplyWeight,
+		},
+		"slow": {
+			cpuCostPerLoadUnit: 0.20,
+			sampleWeight:       minExecutorCPUCostApplyWeight,
+		},
+	}
+
+	weights := computeExecutorCapacityWeights(currentAssignments, namespaceState, cpuCostEstimates)
+
+	require.InDelta(t, 6.0, weights["fast"], 1e-9)
+	require.InDelta(t, 3.0, weights["slow"], 1e-9)
+}
+
+func TestComputeExecutorCapacityWeightsKeepsBaseWeightWithoutApplicableCPUCost(t *testing.T) {
+	currentAssignments := map[string][]string{
+		"not-ready": {},
+		"ready":     {},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			"not-ready": {Metadata: metadataWithGoMaxProcs(4)},
+			"ready":     {Metadata: metadataWithGoMaxProcs(8)},
+		},
+	}
+	cpuCostEstimates := map[string]executorCPUCostEstimate{
+		"not-ready": {
+			cpuCostPerLoadUnit: 0.10,
+			sampleWeight:       minExecutorCPUCostApplyWeight - 1,
+		},
+		"ready": {
+			cpuCostPerLoadUnit: 0.20,
+			sampleWeight:       minExecutorCPUCostApplyWeight,
+		},
+	}
+
+	weights := computeExecutorCapacityWeights(currentAssignments, namespaceState, cpuCostEstimates)
+
+	require.Equal(t, 4.0, weights["not-ready"])
+	require.Equal(t, 8.0, weights["ready"])
+}
+
+func TestComputeExecutorCapacityWeightsUsesCapacityWeightedMeanCPUCost(t *testing.T) {
+	currentAssignments := map[string][]string{
+		"fast":    {},
+		"slow":    {},
+		"unknown": {},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			"fast":    {Metadata: metadataWithGoMaxProcs(8)},
+			"slow":    {Metadata: metadataWithGoMaxProcs(4)},
+			"unknown": {Metadata: metadataWithGoMaxProcs(4)},
+		},
+	}
+	cpuCostEstimates := map[string]executorCPUCostEstimate{
+		"fast": {
+			cpuCostPerLoadUnit: 0.10,
+			sampleWeight:       minExecutorCPUCostApplyWeight,
+		},
+		"slow": {
+			cpuCostPerLoadUnit: 0.20,
+			sampleWeight:       minExecutorCPUCostApplyWeight,
+		},
+	}
+
+	weights := computeExecutorCapacityWeights(currentAssignments, namespaceState, cpuCostEstimates)
+
+	require.InDelta(t, 10.6666666667, weights["fast"], 1e-9)
+	require.InDelta(t, 2.6666666667, weights["slow"], 1e-9)
+	require.Equal(t, 4.0, weights["unknown"])
+}
+
+func TestExecutorCPUCostCorrectionClampsOutliers(t *testing.T) {
+	require.Equal(t, maxExecutorCPUCostCorrection, executorCPUCostCorrection(
+		executorCPUCostEstimate{
+			cpuCostPerLoadUnit: 0.01,
+			sampleWeight:       minExecutorCPUCostApplyWeight,
+		},
+		0.10,
+	))
+	require.Equal(t, minExecutorCPUCostCorrection, executorCPUCostCorrection(
+		executorCPUCostEstimate{
+			cpuCostPerLoadUnit: 1.00,
+			sampleWeight:       minExecutorCPUCostApplyWeight,
+		},
+		0.10,
+	))
+}
+
 // TestLoadBalance_Convergence verifies the balancer moves shards from an overloaded executor to an underloaded one.
 func TestLoadBalance_Convergence(t *testing.T) {
 	mocks := setupProcessorTestGreedy(t, config.NamespaceTypeEphemeral)

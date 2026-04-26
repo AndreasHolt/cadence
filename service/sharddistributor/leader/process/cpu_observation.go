@@ -14,7 +14,8 @@ type executorCPUSample struct {
 }
 
 type executorCPUObservation struct {
-	busyCores float64
+	busyCores       float64
+	intervalSeconds float64
 }
 
 func (p *namespaceProcessor) updateExecutorCPUObservations(namespaceState *store.NamespaceState) map[string]executorCPUObservation {
@@ -97,5 +98,8 @@ func computeExecutorCPUObservation(previousSample, currentSample executorCPUSamp
 		return executorCPUObservation{}, false
 	}
 
-	return executorCPUObservation{busyCores: busyCores}, true
+	return executorCPUObservation{
+		busyCores:       busyCores,
+		intervalSeconds: deltaTimeSeconds,
+	}, true
 }

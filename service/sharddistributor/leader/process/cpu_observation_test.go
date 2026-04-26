@@ -38,7 +38,7 @@ func TestComputeExecutorCPUObservation(t *testing.T) {
 				processCPUSeconds: 16,
 				sampleTime:        time.Unix(103, 0),
 			},
-			want:   executorCPUObservation{busyCores: 2},
+			want:   executorCPUObservation{busyCores: 2, intervalSeconds: 3},
 			wantOK: true,
 		},
 		{
@@ -97,7 +97,7 @@ func TestUpdateExecutorCPUObservation(t *testing.T) {
 	secondSampleTime := firstSampleTime.Add(4 * time.Second)
 	observation, ok = processor.updateExecutorCPUObservation("executor-a", cpuMetadata(4, 18, secondSampleTime))
 	require.True(t, ok)
-	require.Equal(t, executorCPUObservation{busyCores: 2}, observation)
+	require.Equal(t, executorCPUObservation{busyCores: 2, intervalSeconds: 4}, observation)
 }
 
 func TestUpdateExecutorCPUObservationRejectsInvalidMetadata(t *testing.T) {
