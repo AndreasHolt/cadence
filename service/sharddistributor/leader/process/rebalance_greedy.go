@@ -21,6 +21,7 @@ func (p *namespaceProcessor) rebalanceGreedyBySmoothedLoad(
 	if len(loads) == 0 {
 		return false, nil
 	}
+	p.updateExecutorCPUObservations(namespaceState)
 
 	executorCapacityWeights := computeExecutorCapacityWeights(currentAssignments, namespaceState)
 	targetLoads := computeTargetLoads(loads, executorCapacityWeights, totalLoad)
