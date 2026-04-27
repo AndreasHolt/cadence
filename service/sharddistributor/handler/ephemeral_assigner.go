@@ -64,7 +64,16 @@ func (h *handlerImpl) assignEphemeralBatch(ctx context.Context, namespace string
 	}
 
 	loadBalancingMode := h.cfg.GetLoadBalancingMode(namespace)
-	assignmentLoadsByExecutor, averageSmoothedShardLoad := computeExecutorLoads(state)
+	var assignmentLoadsByExecutor map[string]executorPlacementLoad
+	var averageSmoothedShardLoad float64
+	switch loadBalancingMode {
+	case types.LoadBalancingModeNAIVE:
+		assignmentLoadsByExecutor = computeNaiveInitialPlacementLoads(state)
+	case types.LoadBalancingModeGREEDY:
+		assignmentLoadsByExecutor, averageSmoothedShardLoad = computeGreedyInitialPlacementLoads(state)
+	default:
+		return nil, &types.InternalServiceError{Message: fmt.Sprintf("unsupported load balancing mode: %s", loadBalancingMode)}
+	}
 
 	chosenExecutors, err := pickExecutors(
 		namespace,
@@ -96,9 +105,23 @@ func (h *handlerImpl) assignEphemeralBatch(ctx context.Context, namespace string
 	return buildResults(namespace, shardKeys, chosenExecutors, executorOwners), nil
 }
 
-// computeExecutorLoads returns current shard count and smoothed load
+// computeNaiveInitialPlacementLoads returns current shard count for all ACTIVE executors.
+func computeNaiveInitialPlacementLoads(state *store.NamespaceState) map[string]executorPlacementLoad {
+	assignmentLoadsByExecutor := make(map[string]executorPlacementLoad, len(state.Executors))
+	for executorID, executorState := range state.Executors {
+		if executorState.Status != types.ExecutorStatusACTIVE {
+			continue
+		}
+
+		assignment := state.ShardAssignments[executorID]
+		assignmentLoadsByExecutor[executorID] = executorPlacementLoad{shardCount: len(assignment.AssignedShards)}
+	}
+	return assignmentLoadsByExecutor
+}
+
+// computeGreedyInitialPlacementLoads returns current shard count and smoothed load
 // for all ACTIVE executors, and the namespace average smoothed shard load.
-func computeExecutorLoads(state *store.NamespaceState) (map[string]executorPlacementLoad, float64) {
+func computeGreedyInitialPlacementLoads(state *store.NamespaceState) (map[string]executorPlacementLoad, float64) {
 	assignmentLoadsByExecutor := make(map[string]executorPlacementLoad, len(state.Executors))
 	totalSmoothedLoad := 0.0
 	totalShardCount := 0
@@ -143,27 +166,28 @@ func pickExecutors(
 		return nil, &types.InternalServiceError{Message: "no active executors available for namespace: " + namespace}
 	}
 
+	var compare func(a, b string) int
+	switch loadBalancingMode {
+	case types.LoadBalancingModeNAIVE:
+		compare = func(a, b string) int {
+			return cmp.Compare(assignmentLoadsByExecutor[a].shardCount, assignmentLoadsByExecutor[b].shardCount)
+		}
+	case types.LoadBalancingModeGREEDY:
+		compare = func(a, b string) int {
+			la := assignmentLoadsByExecutor[a]
+			lb := assignmentLoadsByExecutor[b]
+			return cmp.Or(
+				cmp.Compare(la.smoothedLoad, lb.smoothedLoad),
+				cmp.Compare(la.shardCount, lb.shardCount),
+			)
+		}
+	default:
+		return nil, &types.InternalServiceError{Message: fmt.Sprintf("unsupported load balancing mode: %s", loadBalancingMode)}
+	}
+
 	chosenExecutors := make(map[string]string, len(shardKeys))
 	for _, shardKey := range shardKeys {
-		var chosenExecutor string
-		switch loadBalancingMode {
-		case types.LoadBalancingModeNAIVE:
-			chosenExecutor = slices.MinFunc(executorList, func(a, b string) int {
-				return cmp.Compare(assignmentLoadsByExecutor[a].shardCount, assignmentLoadsByExecutor[b].shardCount)
-			})
-		case types.LoadBalancingModeGREEDY:
-			chosenExecutor = slices.MinFunc(executorList, func(a, b string) int {
-				la := assignmentLoadsByExecutor[a]
-				lb := assignmentLoadsByExecutor[b]
-				return cmp.Or(
-					cmp.Compare(la.smoothedLoad, lb.smoothedLoad),
-					cmp.Compare(la.shardCount, lb.shardCount),
-				)
-			})
-		default:
-			return nil, &types.InternalServiceError{Message: fmt.Sprintf("unsupported load balancing mode: %s", loadBalancingMode)}
-		}
-
+		chosenExecutor := slices.MinFunc(executorList, compare)
 		chosenExecutors[shardKey] = chosenExecutor
 		load := assignmentLoadsByExecutor[chosenExecutor]
 		load.AddShardLoad(averageSmoothedShardLoad)
@@ -171,6 +195,7 @@ func pickExecutors(
 	}
 	return chosenExecutors, nil
 }
+
 
 // mergeAssignments folds the chosen shard→executor assignments back into state.
 // The AssignedShards maps are copied to avoid mutating the object returned by
