@@ -1,0 +1,39 @@
+frontend_grpc_endpoint: cadence-frontend:7833
+matching_grpc_endpoint: cadence-matching:7835
+matching_peers:
+  - cadence-matching-a-0.cadence-matching-a-headless
+  - cadence-matching-b-0.cadence-matching-b-headless
+  - cadence-matching-c-0.cadence-matching-c-headless
+domain: cadence-matching-kind-lab
+retention_days: 1
+duration: 3m
+poll_timeout: 15s
+summary_interval: 10s
+generator:
+  rate_per_second: 40
+  burst: 40
+task_lists:
+  - name: "0"
+    weight: 8
+    pollers: 4
+    process_time: 250ms
+  - name: "1"
+    weight: 8
+    pollers: 4
+    process_time: 250ms
+  - name: "2"
+    weight: 2
+    pollers: 1
+    process_time: 100ms
+  - name: "3"
+    weight: 2
+    pollers: 1
+    process_time: 100ms
+  - name: "4"
+    weight: 1
+    pollers: 1
+    process_time: 40ms
+  - name: "5"
+    weight: 1
+    pollers: 1
+    process_time: 40ms
