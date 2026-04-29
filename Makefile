@@ -547,11 +547,6 @@ cadence-bench: $(BINS_DEPEND_ON)
 	$Q echo "compiling cadence-bench with OS: $(GOOS), ARCH: $(GOARCH)"
 	$Q ./scripts/build-with-ldflags.sh -o $@ cmd/bench/main.go
 
-BINS += cadence-matching-lab
-cadence-matching-lab: $(BINS_DEPEND_ON)
-	$Q echo "compiling cadence-matching-lab with OS: $(GOOS), ARCH: $(GOARCH)"
-	$Q ./scripts/build-with-ldflags.sh -o $@ cmd/tools/matchinglab/main.go
-
 
 BINS  += cadence-releaser
 cadence-releaser: $(BINS_DEPEND_ON)

@@ -29,7 +29,7 @@ ENV CADENCE_RELEASE_VERSION=$RELEASE_VERSION
 
 # don't do anything fancy, just build.  must be run separately, before building things.
 RUN make .just-build
-RUN CGO_ENABLED=0 make cadence-cassandra-tool cadence-sql-tool cadence cadence-server cadence-bench cadence-canary cadence-matching-lab
+RUN CGO_ENABLED=0 make cadence-cassandra-tool cadence-sql-tool cadence cadence-server cadence-bench cadence-canary
 
 
 # Download dockerize
@@ -71,9 +71,7 @@ COPY --from=builder /cadence/cadence-cassandra-tool /usr/local/bin
 COPY --from=builder /cadence/cadence-sql-tool /usr/local/bin
 COPY --from=builder /cadence/cadence /usr/local/bin
 COPY --from=builder /cadence/cadence-server /usr/local/bin
-COPY --from=builder /cadence/cadence-matching-lab /usr/local/bin
 COPY --from=builder /cadence/schema /etc/cadence/schema
-COPY environment/kind-lab/traces /etc/cadence/kind-lab/traces
 
 COPY docker/entrypoint.sh /docker-entrypoint.sh
 COPY config/dynamicconfig /etc/cadence/config/dynamicconfig
