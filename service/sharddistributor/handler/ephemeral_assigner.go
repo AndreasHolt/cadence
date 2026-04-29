@@ -32,6 +32,11 @@ import (
 	"github.com/uber/cadence/service/sharddistributor/store"
 )
 
+type executorAssignmentLoad struct {
+	smoothedLoad float64
+	shardCount   int
+}
+
 // assignEphemeralBatch is the ephemeralAssignmentBatchFn wired into the shardBatcher.
 // It processes a whole batch of unassigned shard keys for a single ephemeral
 // namespace using two storage operations:

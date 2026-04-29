@@ -3,6 +3,7 @@ package executorclient
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -17,8 +18,18 @@ import (
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/types"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/client/executorclient/syncgeneric"
 )
+
+type staticProcessCPUSampler struct {
+	seconds float64
+	ok      bool
+}
+
+func (s staticProcessCPUSampler) Sample() (float64, bool) {
+	return s.seconds, s.ok
+}
 
 // closeDrainObserver is a test helper that implements DrainSignalObserver
 // with close-to-broadcast semantics, matching the real implementation.
@@ -70,6 +81,12 @@ func expectDrainingHeartbeat(t *testing.T, mockClient *sharddistributorexecutor.
 		})
 }
 
+func expectedHeartbeatMetadata(metadata map[string]string) map[string]string {
+	return capacity.HeartbeatMetadata(metadata, capacity.HeartbeatMetadataOptions{
+		GoMaxProcs: runtime.GOMAXPROCS(0),
+	})
+}
+
 func newTestExecutor(
 	client sharddistributorexecutor.Client,
 	factory ShardProcessorFactory[*MockShardProcessor],
@@ -90,6 +107,9 @@ func newTestExecutor(
 		managedProcessors:      syncgeneric.Map[string, *managedProcessor[*MockShardProcessor]]{},
 		executorID:             "test-executor-id",
 		timeSource:             timeSource,
+		processCPUSampler: staticProcessCPUSampler{
+			ok: false,
+		},
 	}
 }
 
@@ -109,7 +129,7 @@ func TestHeartBeatLoop(t *testing.T) {
 			ExecutorID:         "test-executor-id",
 			Status:             types.ExecutorStatusACTIVE,
 			ShardStatusReports: make(map[string]*types.ShardStatusReport),
-			Metadata:           make(map[string]string),
+			Metadata:           expectedHeartbeatMetadata(nil),
 		}, gomock.Any()).
 		Return(&types.ExecutorHeartbeatResponse{
 			ShardAssignments: map[string]*types.ShardAssignment{
@@ -178,7 +198,7 @@ func TestHeartbeat(t *testing.T) {
 				"test-shard-id1": {Status: types.ShardStatusREADY, ShardLoad: 0.123},
 				"test-shard-id2": {Status: types.ShardStatusREADY, ShardLoad: 0.456},
 			},
-			Metadata: make(map[string]string),
+			Metadata: expectedHeartbeatMetadata(nil),
 		}, gomock.Any()).Return(&types.ExecutorHeartbeatResponse{
 		ShardAssignments: map[string]*types.ShardAssignment{
 			"test-shard-id1": {Status: types.AssignmentStatusREADY},
@@ -208,6 +228,37 @@ func TestHeartbeat(t *testing.T) {
 	assert.Equal(t, types.AssignmentStatusREADY, shardAssignments["test-shard-id1"].Status)
 	assert.Equal(t, types.AssignmentStatusREADY, shardAssignments["test-shard-id2"].Status)
 	assert.Equal(t, types.AssignmentStatusREADY, shardAssignments["test-shard-id3"].Status)
+}
+
+func TestHeartbeatIncludesProcessCPUSeconds(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	timeSource := clock.NewMockedTimeSource()
+	timeSource.Advance(5 * time.Second)
+
+	shardDistributorClient := sharddistributorexecutor.NewMockClient(ctrl)
+	shardDistributorClient.EXPECT().Heartbeat(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, req *types.ExecutorHeartbeatRequest, _ ...yarpc.CallOption) (*types.ExecutorHeartbeatResponse, error) {
+			runtimeMetadata, ok := capacity.RuntimeMetadataFromMetadata(req.Metadata)
+			assert.True(t, ok)
+			assert.Equal(t, runtime.GOMAXPROCS(0), runtimeMetadata.GoMaxProcs)
+			if assert.NotNil(t, runtimeMetadata.ProcessCPUSeconds) {
+				assert.Equal(t, 42.5, *runtimeMetadata.ProcessCPUSeconds)
+			}
+			if assert.NotNil(t, runtimeMetadata.SampleUnixNanos) {
+				assert.Equal(t, timeSource.Now().UnixNano(), *runtimeMetadata.SampleUnixNanos)
+			}
+			return &types.ExecutorHeartbeatResponse{}, nil
+		})
+
+	executor := newTestExecutor(shardDistributorClient, nil, timeSource)
+	executor.processCPUSampler = staticProcessCPUSampler{
+		seconds: 42.5,
+		ok:      true,
+	}
+
+	_, _, err := executor.heartbeat(context.Background())
+	assert.NoError(t, err)
 }
 
 func TestHeartBeatLoop_ShardAssignmentChange(t *testing.T) {
@@ -421,7 +472,7 @@ func TestHeartbeat_WithMigrationMode(t *testing.T) {
 			ExecutorID:         "test-executor-id",
 			Status:             types.ExecutorStatusACTIVE,
 			ShardStatusReports: map[string]*types.ShardStatusReport{},
-			Metadata:           make(map[string]string),
+			Metadata:           expectedHeartbeatMetadata(nil),
 		}, gomock.Any()).Return(&types.ExecutorHeartbeatResponse{
 		ShardAssignments: map[string]*types.ShardAssignment{
 			"test-shard-id1": {Status: types.AssignmentStatusREADY},

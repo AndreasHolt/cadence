@@ -50,6 +50,12 @@ const (
 	_defaultHeartbeatTTL = 10 * time.Second
 	_defaultTimeout      = 1 * time.Second
 	_defaultCooldown     = 250 * time.Millisecond
+
+	_defaultPerShardCooldown     = time.Minute
+	_defaultMoveBudgetProportion = 0.01
+	_defaultHysteresisUpperBand  = 1.15
+	_defaultHysteresisLowerBand  = 0.90
+	_defaultSevereImbalanceRatio = 1.3
 )
 
 type processorFactory struct {
@@ -61,17 +67,21 @@ type processorFactory struct {
 }
 
 type namespaceProcessor struct {
-	namespaceCfg  config.Namespace
-	logger        log.Logger
-	metricsClient metrics.Client
-	timeSource    clock.TimeSource
-	running       bool
-	cancel        context.CancelFunc
-	sdConfig      *config.Config
-	cfg           config.LeaderProcess
-	wg            sync.WaitGroup
-	shardStore    store.Store
-	election      store.Election
+	namespaceCfg             config.Namespace
+	logger                   log.Logger
+	metricsClient            metrics.Client
+	timeSource               clock.TimeSource
+	running                  bool
+	cancel                   context.CancelFunc
+	sdConfig                 *config.Config
+	cfg                      config.LeaderProcess
+	wg                       sync.WaitGroup
+	shardStore               store.Store
+	election                 store.Election
+	executorCPUSamples       map[string]executorCPUSample
+	executorCPUObservations  map[string]executorCPUObservation
+	executorCPUCostStates    map[string]executorCPUCostState
+	executorCPUCostEstimates map[string]executorCPUCostEstimate
 }
 
 // NewProcessorFactory creates a new processor factory
@@ -95,6 +105,8 @@ func NewProcessorFactory(
 		cfg.Process.RebalanceCooldown = _defaultCooldown
 	}
 
+	setGreedyDefaults(&cfg)
+
 	return &processorFactory{
 		logger:        logger,
 		timeSource:    timeSource,
@@ -104,17 +116,39 @@ func NewProcessorFactory(
 	}
 }
 
+func setGreedyDefaults(cfg *config.ShardDistribution) {
+	if cfg.Process.LoadBalance.PerShardCooldown <= 0 {
+		cfg.Process.LoadBalance.PerShardCooldown = _defaultPerShardCooldown
+	}
+	if cfg.Process.LoadBalance.MoveBudgetProportion <= 0 {
+		cfg.Process.LoadBalance.MoveBudgetProportion = _defaultMoveBudgetProportion
+	}
+	if cfg.Process.LoadBalance.HysteresisUpperBand <= 0 {
+		cfg.Process.LoadBalance.HysteresisUpperBand = _defaultHysteresisUpperBand
+	}
+	if cfg.Process.LoadBalance.HysteresisLowerBand <= 0 {
+		cfg.Process.LoadBalance.HysteresisLowerBand = _defaultHysteresisLowerBand
+	}
+	if cfg.Process.LoadBalance.SevereImbalanceRatio <= 0 {
+		cfg.Process.LoadBalance.SevereImbalanceRatio = _defaultSevereImbalanceRatio
+	}
+}
+
 // CreateProcessor creates a new processor for the given namespace
 func (f *processorFactory) CreateProcessor(cfg config.Namespace, shardStore store.Store, election store.Election) Processor {
 	return &namespaceProcessor{
-		namespaceCfg:  cfg,
-		logger:        f.logger.WithTags(tag.ComponentLeaderProcessor, tag.ShardNamespace(cfg.Name)),
-		timeSource:    f.timeSource,
-		cfg:           f.cfg,
-		shardStore:    shardStore,
-		election:      election, // Store the election object
-		metricsClient: f.metricsClient,
-		sdConfig:      f.sdConfig,
+		namespaceCfg:             cfg,
+		logger:                   f.logger.WithTags(tag.ComponentLeaderProcessor, tag.ShardNamespace(cfg.Name)),
+		timeSource:               f.timeSource,
+		cfg:                      f.cfg,
+		shardStore:               shardStore,
+		election:                 election, // Store the election object
+		metricsClient:            f.metricsClient,
+		sdConfig:                 f.sdConfig,
+		executorCPUSamples:       make(map[string]executorCPUSample),
+		executorCPUObservations:  make(map[string]executorCPUObservation),
+		executorCPUCostStates:    make(map[string]executorCPUCostState),
+		executorCPUCostEstimates: make(map[string]executorCPUCostEstimate),
 	}
 }
 
@@ -446,8 +480,23 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	// If there are deleted shards or stale executors, the distribution has changed.
 	assignedToEmptyExecutors := assignShardsToEmptyExecutors(currentAssignments)
 	updatedAssignments := p.updateAssignments(shardsToReassign, activeExecutors, currentAssignments)
-	isRebalancedByShardLoad := p.rebalanceByShardLoad(calcShardLoad(namespaceState), currentAssignments, metricsLoopScope)
+
+	var isRebalancedByShardLoad bool
+	loadBalancingMode := p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name)
+	switch loadBalancingMode {
+	case types.LoadBalancingModeGREEDY:
+		isRebalancedByShardLoad, err = p.rebalanceGreedyBySmoothedLoad(namespaceState, currentAssignments, metricsLoopScope)
+		if err != nil {
+			return fmt.Errorf("load balance: %w", err)
+		}
+	case types.LoadBalancingModeNAIVE:
+		isRebalancedByShardLoad = p.rebalanceNaiveByReportedLoad(calcShardLoad(namespaceState), currentAssignments, metricsLoopScope)
+	default:
+		return &types.InternalServiceError{Message: fmt.Sprintf("unsupported load balancing mode: %s", loadBalancingMode)}
+	}
+
 	p.emitExecutorMetric(namespaceState, metricsLoopScope)
+	p.emitAssignmentImbalanceMetrics(metricsLoopScope, currentAssignments, namespaceState)
 
 	distributionChanged := len(deletedShards) > 0 || len(staleExecutors) > 0 || assignedToEmptyExecutors || updatedAssignments || isRebalancedByShardLoad
 	if !distributionChanged {
@@ -587,99 +636,6 @@ func (*namespaceProcessor) updateAssignments(shardsToReassign []string, activeEx
 		currentAssignments[executorID] = append(currentAssignments[executorID], shardID)
 		i++
 	}
-
-	return true
-}
-
-// calcShardLoad returns a map of shardID to its load based on the latest reported shard loads from executors
-func calcShardLoad(namespaceState *store.NamespaceState) map[string]float64 {
-	shardLoad := make(map[string]float64)
-	for _, state := range namespaceState.Executors {
-		for shardID, report := range state.ReportedShards {
-			shardLoad[shardID] = report.ShardLoad
-		}
-	}
-	return shardLoad
-}
-
-// rebalanceByShardLoad does a rebalance if a difference between hottest and coldest executors' loads is more than maxDeviation
-// in this case the hottest shard will be moved to the coldest executor
-func (p *namespaceProcessor) rebalanceByShardLoad(shardLoad map[string]float64, currentAssignments map[string][]string, metricsScope metrics.Scope) (distributedChanged bool) {
-	// no rebalance if there are no more than 1 executor
-	if len(currentAssignments) < 2 {
-		return false
-	}
-
-	var (
-		hottestExecutorLoad = float64(0)
-		hottestExecutorID   = ""
-
-		hottestShardID   = ""
-		hottestShardLoad = float64(0)
-
-		coldestExecutorLoad = math.MaxFloat64
-		coldestExecutorID   = ""
-	)
-
-	// finding loads of hottest, coldest executors and hottest shard
-	executorLoad := make(map[string]float64)
-	for executorID, shardIDs := range currentAssignments {
-		for _, shardID := range shardIDs {
-			executorLoad[executorID] += shardLoad[shardID]
-		}
-
-		if executorLoad[executorID] <= coldestExecutorLoad {
-			coldestExecutorLoad = executorLoad[executorID]
-			coldestExecutorID = executorID
-		}
-
-		if executorLoad[executorID] >= hottestExecutorLoad {
-			hottestExecutorLoad = executorLoad[executorID]
-			hottestExecutorID = executorID
-
-			var maxShardLoad = float64(0)
-			for _, shardID := range shardIDs {
-				if shardLoad[shardID] >= maxShardLoad {
-					hottestShardID = shardID
-					maxShardLoad = shardLoad[shardID]
-				}
-			}
-			hottestShardLoad = maxShardLoad
-		}
-	}
-
-	// no rebalance if a deviation between coldest and hottest executors less than maxDeviation
-	if hottestExecutorLoad/coldestExecutorLoad < p.sdConfig.LoadBalancingNaive.MaxDeviation(p.namespaceCfg.Name) {
-		return false
-	}
-
-	// no rebalance if coldest executor becomes a hottest
-	if coldestExecutorLoad+hottestShardLoad >= hottestExecutorLoad {
-		return false
-	}
-
-	p.logger.Info("Load-based shard move",
-		tag.ShardKey(hottestShardID),
-		tag.ShardExecutor(hottestExecutorID),
-		tag.Dynamic("destination_executor", coldestExecutorID),
-		tag.ShardLoad(fmt.Sprintf("%f", hottestShardLoad)),
-		tag.Dynamic("hottest_executor_load", hottestExecutorLoad),
-		tag.Dynamic("coldest_executor_load", coldestExecutorLoad),
-		tag.Dynamic("load_ratio", hottestExecutorLoad/coldestExecutorLoad),
-		tag.Dynamic("hottest_executor_shard_count", len(currentAssignments[hottestExecutorID])),
-		tag.Dynamic("coldest_executor_shard_count", len(currentAssignments[coldestExecutorID])),
-	)
-	metricsScope.AddCounter(metrics.ShardDistributorAssignLoopLoadBasedMoves, 1)
-	metricsScope.UpdateGauge(metrics.ShardDistributorAssignLoopMovedShardLoad, hottestShardLoad)
-
-	// remove the hottest Shard from the hottest executor
-	// put it to the coldest executor
-	for i, shardID := range currentAssignments[hottestExecutorID] {
-		if shardID == hottestShardID {
-			currentAssignments[hottestExecutorID] = append(currentAssignments[hottestExecutorID][:i], currentAssignments[hottestExecutorID][i+1:]...)
-		}
-	}
-	currentAssignments[coldestExecutorID] = append(currentAssignments[coldestExecutorID], hottestShardID)
 
 	return true
 }
@@ -875,4 +831,115 @@ func makeShards(num int64) []string {
 		shards[i] = strconv.FormatInt(i, 10)
 	}
 	return shards
+}
+
+func (p *namespaceProcessor) emitAssignmentImbalanceMetrics(
+	metricsLoopScope metrics.Scope,
+	assignments map[string][]string,
+	namespaceState *store.NamespaceState,
+) {
+	if metricsLoopScope == nil || namespaceState == nil {
+		return
+	}
+
+	now := p.timeSource.Now().UTC()
+	staleAfter := p.cfg.HeartbeatTTL
+
+	reportedLoads := make([]float64, 0, len(assignments))
+	smoothedLoads := make([]float64, 0, len(assignments))
+
+	totalAssigned := 0
+	smoothedMissing := 0
+	smoothedStale := 0
+
+	for executorID, shards := range assignments {
+		reportedLoad := 0.0
+		smoothedLoad := 0.0
+
+		heartbeat, heartbeatOK := namespaceState.Executors[executorID]
+		for _, shardID := range shards {
+			totalAssigned++
+
+			if !heartbeatOK || heartbeat.ReportedShards == nil {
+				continue
+			} else if shardReport, ok := heartbeat.ReportedShards[shardID]; ok && shardReport != nil {
+				reportedLoad += shardReport.ShardLoad
+			}
+
+			if namespaceState.ShardStats == nil {
+				smoothedMissing++
+				continue
+			}
+			stats, ok := namespaceState.ShardStats[shardID]
+			if !ok || stats.LastUpdateTime.IsZero() {
+				smoothedMissing++
+				continue
+			}
+			if staleAfter > 0 && now.Sub(stats.LastUpdateTime) > staleAfter {
+				smoothedStale++
+			}
+			smoothedLoad += stats.SmoothedLoad
+		}
+
+		reportedLoads = append(reportedLoads, reportedLoad)
+		smoothedLoads = append(smoothedLoads, smoothedLoad)
+	}
+
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentLoadMaxOverMean, maxOverMean(reportedLoads))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentLoadCV, coefficientOfVariation(reportedLoads))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadMaxOverMean, maxOverMean(smoothedLoads))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadCV, coefficientOfVariation(smoothedLoads))
+
+	if totalAssigned == 0 {
+		metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadMissingRatio, 0)
+		metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadStaleRatio, 0)
+		return
+	}
+
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadMissingRatio, float64(smoothedMissing)/float64(totalAssigned))
+	metricsLoopScope.UpdateGauge(metrics.ShardDistributorAssignmentSmoothedLoadStaleRatio, float64(smoothedStale)/float64(totalAssigned))
+}
+
+func maxOverMean(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	total := 0.0
+	maxValue := 0.0
+	for _, value := range values {
+		total += value
+		if value > maxValue {
+			maxValue = value
+		}
+	}
+	mean := total / float64(len(values))
+	if mean == 0 {
+		return 0
+	}
+	return maxValue / mean
+}
+
+func coefficientOfVariation(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+
+	total := 0.0
+	for _, value := range values {
+		total += value
+	}
+	mean := total / float64(len(values))
+	if mean == 0 {
+		return 0
+	}
+
+	variance := 0.0
+	for _, value := range values {
+		delta := value - mean
+		variance += delta * delta
+	}
+	variance /= float64(len(values))
+
+	return math.Sqrt(variance) / mean
 }
