@@ -67,17 +67,21 @@ type processorFactory struct {
 }
 
 type namespaceProcessor struct {
-	namespaceCfg  config.Namespace
-	logger        log.Logger
-	metricsClient metrics.Client
-	timeSource    clock.TimeSource
-	running       bool
-	cancel        context.CancelFunc
-	sdConfig      *config.Config
-	cfg           config.LeaderProcess
-	wg            sync.WaitGroup
-	shardStore    store.Store
-	election      store.Election
+	namespaceCfg             config.Namespace
+	logger                   log.Logger
+	metricsClient            metrics.Client
+	timeSource               clock.TimeSource
+	running                  bool
+	cancel                   context.CancelFunc
+	sdConfig                 *config.Config
+	cfg                      config.LeaderProcess
+	wg                       sync.WaitGroup
+	shardStore               store.Store
+	election                 store.Election
+	executorCPUSamples       map[string]executorCPUSample
+	executorCPUObservations  map[string]executorCPUObservation
+	executorCPUCostStates    map[string]executorCPUCostState
+	executorCPUCostEstimates map[string]executorCPUCostEstimate
 }
 
 // NewProcessorFactory creates a new processor factory
@@ -133,14 +137,18 @@ func setGreedyDefaults(cfg *config.ShardDistribution) {
 // CreateProcessor creates a new processor for the given namespace
 func (f *processorFactory) CreateProcessor(cfg config.Namespace, shardStore store.Store, election store.Election) Processor {
 	return &namespaceProcessor{
-		namespaceCfg:  cfg,
-		logger:        f.logger.WithTags(tag.ComponentLeaderProcessor, tag.ShardNamespace(cfg.Name)),
-		timeSource:    f.timeSource,
-		cfg:           f.cfg,
-		shardStore:    shardStore,
-		election:      election, // Store the election object
-		metricsClient: f.metricsClient,
-		sdConfig:      f.sdConfig,
+		namespaceCfg:             cfg,
+		logger:                   f.logger.WithTags(tag.ComponentLeaderProcessor, tag.ShardNamespace(cfg.Name)),
+		timeSource:               f.timeSource,
+		cfg:                      f.cfg,
+		shardStore:               shardStore,
+		election:                 election, // Store the election object
+		metricsClient:            f.metricsClient,
+		sdConfig:                 f.sdConfig,
+		executorCPUSamples:       make(map[string]executorCPUSample),
+		executorCPUObservations:  make(map[string]executorCPUObservation),
+		executorCPUCostStates:    make(map[string]executorCPUCostState),
+		executorCPUCostEstimates: make(map[string]executorCPUCostEstimate),
 	}
 }
 

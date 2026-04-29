@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/types"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/client/clientcommon"
 	"github.com/uber/cadence/service/sharddistributor/client/executorclient/metricsconstants"
 	"github.com/uber/cadence/service/sharddistributor/client/executorclient/syncgeneric"
@@ -108,6 +110,7 @@ type executorImpl[SP ShardProcessor] struct {
 	migrationMode          atomic.Int32
 	metadata               syncExecutorMetadata
 	drainObserver          clientcommon.DrainSignalObserver
+	processCPUSampler      capacity.ProcessCPUSampler
 }
 
 func (e *executorImpl[SP]) setMigrationMode(mode types.MigrationMode) {
@@ -346,13 +349,24 @@ func (e *executorImpl[SP]) sendHeartbeat(ctx context.Context, status types.Execu
 
 	e.hostMetrics.Gauge(metricsconstants.ShardDistributorExecutorOwnedShards).Update(float64(len(shardStatusReports)))
 
+	processCPUSeconds, hasProcessCPU := 0.0, false
+	if e.processCPUSampler != nil {
+		processCPUSeconds, hasProcessCPU = e.processCPUSampler.Sample()
+	}
+	heartbeatMetadata := capacity.HeartbeatMetadata(e.metadata.Get(), capacity.HeartbeatMetadataOptions{
+		GoMaxProcs:        runtime.GOMAXPROCS(0),
+		ProcessCPUSeconds: processCPUSeconds,
+		HasProcessCPU:     hasProcessCPU,
+		SampleUnixNanos:   e.timeSource.Now().UnixNano(),
+	})
+
 	// Create the request
 	request := &types.ExecutorHeartbeatRequest{
 		Namespace:          e.namespace,
 		ExecutorID:         e.executorID,
 		Status:             status,
 		ShardStatusReports: shardStatusReports,
-		Metadata:           e.metadata.Get(),
+		Metadata:           heartbeatMetadata,
 	}
 
 	// Send the request
