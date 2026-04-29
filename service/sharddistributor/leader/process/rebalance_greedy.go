@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/sharddistributor/capacity"
@@ -21,11 +22,12 @@ func (p *namespaceProcessor) rebalanceGreedyBySmoothedLoad(
 	if len(loads) == 0 {
 		return false, nil
 	}
-	cpuObservations := p.updateExecutorCPUObservations(namespaceState)
-	cpuCostEstimates := p.updateExecutorCPUCostEstimates(loads, cpuObservations, namespaceState)
+	
+	busyCoresMap := p.updateExecutorCPUObservations(namespaceState)
+	effectiveCapacities := computeEffectiveCapacities(loads, busyCoresMap, namespaceState)
 
-	executorCapacityWeights := computeExecutorCapacityWeights(currentAssignments, namespaceState, cpuCostEstimates)
-	targetLoads := computeTargetLoads(loads, executorCapacityWeights, totalLoad)
+	p.logCPUCorrectionDebug(loads, busyCoresMap, effectiveCapacities, namespaceState)
+	targetLoads := computeTargetLoads(loads, effectiveCapacities, totalLoad)
 	totalShards := 0
 	for _, shards := range currentAssignments {
 		totalShards += len(shards)
@@ -148,62 +150,46 @@ func computeExecutorLoads(currentAssignments map[string][]string, namespaceState
 	return loads, total
 }
 
-func computeExecutorCapacityWeights(
-	currentAssignments map[string][]string,
+func computeEffectiveCapacities(
+	loads map[string]float64,
+	busyCoresMap map[string]float64,
 	namespaceState *store.NamespaceState,
-	cpuCostEstimates map[string]executorCPUCostEstimate,
 ) map[string]float64 {
-	executorCapacityWeights := make(map[string]float64, len(currentAssignments))
-	meanCPUCost, hasMeanCPUCost := meanExecutorCPUCost(currentAssignments, namespaceState, cpuCostEstimates)
-	for executorID := range currentAssignments {
-		weight := capacity.WeightFromMetadata(namespaceState.Executors[executorID].Metadata)
-		if hasMeanCPUCost {
-			weight *= executorCPUCostCorrection(cpuCostEstimates[executorID], meanCPUCost)
+	cpuCosts := make(map[string]float64)
+	totalCPUCost := 0.0
+	validCount := 0
+
+	for executorID, load := range loads {
+		busyCores, ok := busyCoresMap[executorID]
+		if ok && load > 0 && busyCores > 0 {
+			cost := busyCores / load
+			if !math.IsNaN(cost) && !math.IsInf(cost, 0) {
+				cpuCosts[executorID] = cost
+				totalCPUCost += cost
+				validCount++
+			}
 		}
-		executorCapacityWeights[executorID] = weight
 	}
-	return executorCapacityWeights
-}
 
-func meanExecutorCPUCost(
-	currentAssignments map[string][]string,
-	namespaceState *store.NamespaceState,
-	cpuCostEstimates map[string]executorCPUCostEstimate,
-) (float64, bool) {
-	weightedCPUCost := 0.0
-	totalWeight := 0.0
-	for executorID := range currentAssignments {
-		estimate := cpuCostEstimates[executorID]
-		if !canApplyExecutorCPUCostEstimate(estimate) {
-			continue
-		}
+	averageCPUCost := 0.0
+	if validCount > 0 {
+		averageCPUCost = totalCPUCost / float64(validCount)
+	}
+
+	effectiveCapacities := make(map[string]float64, len(loads))
+	for executorID := range loads {
 		weight := capacity.WeightFromMetadata(namespaceState.Executors[executorID].Metadata)
-		weightedCPUCost += estimate.cpuCostPerLoadUnit * weight
-		totalWeight += weight
-	}
-	if totalWeight <= 0 {
-		return 0, false
-	}
-	return weightedCPUCost / totalWeight, true
-}
-
-func executorCPUCostCorrection(estimate executorCPUCostEstimate, meanCPUCost float64) float64 {
-	if !canApplyExecutorCPUCostEstimate(estimate) ||
-		meanCPUCost <= 0 ||
-		math.IsNaN(meanCPUCost) ||
-		math.IsInf(meanCPUCost, 0) {
-		return 1
+		if averageCPUCost > 0 {
+			cost, ok := cpuCosts[executorID]
+			if ok && cost > 0 {
+				correctionFactor := averageCPUCost / cost
+				weight *= correctionFactor
+			}
+		}
+		effectiveCapacities[executorID] = weight
 	}
 
-	correction := meanCPUCost / estimate.cpuCostPerLoadUnit
-	return min(max(correction, minExecutorCPUCostCorrection), maxExecutorCPUCostCorrection)
-}
-
-func canApplyExecutorCPUCostEstimate(estimate executorCPUCostEstimate) bool {
-	return estimate.sampleWeight >= minExecutorCPUCostApplyWeight &&
-		estimate.cpuCostPerLoadUnit > 0 &&
-		!math.IsNaN(estimate.cpuCostPerLoadUnit) &&
-		!math.IsInf(estimate.cpuCostPerLoadUnit, 0)
+	return effectiveCapacities
 }
 
 func computeTargetLoads(executorLoads map[string]float64, executorCapacityWeights map[string]float64, totalLoad float64) map[string]float64 {
@@ -392,6 +378,23 @@ func (p *namespaceProcessor) moveShard(currentAssignments map[string][]string, s
 	// Add shard to destination.
 	currentAssignments[destExecutor] = append(currentAssignments[destExecutor], shardID)
 	return nil
+}
+
+func (p *namespaceProcessor) logCPUCorrectionDebug(
+	loads map[string]float64,
+	busyCoresMap map[string]float64,
+	effectiveCapacities map[string]float64,
+	namespaceState *store.NamespaceState,
+) {
+	for executorID, load := range loads {
+		p.logger.Debug("cpu correction debug",
+			tag.ShardExecutor(executorID),
+			tag.Dynamic("executor_load", load),
+			tag.Dynamic("busy_cores", busyCoresMap[executorID]),
+			tag.Dynamic("effective_capacity", effectiveCapacities[executorID]),
+			tag.Dynamic("capacity_weight", capacity.WeightFromMetadata(namespaceState.Executors[executorID].Metadata)),
+		)
+	}
 }
 
 func (p *namespaceProcessor) updateExecutorLoadsAfterMove(

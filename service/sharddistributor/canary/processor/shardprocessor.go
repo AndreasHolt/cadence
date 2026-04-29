@@ -2,6 +2,8 @@ package processor
 
 import (
 	"context"
+	"math"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -116,12 +118,26 @@ func (p *ShardProcessor) process() {
 	ticker := p.timeSource.NewTicker(processInterval)
 	defer ticker.Stop()
 
+	cpuMultiplier := 1.0
+	if val := os.Getenv("CANARY_CPU_MULTIPLIER"); val != "" {
+		if m, err := strconv.ParseFloat(val, 64); err == nil {
+			cpuMultiplier = m
+		}
+	}
+
 	for {
 		select {
 		case <-p.stopChan:
 			p.logger.Debug("Stopping shard processor", zap.String("shardID", p.shardID), zap.Int("steps", p.processSteps))
 			return
 		case <-ticker.Chan():
+			// Consume CPU proportional to shardLoad and the injected multiplier.
+			// 1.0 load unit => ~100ms of CPU time per 10s interval (approximate)
+			iterations := int(p.shardLoad * cpuMultiplier * 5000000)
+			for i := 0; i < iterations; i++ {
+				_ = math.Sqrt(float64(i))
+			}
+
 			p.processSteps++
 			p.metricsScope.Counter(canarymetrics.CanaryShardProcessStep).Inc(1)
 			p.logger.Debug("Processing shard", zap.String("shardID", p.shardID), zap.Int("steps", p.processSteps))

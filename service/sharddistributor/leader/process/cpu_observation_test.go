@@ -25,7 +25,7 @@ func TestComputeExecutorCPUObservation(t *testing.T) {
 		name     string
 		previous executorCPUSample
 		current  executorCPUSample
-		want     executorCPUObservation
+		want     float64
 		wantOK   bool
 	}{
 		{
@@ -38,7 +38,7 @@ func TestComputeExecutorCPUObservation(t *testing.T) {
 				processCPUSeconds: 16,
 				sampleTime:        time.Unix(103, 0),
 			},
-			want:   executorCPUObservation{busyCores: 2, intervalSeconds: 3},
+			want:   2.0,
 			wantOK: true,
 		},
 		{
@@ -92,12 +92,12 @@ func TestUpdateExecutorCPUObservation(t *testing.T) {
 	firstSampleTime := time.Unix(100, 0)
 	observation, ok := processor.updateExecutorCPUObservation("executor-a", cpuMetadata(4, 10, firstSampleTime))
 	require.False(t, ok)
-	require.Equal(t, executorCPUObservation{}, observation)
+	require.Equal(t, 0.0, observation)
 
 	secondSampleTime := firstSampleTime.Add(4 * time.Second)
 	observation, ok = processor.updateExecutorCPUObservation("executor-a", cpuMetadata(4, 18, secondSampleTime))
 	require.True(t, ok)
-	require.Equal(t, executorCPUObservation{busyCores: 2, intervalSeconds: 4}, observation)
+	require.Equal(t, 2.0, observation)
 }
 
 func TestUpdateExecutorCPUObservationRejectsInvalidMetadata(t *testing.T) {
@@ -135,7 +135,7 @@ func TestUpdateExecutorCPUObservationRejectsInvalidMetadata(t *testing.T) {
 			observation, ok := processor.updateExecutorCPUObservation("executor-a", tt.metadata)
 
 			require.False(t, ok)
-			require.Equal(t, executorCPUObservation{}, observation)
+			require.Equal(t, 0.0, observation)
 			require.NotContains(t, processor.executorCPUSamples, "executor-a")
 		})
 	}
@@ -151,17 +151,17 @@ func TestUpdateExecutorCPUObservationsPrunesMissingExecutors(t *testing.T) {
 			"executor-a": {Metadata: cpuMetadata(4, 10, firstSampleTime)},
 		},
 	})
-	processor.updateExecutorCPUObservations(&store.NamespaceState{
+	busyCoresMap := processor.updateExecutorCPUObservations(&store.NamespaceState{
 		Executors: map[string]store.HeartbeatState{
 			"executor-a": {Metadata: cpuMetadata(4, 12, secondSampleTime)},
 		},
 	})
 	require.Contains(t, processor.executorCPUSamples, "executor-a")
-	require.Contains(t, processor.executorCPUObservations, "executor-a")
+	require.Contains(t, busyCoresMap, "executor-a")
 
-	processor.updateExecutorCPUObservations(&store.NamespaceState{
+	busyCoresMap = processor.updateExecutorCPUObservations(&store.NamespaceState{
 		Executors: map[string]store.HeartbeatState{},
 	})
 	require.NotContains(t, processor.executorCPUSamples, "executor-a")
-	require.NotContains(t, processor.executorCPUObservations, "executor-a")
+	require.NotContains(t, busyCoresMap, "executor-a")
 }

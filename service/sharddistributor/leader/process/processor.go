@@ -79,9 +79,6 @@ type namespaceProcessor struct {
 	shardStore               store.Store
 	election                 store.Election
 	executorCPUSamples       map[string]executorCPUSample
-	executorCPUObservations  map[string]executorCPUObservation
-	executorCPUCostStates    map[string]executorCPUCostState
-	executorCPUCostEstimates map[string]executorCPUCostEstimate
 }
 
 // NewProcessorFactory creates a new processor factory
@@ -146,9 +143,6 @@ func (f *processorFactory) CreateProcessor(cfg config.Namespace, shardStore stor
 		metricsClient:            f.metricsClient,
 		sdConfig:                 f.sdConfig,
 		executorCPUSamples:       make(map[string]executorCPUSample),
-		executorCPUObservations:  make(map[string]executorCPUObservation),
-		executorCPUCostStates:    make(map[string]executorCPUCostState),
-		executorCPUCostEstimates: make(map[string]executorCPUCostEstimate),
 	}
 }
 

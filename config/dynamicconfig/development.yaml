@@ -99,3 +99,5 @@ shardDistributor.migrationMode:
   - value: "distributed_pass"
     constraints:
       namespace: "test-external-assignment"
+shardDistributor.loadBalancingMode:
+  - value: "greedy"

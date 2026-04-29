@@ -16,3 +16,6 @@ persistence:
         maxIdleConns: 1
         maxConnLifetime: "128h"
         databaseName: "cadence_visibility.db"
+
+log:
+  level: "debug"

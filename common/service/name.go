@@ -38,7 +38,7 @@ const (
 )
 
 // ListWithRing contains the list of all cadence services that has a hash ring
-var ListWithRing = []string{Frontend, History, Matching, Worker}
+var ListWithRing = []string{Frontend, History, Matching, Worker, ShardDistributor}
 
 // List contains the list of all cadence services
 var List = []string{Frontend, History, Matching, Worker, ShardDistributor}

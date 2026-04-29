@@ -76,10 +76,10 @@ func metadataWithGoMaxProcs(goMaxProcs int) map[string]string {
 	}
 }
 
-func TestComputeExecutorCapacityWeightsAppliesCPUCostCorrection(t *testing.T) {
-	currentAssignments := map[string][]string{
-		"fast": {},
-		"slow": {},
+func TestComputeEffectiveCapacitiesAppliesCPUCostCorrection(t *testing.T) {
+	loads := map[string]float64{
+		"fast": 10.0,
+		"slow": 10.0,
 	}
 	namespaceState := &store.NamespaceState{
 		Executors: map[string]store.HeartbeatState{
@@ -87,27 +87,24 @@ func TestComputeExecutorCapacityWeightsAppliesCPUCostCorrection(t *testing.T) {
 			"slow": {Metadata: metadataWithGoMaxProcs(4)},
 		},
 	}
-	cpuCostEstimates := map[string]executorCPUCostEstimate{
-		"fast": {
-			cpuCostPerLoadUnit: 0.10,
-			sampleWeight:       minExecutorCPUCostApplyWeight,
-		},
-		"slow": {
-			cpuCostPerLoadUnit: 0.20,
-			sampleWeight:       minExecutorCPUCostApplyWeight,
-		},
+	busyCoresMap := map[string]float64{
+		"fast": 1.0, // CPUCost = 1.0 / 10.0 = 0.1
+		"slow": 2.0, // CPUCost = 2.0 / 10.0 = 0.2
 	}
 
-	weights := computeExecutorCapacityWeights(currentAssignments, namespaceState, cpuCostEstimates)
+	weights := computeEffectiveCapacities(loads, busyCoresMap, namespaceState)
 
+	// Mean CPU Cost = (0.1 + 0.2) / 2 = 0.15
+	// Fast weight = 4 * (0.15 / 0.1) = 6.0
+	// Slow weight = 4 * (0.15 / 0.2) = 3.0
 	require.InDelta(t, 6.0, weights["fast"], 1e-9)
 	require.InDelta(t, 3.0, weights["slow"], 1e-9)
 }
 
-func TestComputeExecutorCapacityWeightsKeepsBaseWeightWithoutApplicableCPUCost(t *testing.T) {
-	currentAssignments := map[string][]string{
-		"not-ready": {},
-		"ready":     {},
+func TestComputeEffectiveCapacitiesKeepsBaseWeightWithoutApplicableCPUCost(t *testing.T) {
+	loads := map[string]float64{
+		"not-ready": 10.0,
+		"ready":     10.0,
 	}
 	namespaceState := &store.NamespaceState{
 		Executors: map[string]store.HeartbeatState{
@@ -115,28 +112,25 @@ func TestComputeExecutorCapacityWeightsKeepsBaseWeightWithoutApplicableCPUCost(t
 			"ready":     {Metadata: metadataWithGoMaxProcs(8)},
 		},
 	}
-	cpuCostEstimates := map[string]executorCPUCostEstimate{
-		"not-ready": {
-			cpuCostPerLoadUnit: 0.10,
-			sampleWeight:       minExecutorCPUCostApplyWeight - 1,
-		},
-		"ready": {
-			cpuCostPerLoadUnit: 0.20,
-			sampleWeight:       minExecutorCPUCostApplyWeight,
-		},
+	busyCoresMap := map[string]float64{
+		"not-ready": 0.0, // Invalid (0 busyCores) -> CPUCost ignored
+		"ready":     2.0, // CPUCost = 2.0 / 10.0 = 0.2
 	}
 
-	weights := computeExecutorCapacityWeights(currentAssignments, namespaceState, cpuCostEstimates)
+	weights := computeEffectiveCapacities(loads, busyCoresMap, namespaceState)
 
+	// Mean CPU Cost = 0.2
+	// not-ready weight = 4 (fallback to base weight)
+	// ready weight = 8 * (0.2 / 0.2) = 8.0
 	require.Equal(t, 4.0, weights["not-ready"])
 	require.Equal(t, 8.0, weights["ready"])
 }
 
-func TestComputeExecutorCapacityWeightsUsesCapacityWeightedMeanCPUCost(t *testing.T) {
-	currentAssignments := map[string][]string{
-		"fast":    {},
-		"slow":    {},
-		"unknown": {},
+func TestComputeEffectiveCapacitiesUsesMeanCPUCost(t *testing.T) {
+	loads := map[string]float64{
+		"fast":    10.0,
+		"slow":    10.0,
+		"unknown": 0.0,
 	}
 	namespaceState := &store.NamespaceState{
 		Executors: map[string]store.HeartbeatState{
@@ -145,39 +139,21 @@ func TestComputeExecutorCapacityWeightsUsesCapacityWeightedMeanCPUCost(t *testin
 			"unknown": {Metadata: metadataWithGoMaxProcs(4)},
 		},
 	}
-	cpuCostEstimates := map[string]executorCPUCostEstimate{
-		"fast": {
-			cpuCostPerLoadUnit: 0.10,
-			sampleWeight:       minExecutorCPUCostApplyWeight,
-		},
-		"slow": {
-			cpuCostPerLoadUnit: 0.20,
-			sampleWeight:       minExecutorCPUCostApplyWeight,
-		},
+	busyCoresMap := map[string]float64{
+		"fast":    1.0, // CPUCost = 0.10
+		"slow":    2.0, // CPUCost = 0.20
+		"unknown": 0.0,
 	}
 
-	weights := computeExecutorCapacityWeights(currentAssignments, namespaceState, cpuCostEstimates)
+	weights := computeEffectiveCapacities(loads, busyCoresMap, namespaceState)
 
-	require.InDelta(t, 10.6666666667, weights["fast"], 1e-9)
-	require.InDelta(t, 2.6666666667, weights["slow"], 1e-9)
+	// Mean CPU Cost = (0.1 + 0.2) / 2 = 0.15
+	// Fast weight = 8 * (0.15 / 0.1) = 12.0
+	// Slow weight = 4 * (0.15 / 0.2) = 3.0
+	// Unknown weight = 4
+	require.InDelta(t, 12.0, weights["fast"], 1e-9)
+	require.InDelta(t, 3.0, weights["slow"], 1e-9)
 	require.Equal(t, 4.0, weights["unknown"])
-}
-
-func TestExecutorCPUCostCorrectionClampsOutliers(t *testing.T) {
-	require.Equal(t, maxExecutorCPUCostCorrection, executorCPUCostCorrection(
-		executorCPUCostEstimate{
-			cpuCostPerLoadUnit: 0.01,
-			sampleWeight:       minExecutorCPUCostApplyWeight,
-		},
-		0.10,
-	))
-	require.Equal(t, minExecutorCPUCostCorrection, executorCPUCostCorrection(
-		executorCPUCostEstimate{
-			cpuCostPerLoadUnit: 1.00,
-			sampleWeight:       minExecutorCPUCostApplyWeight,
-		},
-		0.10,
-	))
 }
 
 // TestLoadBalance_Convergence verifies the balancer moves shards from an overloaded executor to an underloaded one.
