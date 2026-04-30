@@ -180,11 +180,11 @@ func computeEffectiveCapacities(
 	for executorID := range loads {
 		weight := capacity.WeightFromMetadata(namespaceState.Executors[executorID].Metadata)
 		if averageCPUCost > 0 {
-			cost, ok := cpuCosts[executorID]
-			if ok && cost > 0 {
-				correctionFactor := averageCPUCost / cost
-				weight *= correctionFactor
+			cost := cpuCosts[executorID]
+			if cost <= 0 {
+				cost = averageCPUCost
 			}
+			weight *= averageCPUCost / cost
 		}
 		effectiveCapacities[executorID] = weight
 	}
@@ -197,11 +197,7 @@ func computeTargetLoads(executorLoads map[string]float64, executorCapacityWeight
 
 	totalWeight := 0.0
 	for executorID := range executorLoads {
-		weight := executorCapacityWeights[executorID]
-		if weight <= 0 {
-			weight = 1
-		}
-		totalWeight += weight
+		totalWeight += executorCapacityWeights[executorID]
 	}
 
 	if totalWeight <= 0 {
@@ -209,11 +205,7 @@ func computeTargetLoads(executorLoads map[string]float64, executorCapacityWeight
 	}
 
 	for executorID := range executorLoads {
-		weight := executorCapacityWeights[executorID]
-		if weight <= 0 {
-			weight = 1
-		}
-		targetLoads[executorID] = (weight / totalWeight) * totalLoad
+		targetLoads[executorID] = (executorCapacityWeights[executorID] / totalWeight) * totalLoad
 	}
 
 	return targetLoads
