@@ -1,0 +1,24 @@
+frontend.enableClientVersionCheck:
+  - value: true
+matching.enableClientAutoConfig:
+  - value: true
+history.useNewInitialFailoverVersion:
+  - value: true
+matching.shardDistributionMode:
+  - value: shard_distributor
+matching.percentageOnboardedToShardManager:
+  - value: 100
+matching.qpsTrackerInterval:
+  - value: 1s
+shardDistributor.migrationMode:
+  - value: onboarded
+    constraints:
+      namespace: cadence-matching-kind-lab
+shardDistributor.loadBalancingMode:
+  - value: naive
+    constraints:
+      namespace: cadence-matching-kind-lab
+shardDistributor.loadBalancingNaive.maxDeviation:
+  - value: 1.2
+    constraints:
+      namespace: cadence-matching-kind-lab
