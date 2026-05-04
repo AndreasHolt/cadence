@@ -157,7 +157,7 @@ shardDistribution:
   namespaces:
     - name: cadence-matching-kind-lab
       type: fixed
-      shardNum: 6
+      shardNum: 1000
       mode: onboarded
   leaderStore:
     storageParams:
