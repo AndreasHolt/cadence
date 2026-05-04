@@ -37,6 +37,7 @@ spec:
       containers:
         - name: matching
           image: cadence-kind-lab:dev
+          imagePullPolicy: Never
           env:
             - name: POD_IP
               valueFrom:

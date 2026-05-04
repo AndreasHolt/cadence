@@ -14,6 +14,7 @@ spec:
       containers:
         - name: schema-setup
           image: cadence-kind-lab:dev
+          imagePullPolicy: Never
           command:
             - /bin/bash
             - -ec
