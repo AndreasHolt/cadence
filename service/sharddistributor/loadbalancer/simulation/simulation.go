@@ -20,12 +20,17 @@ type Config struct {
 	Namespace string
 
 	ExecutorCount int
+	Algorithm     string
 
 	PerShardCooldown     time.Duration
 	MoveBudgetProportion float64
 	HysteresisUpperBand  float64
 	HysteresisLowerBand  float64
 	SevereImbalanceRatio float64
+
+	CostAwareMinBenefitRatio float64
+	CostAwareMoveCostRatio   float64
+	CostAwareTargetCV        float64
 }
 
 // Result is the compact feedback payload for tuning load balancing behavior.
@@ -54,7 +59,13 @@ type Result struct {
 	WorstReportedCV            float64            `json:"worst_reported_cv"`
 }
 
-// Simulator runs the refactored greedy planner against in-memory state.
+const (
+	AlgorithmGreedy    = "greedy"
+	AlgorithmCostAware = "cost-aware"
+	AlgorithmThreshold = "threshold"
+)
+
+// Simulator runs a replay planner against in-memory state.
 type Simulator struct {
 	cfg         Config
 	greedyCfg   config.LoadBalancingGreedyConfig
@@ -136,7 +147,7 @@ func (s *Simulator) ApplyRow(row LoadHistoryRow) error {
 		s.state.ShardStats[shardID] = stats
 	}
 
-	moves, err := greedy.PlanRebalance(s.greedyCfg, s.cfg.Namespace, s.state, s.assignments, s.now, metrics.NoopScope)
+	moves, err := s.planMoves()
 	if err != nil {
 		return fmt.Errorf("plan rebalance: %w", err)
 	}
@@ -152,6 +163,19 @@ func (s *Simulator) ApplyRow(row LoadHistoryRow) error {
 	s.syncAssignmentsToState()
 	s.recordSample(row.ShardLoads)
 	return nil
+}
+
+func (s *Simulator) planMoves() ([]plan.Move, error) {
+	switch s.cfg.Algorithm {
+	case AlgorithmGreedy:
+		return greedy.PlanRebalance(s.greedyCfg, s.cfg.Namespace, s.state, s.assignments, s.now, metrics.NoopScope)
+	case AlgorithmCostAware:
+		return s.planCostAwareMoves()
+	case AlgorithmThreshold:
+		return s.planThresholdMoves()
+	default:
+		return nil, fmt.Errorf("unknown simulation algorithm %q", s.cfg.Algorithm)
+	}
 }
 
 func (s *Simulator) Result(rows int) Result {
@@ -301,6 +325,9 @@ func (cfg Config) withDefaults() Config {
 	if cfg.Namespace == "" {
 		cfg.Namespace = "loadbalancer-simulation"
 	}
+	if cfg.Algorithm == "" {
+		cfg.Algorithm = AlgorithmGreedy
+	}
 	if cfg.ExecutorCount == 0 {
 		cfg.ExecutorCount = 4
 	}
@@ -318,6 +345,15 @@ func (cfg Config) withDefaults() Config {
 	}
 	if cfg.SevereImbalanceRatio == 0 {
 		cfg.SevereImbalanceRatio = 1.3
+	}
+	if cfg.CostAwareMinBenefitRatio == 0 {
+		cfg.CostAwareMinBenefitRatio = 0.003
+	}
+	if cfg.CostAwareMoveCostRatio == 0 {
+		cfg.CostAwareMoveCostRatio = 0.001
+	}
+	if cfg.CostAwareTargetCV == 0 {
+		cfg.CostAwareTargetCV = 0.06
 	}
 	return cfg
 }

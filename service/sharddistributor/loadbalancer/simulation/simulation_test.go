@@ -60,3 +60,96 @@ func TestRunRebalancesDeterministically(t *testing.T) {
 	require.Less(t, result.AverageSmoothedCV, 1.0)
 	require.Less(t, result.WorstSmoothedCV, 1.0)
 }
+
+func TestRunCostAwareAlgorithm(t *testing.T) {
+	start := time.Date(2025, 12, 21, 0, 0, 0, 0, time.UTC)
+	history := []LoadHistoryRow{
+		{
+			Timestamp: start,
+			ShardLoads: map[string]float64{
+				"0": 100,
+				"1": 80,
+				"2": 10,
+				"3": 10,
+			},
+		},
+		{
+			Timestamp: start.Add(10 * time.Second),
+			ShardLoads: map[string]float64{
+				"0": 100,
+				"1": 80,
+				"2": 10,
+				"3": 10,
+			},
+		},
+	}
+
+	result, err := Run(history, []string{"0", "1", "2", "3"}, Config{
+		Algorithm:            AlgorithmCostAware,
+		ExecutorCount:        2,
+		PerShardCooldown:     time.Second,
+		MoveBudgetProportion: 0.5,
+		HysteresisUpperBand:  1.05,
+		HysteresisLowerBand:  0.95,
+		SevereImbalanceRatio: 1.1,
+	})
+	require.NoError(t, err)
+	require.Positive(t, result.Moves)
+	require.Less(t, result.FinalSmoothedCV, 1.0)
+}
+
+func TestRunThresholdAlgorithm(t *testing.T) {
+	start := time.Date(2025, 12, 21, 0, 0, 0, 0, time.UTC)
+	history := []LoadHistoryRow{
+		{
+			Timestamp: start,
+			ShardLoads: map[string]float64{
+				"0": 100,
+				"1": 80,
+				"2": 10,
+				"3": 10,
+			},
+		},
+		{
+			Timestamp: start.Add(10 * time.Second),
+			ShardLoads: map[string]float64{
+				"0": 100,
+				"1": 80,
+				"2": 10,
+				"3": 10,
+			},
+		},
+	}
+
+	result, err := Run(history, []string{"0", "1", "2", "3"}, Config{
+		Algorithm:            AlgorithmThreshold,
+		ExecutorCount:        2,
+		PerShardCooldown:     time.Second,
+		MoveBudgetProportion: 0.5,
+		HysteresisUpperBand:  1.05,
+		HysteresisLowerBand:  0.95,
+		SevereImbalanceRatio: 1.1,
+	})
+	require.NoError(t, err)
+	require.Positive(t, result.Moves)
+	require.Less(t, result.FinalSmoothedCV, 1.0)
+}
+
+func TestRunRejectsUnknownAlgorithm(t *testing.T) {
+	start := time.Date(2025, 12, 21, 0, 0, 0, 0, time.UTC)
+	history := []LoadHistoryRow{
+		{
+			Timestamp: start,
+			ShardLoads: map[string]float64{
+				"0": 1,
+				"1": 1,
+			},
+		},
+	}
+
+	_, err := Run(history, []string{"0", "1"}, Config{
+		Algorithm:     "missing",
+		ExecutorCount: 2,
+	})
+	require.ErrorContains(t, err, `unknown simulation algorithm "missing"`)
+}
