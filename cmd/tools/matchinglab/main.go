@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"math/rand"
 	"net"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -70,6 +73,47 @@ type stats struct {
 	emptyPolls  atomic.Int64
 	pollErr     atomic.Int64
 	completeErr atomic.Int64
+
+	mu             sync.Mutex
+	workflowStarts map[string]time.Time
+	latencies      []time.Duration
+}
+
+type summarySnapshot struct {
+	AtSeconds               float64 `json:"at_seconds"`
+	WindowSeconds           float64 `json:"window_seconds"`
+	Started                 int64   `json:"started"`
+	StartErrors             int64   `json:"start_errors"`
+	Polled                  int64   `json:"polled"`
+	Completed               int64   `json:"completed"`
+	EmptyPolls              int64   `json:"empty_polls"`
+	PollErrors              int64   `json:"poll_errors"`
+	CompletionErrors        int64   `json:"completion_errors"`
+	WindowStarted           int64   `json:"window_started"`
+	WindowStartErrors       int64   `json:"window_start_errors"`
+	WindowPolled            int64   `json:"window_polled"`
+	WindowCompleted         int64   `json:"window_completed"`
+	WindowEmptyPolls        int64   `json:"window_empty_polls"`
+	WindowPollErrors        int64   `json:"window_poll_errors"`
+	WindowCompletionErrors  int64   `json:"window_completion_errors"`
+	WindowStartedRPS        float64 `json:"window_started_rps"`
+	WindowCompletedRPS      float64 `json:"window_completed_rps"`
+	WindowLatencySamples    int     `json:"window_latency_samples"`
+	WindowLatencyP50Millis  float64 `json:"window_latency_p50_ms,omitempty"`
+	WindowLatencyP95Millis  float64 `json:"window_latency_p95_ms,omitempty"`
+	WindowLatencyP99Millis  float64 `json:"window_latency_p99_ms,omitempty"`
+	TrackedIncomplete       int     `json:"tracked_incomplete"`
+	PrunedTrackedIncomplete int     `json:"pruned_tracked_incomplete"`
+}
+
+type cumulativeCounters struct {
+	started     int64
+	startErr    int64
+	polled      int64
+	completed   int64
+	emptyPolls  int64
+	pollErr     int64
+	completeErr int64
 }
 
 type weightedTaskList struct {
@@ -90,6 +134,12 @@ type labClients struct {
 
 type staticPeerProvider struct {
 	members []membership.HostInfo
+}
+
+func newStats() *stats {
+	return &stats{
+		workflowStarts: make(map[string]time.Time),
+	}
 }
 
 func main() {
@@ -151,7 +201,7 @@ func main() {
 	fmt.Printf("run id: %s\n", cfg.RunID)
 	fmt.Printf("workload prepared: tasklists=%d trace_events=%d\n", len(workload.taskLists), len(workload.events))
 
-	st := &stats{}
+	st := newStats()
 	var wg sync.WaitGroup
 
 	for _, taskList := range workload.taskLists {
@@ -575,6 +625,7 @@ func runGenerator(
 
 			reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			workflowID := fmt.Sprintf("kind-lab-%s-workflow-%d", runID, currentScheduleID)
+			startedAt := time.Now()
 			err := startWorkflow(reqCtx, frontend, domainName, taskList.cfg.Name, workflowID, uuid.New())
 			cancel()
 			if err != nil {
@@ -584,6 +635,7 @@ func runGenerator(
 			}
 
 			st.started.Add(1)
+			st.recordWorkflowStart(workflowID, startedAt)
 		}
 	}
 }
@@ -609,6 +661,7 @@ func runTraceGenerator(
 		}
 
 		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		startedAt := time.Now()
 		err := startWorkflow(reqCtx, frontend, domainName, event.taskList, event.workflowID, event.workflowID)
 		cancel()
 		if err != nil {
@@ -617,6 +670,7 @@ func runTraceGenerator(
 			continue
 		}
 		st.started.Add(1)
+		st.recordWorkflowStart(event.workflowID, startedAt)
 	}
 }
 
@@ -722,12 +776,140 @@ func runPoller(
 			}
 
 			st.completeErr.Add(1)
+			if resp.WorkflowExecution != nil {
+				st.removeWorkflowStart(resp.WorkflowExecution.GetWorkflowID())
+			}
 			fmt.Printf("completion error: tasklist=%s identity=%s err=%v\n", taskList.Name, identity, err)
 			continue
 		}
 
 		st.completed.Add(1)
+		if resp.WorkflowExecution != nil {
+			st.recordWorkflowCompletion(resp.WorkflowExecution.GetWorkflowID(), time.Now())
+		}
 	}
+}
+
+func (s *stats) recordWorkflowStart(workflowID string, startedAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.workflowStarts[workflowID] = startedAt
+}
+
+func (s *stats) recordWorkflowCompletion(workflowID string, completedAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	startedAt, ok := s.workflowStarts[workflowID]
+	if !ok {
+		return
+	}
+	delete(s.workflowStarts, workflowID)
+
+	latency := completedAt.Sub(startedAt)
+	if latency >= 0 {
+		s.latencies = append(s.latencies, latency)
+	}
+}
+
+func (s *stats) removeWorkflowStart(workflowID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.workflowStarts, workflowID)
+}
+
+func (s *stats) snapshot(now, start time.Time, window time.Duration, previous cumulativeCounters) (summarySnapshot, cumulativeCounters) {
+	current := cumulativeCounters{
+		started:     s.started.Load(),
+		startErr:    s.startErr.Load(),
+		polled:      s.polled.Load(),
+		completed:   s.completed.Load(),
+		emptyPolls:  s.emptyPolls.Load(),
+		pollErr:     s.pollErr.Load(),
+		completeErr: s.completeErr.Load(),
+	}
+
+	s.mu.Lock()
+	latencies := append([]time.Duration(nil), s.latencies...)
+	s.latencies = s.latencies[:0]
+	pruned := s.pruneTrackedWorkflowsLocked(now, 10*time.Minute)
+	trackedIncomplete := len(s.workflowStarts)
+	s.mu.Unlock()
+
+	windowSeconds := window.Seconds()
+	snapshot := summarySnapshot{
+		AtSeconds:               now.Sub(start).Seconds(),
+		WindowSeconds:           windowSeconds,
+		Started:                 current.started,
+		StartErrors:             current.startErr,
+		Polled:                  current.polled,
+		Completed:               current.completed,
+		EmptyPolls:              current.emptyPolls,
+		PollErrors:              current.pollErr,
+		CompletionErrors:        current.completeErr,
+		WindowStarted:           current.started - previous.started,
+		WindowStartErrors:       current.startErr - previous.startErr,
+		WindowPolled:            current.polled - previous.polled,
+		WindowCompleted:         current.completed - previous.completed,
+		WindowEmptyPolls:        current.emptyPolls - previous.emptyPolls,
+		WindowPollErrors:        current.pollErr - previous.pollErr,
+		WindowCompletionErrors:  current.completeErr - previous.completeErr,
+		WindowLatencySamples:    len(latencies),
+		TrackedIncomplete:       trackedIncomplete,
+		PrunedTrackedIncomplete: pruned,
+	}
+	if windowSeconds > 0 {
+		snapshot.WindowStartedRPS = float64(snapshot.WindowStarted) / windowSeconds
+		snapshot.WindowCompletedRPS = float64(snapshot.WindowCompleted) / windowSeconds
+	}
+	if len(latencies) > 0 {
+		sort.Slice(latencies, func(i, j int) bool {
+			return latencies[i] < latencies[j]
+		})
+		snapshot.WindowLatencyP50Millis = percentileDurationMillis(latencies, 0.50)
+		snapshot.WindowLatencyP95Millis = percentileDurationMillis(latencies, 0.95)
+		snapshot.WindowLatencyP99Millis = percentileDurationMillis(latencies, 0.99)
+	}
+
+	return snapshot, current
+}
+
+func (s *stats) pruneTrackedWorkflowsLocked(now time.Time, maxAge time.Duration) int {
+	pruned := 0
+	for workflowID, startedAt := range s.workflowStarts {
+		if now.Sub(startedAt) > maxAge {
+			delete(s.workflowStarts, workflowID)
+			pruned++
+		}
+	}
+	return pruned
+}
+
+func percentileDurationMillis(sorted []time.Duration, percentile float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	if percentile <= 0 {
+		return durationMillis(sorted[0])
+	}
+	if percentile >= 1 {
+		return durationMillis(sorted[len(sorted)-1])
+	}
+
+	idx := int(math.Ceil(percentile*float64(len(sorted)))) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return durationMillis(sorted[idx])
+}
+
+func durationMillis(duration time.Duration) float64 {
+	return float64(duration) / float64(time.Millisecond)
 }
 
 func runSummary(ctx context.Context, wg *sync.WaitGroup, every time.Duration, st *stats) {
@@ -736,23 +918,47 @@ func runSummary(ctx context.Context, wg *sync.WaitGroup, every time.Duration, st
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 
+	start := time.Now()
+	previous := cumulativeCounters{}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			now := time.Now()
+			snapshot, current := st.snapshot(now, start, every, previous)
+			previous = current
+
 			fmt.Printf(
-				"summary: started=%d start_errors=%d polled=%d completed=%d empty_polls=%d poll_errors=%d completion_errors=%d\n",
-				st.started.Load(),
-				st.startErr.Load(),
-				st.polled.Load(),
-				st.completed.Load(),
-				st.emptyPolls.Load(),
-				st.pollErr.Load(),
-				st.completeErr.Load(),
+				"summary: t=%.0fs started=%d start_errors=%d polled=%d completed=%d empty_polls=%d poll_errors=%d completion_errors=%d completed_rps=%.3f p50_ms=%.3f p95_ms=%.3f p99_ms=%.3f latency_samples=%d incomplete=%d\n",
+				snapshot.AtSeconds,
+				snapshot.Started,
+				snapshot.StartErrors,
+				snapshot.Polled,
+				snapshot.Completed,
+				snapshot.EmptyPolls,
+				snapshot.PollErrors,
+				snapshot.CompletionErrors,
+				snapshot.WindowCompletedRPS,
+				snapshot.WindowLatencyP50Millis,
+				snapshot.WindowLatencyP95Millis,
+				snapshot.WindowLatencyP99Millis,
+				snapshot.WindowLatencySamples,
+				snapshot.TrackedIncomplete,
 			)
+			writeSummaryJSON(snapshot)
 		}
 	}
+}
+
+func writeSummaryJSON(snapshot summarySnapshot) {
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		fmt.Printf("summary_json_error: %v\n", err)
+		return
+	}
+	fmt.Printf("summary_json: %s\n", data)
 }
 
 func int32Ptr(v int32) *int32 {
