@@ -1,0 +1,32 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cadence-schema-setup
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cadence-schema-setup
+        app.kubernetes.io/part-of: cadence-kind-lab
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: schema-setup
+          image: cadence-kind-lab:dev
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              until (echo > /dev/tcp/cassandra/9042) >/dev/null 2>&1; do
+                echo "waiting for cassandra"
+                sleep 2
+              done
+
+              cadence-cassandra-tool --ep cassandra create -k cadence --rf 1 || true
+              cadence-cassandra-tool --ep cassandra -k cadence setup-schema -v 0.0 || true
+              cadence-cassandra-tool --ep cassandra -k cadence update-schema -d /etc/cadence/schema/cassandra/cadence/versioned
+
+              cadence-cassandra-tool --ep cassandra create -k cadence_visibility --rf 1 || true
+              cadence-cassandra-tool --ep cassandra -k cadence_visibility setup-schema -v 0.0 || true
+              cadence-cassandra-tool --ep cassandra -k cadence_visibility update-schema -d /etc/cadence/schema/cassandra/visibility/versioned

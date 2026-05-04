@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cadence-kind-lab
+resources:
+  - frontend.yaml
+  - history.yaml
+  - shard-distributor.yaml
+  - matching-a.yaml
+  - matching-b.yaml
+  - matching-c.yaml
+  - matching-service.yaml
+images:
+  - name: cadence-kind-lab
+    newName: cadence-kind-lab
+    newTag: dev
