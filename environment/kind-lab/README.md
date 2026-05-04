@@ -67,7 +67,7 @@ It replays `21-12_00-06_fixed.csv` as fixed per-task-list start times. Each CSV 
 round(csv_qps * qps_scale * interval_seconds)
 ```
 
-Events are spread evenly across each window and sorted by time, task list, and workflow ID. This gives each algorithm branch the same input schedule. Put the trace CSV at `environment/kind-lab/traces/21-12_00-06_fixed.csv` before building the Docker image. The default trace scenario uses `qps_scale: 0.25`, `top_n: 100`, and the first 180 rows.
+Events are spread evenly across each window and sorted by time, task list, and workflow ID. This gives each algorithm branch the same input schedule. Put the trace CSV at `environment/kind-lab/traces/21-12_00-06_fixed.csv` before building the Docker image. The default trace scenario uses `qps_scale: 0.25`, `top_n: 1000`, and the first 180 rows.
 
 ## Important Config
 

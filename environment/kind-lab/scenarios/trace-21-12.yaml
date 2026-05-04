@@ -13,7 +13,7 @@ trace:
   interval: 10s
   qps_scale: 0.25
   time_scale: 1
-  top_n: 100
+  top_n: 1000
   start_row: 0
   rows: 180
   poller_capacity_qps: 50
