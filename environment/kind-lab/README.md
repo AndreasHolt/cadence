@@ -14,9 +14,9 @@ It is not intended as an upstream Cadence deployment model or production feature
 
 The heterogeneous matching pods are:
 
-- `cadence-matching-a-0`: `500m` CPU
-- `cadence-matching-b-0`: `1000m` CPU
-- `cadence-matching-c-0`: `2000m` CPU
+- `cadence-matching-a-0`: `1` CPU
+- `cadence-matching-b-0`: `2` CPU
+- `cadence-matching-c-0`: `3` CPU
 
 The setup is used to observe whether shard-distributor load balancing behaves sensibly when executors are not equal.
 
