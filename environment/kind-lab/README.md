@@ -178,6 +178,28 @@ The main sanity check is:
 - `completed > 0`
 - errors stay near zero
 
+Save the workload log when running experiments so it can be plotted later:
+
+```bash
+./environment/kind-lab/scripts/run-load.sh trace-21-12 | tee clean.log
+```
+
+`cadence-matching-lab` emits `summary_json` lines with per-window throughput
+and latency data. Plot completed throughput and p95 latency for multiple runs:
+
+```bash
+./environment/kind-lab/scripts/plot-matching-lab.py \
+  --run clean=clean.log \
+  --run latency=latency.log \
+  --run cpuseconds=cpuseconds.log \
+  --output-dir environment/kind-lab/results/plots
+```
+
+This writes:
+
+- `matching-lab-throughput.png`
+- `matching-lab-p95-latency.png`
+
 ## Verify State
 
 ```bash
