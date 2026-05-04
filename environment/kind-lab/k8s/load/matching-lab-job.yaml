@@ -15,6 +15,7 @@ spec:
       containers:
         - name: matching-lab
           image: cadence-kind-lab:dev
+          imagePullPolicy: Never
           command:
             - /bin/sh
             - -c

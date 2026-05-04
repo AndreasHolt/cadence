@@ -49,6 +49,7 @@ spec:
       containers:
         - name: shard-distributor
           image: cadence-kind-lab:dev
+          imagePullPolicy: Never
           env:
             - name: POD_IP
               valueFrom:
