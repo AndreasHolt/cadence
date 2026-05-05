@@ -33,7 +33,18 @@ def series(points, key):
     return [point.get(key, 0.0) for point in points]
 
 
-def plot_completed_rps(ax, runs, show_started):
+def first_error_time(points):
+    for point in points:
+        if (
+            point.get("window_start_errors", 0) > 0
+            or point.get("window_poll_errors", 0) > 0
+            or point.get("window_completion_errors", 0) > 0
+        ):
+            return point.get("at_seconds")
+    return None
+
+
+def plot_completed_rps(ax, runs, show_started, mark_errors, title):
     if show_started and runs:
         first_label, first_points = runs[0]
         ax.plot(
@@ -52,15 +63,19 @@ def plot_completed_rps(ax, runs, show_started):
             linewidth=1.8,
             label=f"{label} completed/sec",
         )
+        if mark_errors:
+            error_at = first_error_time(points)
+            if error_at is not None:
+                ax.axvline(error_at, color="tab:red", linestyle=":", linewidth=1.2, alpha=0.7)
 
-    ax.set_title("Cluster Completed Throughput Over Time")
+    ax.set_title(title or "Cluster Completed Throughput Over Time")
     ax.set_xlabel("Time since start (s)")
     ax.set_ylabel("Completed workflows/sec")
     ax.grid(True, alpha=0.25)
     ax.legend()
 
 
-def plot_p95_latency(ax, runs):
+def plot_p95_latency(ax, runs, mark_errors, title):
     for label, points in runs:
         ax.plot(
             series(points, "at_seconds"),
@@ -68,8 +83,12 @@ def plot_p95_latency(ax, runs):
             linewidth=1.8,
             label=label,
         )
+        if mark_errors:
+            error_at = first_error_time(points)
+            if error_at is not None:
+                ax.axvline(error_at, color="tab:red", linestyle=":", linewidth=1.2, alpha=0.7)
 
-    ax.set_title("Workflow Completion p95 Latency Over Time")
+    ax.set_title(title or "Workflow Completion p95 Latency Over Time")
     ax.set_xlabel("Time since start (s)")
     ax.set_ylabel("p95 latency (ms)")
     ax.grid(True, alpha=0.25)
@@ -103,6 +122,21 @@ def main():
         action="store_true",
         help="Do not draw the first run's started/sec line on the throughput plot.",
     )
+    parser.add_argument(
+        "--mark-errors",
+        action="store_true",
+        help="Draw a vertical line when a run first reports start, poll, or completion errors.",
+    )
+    parser.add_argument(
+        "--throughput-title",
+        default="",
+        help="Override the throughput plot title.",
+    )
+    parser.add_argument(
+        "--latency-title",
+        default="",
+        help="Override the p95 latency plot title.",
+    )
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -120,12 +154,18 @@ def main():
     latency_path = args.output_dir / f"{args.prefix}-p95-latency.png"
 
     fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
-    plot_completed_rps(ax, runs, not args.no_started_line)
+    plot_completed_rps(
+        ax,
+        runs,
+        not args.no_started_line,
+        args.mark_errors,
+        args.throughput_title,
+    )
     fig.savefig(throughput_path, dpi=180)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
-    plot_p95_latency(ax, runs)
+    plot_p95_latency(ax, runs, args.mark_errors, args.latency_title)
     fig.savefig(latency_path, dpi=180)
     plt.close(fig)
 
