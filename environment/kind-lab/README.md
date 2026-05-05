@@ -75,7 +75,7 @@ qps_scale_ramp:
   end: 2.0
 ```
 
-If `duration` is omitted, the ramp spans the selected replay rows. Events are spread evenly across each window and sorted by time, task list, and workflow ID. This gives each algorithm branch the same input schedule. Put the trace CSV at `environment/kind-lab/traces/21-12_00-06_fixed.csv` before building the Docker image. The default trace scenario ramps from `0.25` to `2.0`, uses `top_n: 1000`, and replays the first 180 rows.
+If `duration` is omitted, the ramp spans the selected replay rows. Events are spread evenly across each window and sorted by time, task list, and workflow ID. Trace starts are submitted through a bounded worker pool controlled by `start_workers`; this keeps the generator from serializing workflow starts when the offered load rises. This gives each algorithm branch the same input schedule. Put the trace CSV at `environment/kind-lab/traces/21-12_00-06_fixed.csv` before building the Docker image. The default trace scenario ramps from `0.25` to `2.0`, uses `top_n: 1000`, and replays the first 180 rows.
 
 ## Important Config
 

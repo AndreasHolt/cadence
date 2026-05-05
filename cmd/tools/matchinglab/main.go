@@ -214,7 +214,7 @@ func main() {
 
 	wg.Add(1)
 	if cfg.Trace.enabled() {
-		go runTraceGenerator(ctx, &wg, frontend, cfg.Domain, workload.events, st)
+		go runTraceGenerator(ctx, &wg, frontend, cfg.Domain, workload.events, cfg.Trace.StartWorkers, st)
 	} else {
 		go runGenerator(ctx, &wg, frontend, cfg.Domain, cfg.RunID, workload.taskLists, cfg.Generator.RatePerSecond, st)
 	}
@@ -355,6 +355,9 @@ func (c *config) validateTrace() error {
 	}
 	if c.Trace.ProcessTime < 0 {
 		return errors.New("trace.process_time must not be negative")
+	}
+	if c.Trace.StartWorkers <= 0 {
+		return errors.New("trace.start_workers must be greater than zero")
 	}
 	return nil
 }
@@ -673,9 +676,39 @@ func runTraceGenerator(
 	frontend frontendClient.Client,
 	domainName string,
 	events []traceEvent,
+	startWorkers int,
 	st *stats,
 ) {
 	defer wg.Done()
+
+	jobs := make(chan traceEvent, startWorkers*4)
+	var workers sync.WaitGroup
+	workers.Add(startWorkers)
+	for worker := 0; worker < startWorkers; worker++ {
+		go func() {
+			defer workers.Done()
+			for event := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+
+				reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				startedAt := time.Now()
+				err := startWorkflow(reqCtx, frontend, domainName, event.taskList, event.workflowID, uuid.New())
+				cancel()
+				if err != nil {
+					st.startErr.Add(1)
+					fmt.Printf("trace generator error: at=%s tasklist=%s workflow=%s err=%v\n", event.at, event.taskList, event.workflowID, err)
+					continue
+				}
+				st.started.Add(1)
+				st.recordWorkflowStart(event.workflowID, startedAt)
+			}
+		}()
+	}
+
+	defer workers.Wait()
+	defer close(jobs)
 
 	start := time.Now()
 	for _, event := range events {
@@ -687,17 +720,11 @@ func runTraceGenerator(
 		case <-timer.C:
 		}
 
-		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		startedAt := time.Now()
-		err := startWorkflow(reqCtx, frontend, domainName, event.taskList, event.workflowID, uuid.New())
-		cancel()
-		if err != nil {
-			st.startErr.Add(1)
-			fmt.Printf("trace generator error: at=%s tasklist=%s workflow=%s err=%v\n", event.at, event.taskList, event.workflowID, err)
-			continue
+		select {
+		case <-ctx.Done():
+			return
+		case jobs <- event:
 		}
-		st.started.Add(1)
-		st.recordWorkflowStart(event.workflowID, startedAt)
 	}
 }
 

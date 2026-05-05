@@ -15,6 +15,7 @@ const (
 	defaultTraceQPSScale          = 1.0
 	defaultTraceTimeScale         = 1.0
 	defaultTracePollerCapacityQPS = 50.0
+	defaultTraceStartWorkers      = 512
 )
 
 type traceConfig struct {
@@ -29,6 +30,7 @@ type traceConfig struct {
 	PollerCapacityQPS float64        `yaml:"poller_capacity_qps"`
 	ProcessTime       time.Duration  `yaml:"process_time"`
 	TaskListPrefix    string         `yaml:"tasklist_prefix"`
+	StartWorkers      int            `yaml:"start_workers"`
 }
 
 type traceScaleRamp struct {
@@ -67,6 +69,9 @@ func (c *traceConfig) setDefaults() {
 	}
 	if c.PollerCapacityQPS <= 0 {
 		c.PollerCapacityQPS = defaultTracePollerCapacityQPS
+	}
+	if c.StartWorkers <= 0 {
+		c.StartWorkers = defaultTraceStartWorkers
 	}
 }
 
