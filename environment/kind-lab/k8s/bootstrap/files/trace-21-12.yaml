@@ -12,6 +12,9 @@ trace:
   path: /etc/cadence/kind-lab/traces/21-12_00-06_fixed.csv
   interval: 10s
   qps_scale: 0.25
+  qps_scale_ramp:
+    start: 0.25
+    end: 2.0
   time_scale: 1
   top_n: 1000
   start_row: 0
