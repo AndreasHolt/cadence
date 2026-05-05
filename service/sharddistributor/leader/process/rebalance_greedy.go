@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	minRelativeLatency = 0.8
-	maxRelativeLatency = 1.25
+	minRelativeLatency = 0.5
+	maxRelativeLatency = 2.0
 )
 
 func (p *namespaceProcessor) rebalanceGreedyBySmoothedLoad(

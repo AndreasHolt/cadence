@@ -97,8 +97,8 @@ func TestComputeExecutorCapacityWeights_AdjustsByLatency(t *testing.T) {
 	weights := computeExecutorCapacityWeights(currentAssignments, namespaceState)
 
 	require.Greater(t, weights["fast"], weights["slow"])
-	require.InDelta(t, 4.472135, weights["fast"], 0.0001)
-	require.InDelta(t, 3.577709, weights["slow"], 0.0001)
+	require.InDelta(t, 5.656854, weights["fast"], 0.0001)
+	require.InDelta(t, 3.162278, weights["slow"], 0.0001)
 }
 
 // TestLoadBalance_Convergence verifies the balancer moves shards from an overloaded executor to an underloaded one.
