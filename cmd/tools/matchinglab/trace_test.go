@@ -81,6 +81,70 @@ func TestBuildTraceWorkloadScalesQPS(t *testing.T) {
 	}
 }
 
+func TestBuildTraceWorkloadRampsQPS(t *testing.T) {
+	tracePath := filepath.Join(t.TempDir(), "trace.csv")
+	if err := os.WriteFile(tracePath, []byte(
+		"2025-12-21 00:00:00,10\n"+
+			"2025-12-21 00:00:10,10\n"+
+			"2025-12-21 00:00:20,10\n",
+	), 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	cfg := traceConfig{
+		Path:              tracePath,
+		Interval:          10 * time.Second,
+		QPSScale:          0.25,
+		QPSScaleRamp:      traceScaleRamp{Start: 0.5, End: 1.5, Duration: 20 * time.Second},
+		TimeScale:         1,
+		TopN:              1,
+		PollerCapacityQPS: 10,
+		TaskListPrefix:    "tl-",
+	}
+
+	workload, err := buildTraceWorkload(cfg, "test-run")
+	if err != nil {
+		t.Fatalf("build trace workload: %v", err)
+	}
+
+	if len(workload.events) != 300 {
+		t.Fatalf("events = %d, want 300", len(workload.events))
+	}
+	if got := workload.taskLists[0].Pollers; got != 2 {
+		t.Fatalf("pollers = %d, want 2", got)
+	}
+}
+
+func TestBuildTraceWorkloadDefaultsRampDurationToSelectedRows(t *testing.T) {
+	tracePath := filepath.Join(t.TempDir(), "trace.csv")
+	if err := os.WriteFile(tracePath, []byte(
+		"2025-12-21 00:00:00,10\n"+
+			"2025-12-21 00:00:10,10\n",
+	), 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	cfg := traceConfig{
+		Path:              tracePath,
+		Interval:          10 * time.Second,
+		QPSScale:          0.25,
+		QPSScaleRamp:      traceScaleRamp{Start: 1, End: 2},
+		TimeScale:         1,
+		TopN:              1,
+		PollerCapacityQPS: 50,
+		TaskListPrefix:    "tl-",
+	}
+
+	workload, err := buildTraceWorkload(cfg, "test-run")
+	if err != nil {
+		t.Fatalf("build trace workload: %v", err)
+	}
+
+	if len(workload.events) != 250 {
+		t.Fatalf("events = %d, want 250", len(workload.events))
+	}
+}
+
 func TestSelectTraceRows(t *testing.T) {
 	rows := [][]float64{{1}, {2}, {3}, {4}}
 	selected := selectTraceRows(rows, 1, 2)
