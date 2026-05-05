@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/yarpc"
@@ -38,6 +39,7 @@ import (
 	dc "github.com/uber/cadence/common/dynamicconfig"
 	"github.com/uber/cadence/common/dynamicconfig/dynamicproperties"
 	"github.com/uber/cadence/common/metrics"
+	"github.com/uber/cadence/common/persistence"
 	"github.com/uber/cadence/common/resource"
 	"github.com/uber/cadence/common/service"
 	"github.com/uber/cadence/common/types"
@@ -181,6 +183,24 @@ func TestCreateSchedule(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		"user search attributes use reserved key": {
+			request: &types.CreateScheduleRequest{
+				Domain:     testDomain,
+				ScheduleID: "my-schedule",
+				Spec:       &types.ScheduleSpec{CronExpression: "*/5 * * * *"},
+				Action: &types.ScheduleAction{
+					StartWorkflow: &types.StartWorkflowAction{
+						WorkflowType: &types.WorkflowType{Name: "my-workflow"},
+						TaskList:     &types.TaskList{Name: "my-tasklist"},
+					},
+				},
+				SearchAttributes: &types.SearchAttributes{IndexedFields: map[string][]byte{
+					"CadenceScheduleState": []byte(`"paused"`),
+				}},
+			},
+			mockFn:  func(f *scheduleTestFixture) {},
+			wantErr: true,
+		},
 		"history error": {
 			request: validRequest,
 			mockFn: func(f *scheduleTestFixture) {
@@ -189,6 +209,29 @@ func TestCreateSchedule(t *testing.T) {
 					Return(nil, errors.New("internal error"))
 			},
 			wantErr: true,
+		},
+		"BUFFER with buffer_limit above system limit succeeds (warns)": {
+			request: &types.CreateScheduleRequest{
+				Domain:     testDomain,
+				ScheduleID: "my-schedule",
+				Spec:       &types.ScheduleSpec{CronExpression: "*/5 * * * *"},
+				Action: &types.ScheduleAction{
+					StartWorkflow: &types.StartWorkflowAction{
+						WorkflowType: &types.WorkflowType{Name: "my-workflow"},
+						TaskList:     &types.TaskList{Name: "my-tasklist"},
+					},
+				},
+				Policies: &types.SchedulePolicies{
+					OverlapPolicy: types.ScheduleOverlapPolicyBuffer,
+					BufferLimit:   int32(scheduler.MaxBufferedFiresSystemLimit * 2),
+				},
+			},
+			mockFn: func(f *scheduleTestFixture) {
+				f.domainCache.EXPECT().GetDomainID(testDomain).Return(testDomainID, nil).AnyTimes()
+				f.historyClient.EXPECT().StartWorkflowExecution(gomock.Any(), gomock.Any()).
+					Return(&types.StartWorkflowExecutionResponse{RunID: "test-run-id"}, nil)
+			},
+			wantErr: false,
 		},
 		"success": {
 			request: validRequest,
@@ -654,36 +697,84 @@ func TestBackfillSchedule(t *testing.T) {
 }
 
 func TestListSchedules(t *testing.T) {
-	tests := map[string]struct {
-		request *types.ListSchedulesRequest
-		mockFn  func(*scheduleTestFixture)
-		wantErr bool
-	}{
-		"nil request": {
-			request: nil,
-			mockFn:  func(f *scheduleTestFixture) {},
-			wantErr: true,
-		},
-		"unimplemented": {
-			request: &types.ListSchedulesRequest{Domain: testDomain},
-			mockFn:  func(f *scheduleTestFixture) {},
-			wantErr: true,
-		},
-	}
+	t.Run("nil request", func(t *testing.T) {
+		f := newScheduleTestFixture(t)
+		defer f.finish()
 
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			f := newScheduleTestFixture(t)
-			defer f.finish()
-			tt.mockFn(f)
+		resp, err := f.handler.ListSchedules(context.Background(), nil)
+		assert.Error(t, err)
+		assert.Nil(t, resp)
+	})
 
-			resp, err := f.handler.ListSchedules(context.Background(), tt.request)
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Nil(t, resp)
-			}
+	t.Run("empty domain", func(t *testing.T) {
+		f := newScheduleTestFixture(t)
+		defer f.finish()
+
+		resp, err := f.handler.ListSchedules(context.Background(), &types.ListSchedulesRequest{})
+		assert.Error(t, err)
+		assert.Nil(t, resp)
+	})
+
+	t.Run("success with results", func(t *testing.T) {
+		f := newScheduleTestFixture(t)
+		defer f.finish()
+
+		f.domainCache.EXPECT().GetDomainID(testDomain).Return(testDomainID, nil).AnyTimes()
+
+		pausedStateBytes, _ := json.Marshal(scheduler.ScheduleStatePaused)
+		cronBytes, _ := json.Marshal("0 6 * * *")
+		typeBytes, _ := json.Marshal("my-target-workflow")
+
+		f.mockResource.VisibilityMgr.On("ListWorkflowExecutions", mock.Anything, mock.MatchedBy(func(req *persistence.ListWorkflowExecutionsByQueryRequest) bool {
+			return req.Domain == testDomain && req.Query == "WorkflowType = 'cadence-scheduler' and CloseTime = missing"
+		})).Return(&persistence.ListWorkflowExecutionsResponse{
+			Executions: []*types.WorkflowExecutionInfo{
+				{
+					Execution: &types.WorkflowExecution{
+						WorkflowID: "cadence-scheduler:sched-1",
+						RunID:      "run-1",
+					},
+					Type: &types.WorkflowType{Name: scheduler.WorkflowTypeName},
+					SearchAttributes: &types.SearchAttributes{IndexedFields: map[string][]byte{
+						scheduler.SearchAttrScheduleState:        pausedStateBytes,
+						scheduler.SearchAttrScheduleCron:         cronBytes,
+						scheduler.SearchAttrScheduleWorkflowType: typeBytes,
+					}},
+				},
+				{
+					Execution: &types.WorkflowExecution{
+						WorkflowID: "cadence-scheduler:sched-2",
+						RunID:      "run-2",
+					},
+					Type: &types.WorkflowType{Name: scheduler.WorkflowTypeName},
+				},
+			},
+			NextPageToken: []byte("next"),
+		}, nil).Once()
+
+		resp, err := f.handler.ListSchedules(context.Background(), &types.ListSchedulesRequest{
+			Domain:   testDomain,
+			PageSize: 10,
 		})
-	}
+		assert.NoError(t, err)
+		require.NotNil(t, resp)
+		assert.Len(t, resp.Schedules, 2)
+
+		assert.Equal(t, "sched-1", resp.Schedules[0].ScheduleID)
+		require.NotNil(t, resp.Schedules[0].State)
+		assert.True(t, resp.Schedules[0].State.Paused)
+		assert.Equal(t, "0 6 * * *", resp.Schedules[0].CronExpression)
+		require.NotNil(t, resp.Schedules[0].WorkflowType)
+		assert.Equal(t, "my-target-workflow", resp.Schedules[0].WorkflowType.Name)
+
+		assert.Equal(t, "sched-2", resp.Schedules[1].ScheduleID)
+		require.NotNil(t, resp.Schedules[1].State)
+		assert.False(t, resp.Schedules[1].State.Paused, "missing search attribute should default to not paused")
+		assert.Empty(t, resp.Schedules[1].CronExpression, "missing cron search attribute should yield empty string")
+		assert.Nil(t, resp.Schedules[1].WorkflowType, "missing workflow type search attribute should yield nil")
+
+		assert.Equal(t, []byte("next"), resp.NextPageToken)
+	})
 }
 
 func TestNormalizeScheduleError(t *testing.T) {
