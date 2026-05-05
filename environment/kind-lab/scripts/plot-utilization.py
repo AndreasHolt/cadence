@@ -2,6 +2,7 @@
 import argparse
 import csv
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -103,6 +104,22 @@ def plot_throttling(ax, runs):
     ax.legend()
 
 
+def safe_filename(value):
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-")
+
+
+def filter_rows(rows, pod):
+    return [row for row in rows if row["pod"] == pod]
+
+
+def pods_in_runs(runs):
+    pods = set()
+    for _, rows in runs:
+        for row in rows:
+            pods.add(row["pod"])
+    return sorted(pods)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Plot matching executor utilization from sample-utilization.sh CSV files."
@@ -131,6 +148,17 @@ def main():
         action="store_true",
         help="Do not draw matching executor CPU-limit reference lines.",
     )
+    parser.add_argument(
+        "--pod",
+        action="append",
+        default=[],
+        help="Only plot this pod. Can be provided multiple times.",
+    )
+    parser.add_argument(
+        "--split-by-pod",
+        action="store_true",
+        help="Write one CPU/throttling plot pair per pod.",
+    )
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -146,6 +174,47 @@ def main():
         (label, read_utilization(path, matching_only=not args.all_pods))
         for label, path in args.run
     ]
+
+    if args.pod:
+        include_pod_in_label = len(args.pod) > 1
+        runs = [
+            (f"{label} {pod}" if include_pod_in_label else label, filter_rows(rows, pod))
+            for label, rows in runs
+            for pod in args.pod
+        ]
+        runs = [(label, rows) for label, rows in runs if rows]
+        if not runs:
+            raise ValueError("selected pod filter matched no rows")
+
+    if args.split_by_pod:
+        for pod in pods_in_runs(runs):
+            pod_runs = []
+            for label, rows in runs:
+                pod_rows = filter_rows(rows, pod)
+                if pod_rows:
+                    pod_runs.append((label, pod_rows))
+            if not pod_runs:
+                continue
+
+            pod_prefix = f"{args.prefix}-{safe_filename(pod)}"
+            cpu_path = args.output_dir / f"{pod_prefix}-cpu.png"
+            throttling_path = args.output_dir / f"{pod_prefix}-throttling.png"
+
+            fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
+            plot_cpu(ax, pod_runs, show_limits=False)
+            ax.set_title(f"{pod} CPU Utilization Over Time")
+            fig.savefig(cpu_path, dpi=180)
+            plt.close(fig)
+
+            fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
+            plot_throttling(ax, pod_runs)
+            ax.set_title(f"{pod} CPU Throttling Events Over Time")
+            fig.savefig(throttling_path, dpi=180)
+            plt.close(fig)
+
+            print(f"wrote {cpu_path}")
+            print(f"wrote {throttling_path}")
+        return
 
     cpu_path = args.output_dir / f"{args.prefix}-matching-cpu.png"
     throttling_path = args.output_dir / f"{args.prefix}-matching-throttling.png"
