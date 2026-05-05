@@ -107,6 +107,27 @@ Install:
 
 The scripts expect Docker Desktop or another working local Docker daemon.
 
+On a fresh Ubuntu lab machine, install the required machine dependencies with:
+
+```bash
+./environment/kind-lab/scripts/install-machine-deps.sh
+newgrp docker
+docker run --rm hello-world
+```
+
+The installer sets up Docker Engine, `kind`, `kubectl`, basic build tools, and
+Python plotting support. It also clones
+`https://github.com/AndreasHolt/cadence.git`, checks out
+`greedy-load-balancing-clean-testbed`, and initializes submodules. By default it
+clones into `$HOME/cadence`; override that with:
+
+```bash
+CADENCE_DIR=/data/cadence ./environment/kind-lab/scripts/install-machine-deps.sh
+```
+
+It is intended for disposable Ubuntu evaluation machines, not for managed
+production hosts.
+
 ## Files
 
 - Cadence config: `environment/kind-lab/config/cadence-kind-lab.yaml`
