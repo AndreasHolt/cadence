@@ -453,6 +453,7 @@ func (e *matchingEngineImpl) AddDecisionTask(
 		PartitionConfig:               request.GetPartitionConfig(),
 	}
 
+	burnMatchingLabAddTaskCPU()
 	syncMatched, err := tlMgr.AddTask(hCtx.Context, tasklist.AddTaskParams{
 		TaskInfo:      taskInfo,
 		Source:        request.GetSource(),
@@ -529,6 +530,7 @@ func (e *matchingEngineImpl) AddActivityTask(
 		PartitionConfig:               request.GetPartitionConfig(),
 	}
 
+	burnMatchingLabAddTaskCPU()
 	syncMatched, err := tlMgr.AddTask(hCtx.Context, tasklist.AddTaskParams{
 		TaskInfo:                 taskInfo,
 		Source:                   request.GetSource(),
