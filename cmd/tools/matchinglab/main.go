@@ -19,6 +19,7 @@ import (
 	"github.com/pborman/uuid"
 	apiv1 "github.com/uber/cadence-idl/go/proto/api/v1"
 	"go.uber.org/yarpc"
+	"go.uber.org/yarpc/yarpcerrors"
 	"go.uber.org/yarpc/transport/grpc"
 	"go.uber.org/yarpc/transport/tchannel"
 	"gopkg.in/yaml.v2"
@@ -662,7 +663,7 @@ func runTraceGenerator(
 
 		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		startedAt := time.Now()
-		err := startWorkflow(reqCtx, frontend, domainName, event.taskList, event.workflowID, event.workflowID)
+		err := startWorkflow(reqCtx, frontend, domainName, event.taskList, event.workflowID, uuid.New())
 		cancel()
 		if err != nil {
 			st.startErr.Add(1)
@@ -735,6 +736,10 @@ func runPoller(
 		if err != nil {
 			if ctx.Err() != nil {
 				return
+			}
+			if yarpcerrors.FromError(err).Code() == yarpcerrors.CodeDeadlineExceeded {
+				st.emptyPolls.Add(1)
+				continue
 			}
 
 			st.pollErr.Add(1)

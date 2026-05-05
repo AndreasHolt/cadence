@@ -15,7 +15,6 @@ const (
 	defaultTraceQPSScale          = 1.0
 	defaultTraceTimeScale         = 1.0
 	defaultTracePollerCapacityQPS = 50.0
-	defaultTraceTaskListPrefix    = "trace-tl-"
 )
 
 type traceConfig struct {
@@ -61,9 +60,6 @@ func (c *traceConfig) setDefaults() {
 	}
 	if c.PollerCapacityQPS <= 0 {
 		c.PollerCapacityQPS = defaultTracePollerCapacityQPS
-	}
-	if c.TaskListPrefix == "" {
-		c.TaskListPrefix = defaultTraceTaskListPrefix
 	}
 }
 
@@ -237,5 +233,8 @@ func scaledTraceInterval(cfg traceConfig) time.Duration {
 }
 
 func traceTaskListName(prefix string, column int) string {
+	if prefix == "" {
+		return strconv.Itoa(column)
+	}
 	return fmt.Sprintf("%s%04d", prefix, column)
 }

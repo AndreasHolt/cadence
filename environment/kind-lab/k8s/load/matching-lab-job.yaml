@@ -25,7 +25,11 @@ spec:
               value: hotspot
           volumeMounts:
             - name: cadence-config
-              mountPath: /etc/cadence/kind-lab
+              mountPath: /etc/cadence/kind-lab/hotspot.yaml
+              subPath: hotspot.yaml
+            - name: cadence-config
+              mountPath: /etc/cadence/kind-lab/trace-21-12.yaml
+              subPath: trace-21-12.yaml
       volumes:
         - name: cadence-config
           configMap:
