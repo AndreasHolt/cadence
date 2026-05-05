@@ -19,9 +19,9 @@ import (
 	"github.com/pborman/uuid"
 	apiv1 "github.com/uber/cadence-idl/go/proto/api/v1"
 	"go.uber.org/yarpc"
-	"go.uber.org/yarpc/yarpcerrors"
 	"go.uber.org/yarpc/transport/grpc"
 	"go.uber.org/yarpc/transport/tchannel"
+	"go.uber.org/yarpc/yarpcerrors"
 	"gopkg.in/yaml.v2"
 
 	matchingv1 "github.com/uber/cadence/.gen/proto/matching/v1"
@@ -311,6 +311,17 @@ func (c *config) validateTrace() error {
 	}
 	if c.Trace.QPSScale <= 0 {
 		return errors.New("trace.qps_scale must be greater than zero")
+	}
+	if c.Trace.QPSScaleRamp.enabled() {
+		if c.Trace.QPSScaleRamp.Start <= 0 {
+			return errors.New("trace.qps_scale_ramp.start must be greater than zero")
+		}
+		if c.Trace.QPSScaleRamp.End <= 0 {
+			return errors.New("trace.qps_scale_ramp.end must be greater than zero")
+		}
+		if c.Trace.QPSScaleRamp.Duration < 0 {
+			return errors.New("trace.qps_scale_ramp.duration must not be negative")
+		}
 	}
 	if c.Trace.TimeScale <= 0 {
 		return errors.New("trace.time_scale must be greater than zero")
