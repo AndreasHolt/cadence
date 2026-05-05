@@ -18,16 +18,23 @@ const (
 )
 
 type traceConfig struct {
-	Path              string        `yaml:"path"`
-	Interval          time.Duration `yaml:"interval"`
-	QPSScale          float64       `yaml:"qps_scale"`
-	TimeScale         float64       `yaml:"time_scale"`
-	TopN              int           `yaml:"top_n"`
-	StartRow          int           `yaml:"start_row"`
-	Rows              int           `yaml:"rows"`
-	PollerCapacityQPS float64       `yaml:"poller_capacity_qps"`
-	ProcessTime       time.Duration `yaml:"process_time"`
-	TaskListPrefix    string        `yaml:"tasklist_prefix"`
+	Path              string         `yaml:"path"`
+	Interval          time.Duration  `yaml:"interval"`
+	QPSScale          float64        `yaml:"qps_scale"`
+	QPSScaleRamp      traceScaleRamp `yaml:"qps_scale_ramp"`
+	TimeScale         float64        `yaml:"time_scale"`
+	TopN              int            `yaml:"top_n"`
+	StartRow          int            `yaml:"start_row"`
+	Rows              int            `yaml:"rows"`
+	PollerCapacityQPS float64        `yaml:"poller_capacity_qps"`
+	ProcessTime       time.Duration  `yaml:"process_time"`
+	TaskListPrefix    string         `yaml:"tasklist_prefix"`
+}
+
+type traceScaleRamp struct {
+	Start    float64       `yaml:"start"`
+	End      float64       `yaml:"end"`
+	Duration time.Duration `yaml:"duration"`
 }
 
 type traceEvent struct {
@@ -188,8 +195,9 @@ func selectTraceColumns(rows [][]float64, topN int) []traceColumn {
 
 func makeTraceTaskLists(columns []traceColumn, cfg traceConfig) []taskListConfig {
 	taskLists := make([]taskListConfig, 0, len(columns))
+	maxScale := maxTraceQPSScale(cfg)
 	for _, column := range columns {
-		pollers := int(math.Ceil(column.maxQPS * cfg.QPSScale / cfg.PollerCapacityQPS))
+		pollers := int(math.Ceil(column.maxQPS * maxScale / cfg.PollerCapacityQPS))
 		if pollers < 1 {
 			pollers = 1
 		}
@@ -205,12 +213,14 @@ func makeTraceTaskLists(columns []traceColumn, cfg traceConfig) []taskListConfig
 
 func makeTraceEvents(rows [][]float64, columns []traceColumn, cfg traceConfig, runID string) []traceEvent {
 	rowInterval := scaledTraceInterval(cfg)
+	rampDuration := traceRampDuration(cfg, len(rows), rowInterval)
 	events := make([]traceEvent, 0)
 	for rowIndex, row := range rows {
 		rowStart := time.Duration(rowIndex) * rowInterval
+		scale := traceQPSScaleAt(cfg, rowStart, rampDuration)
 		for _, column := range columns {
 			taskList := traceTaskListName(cfg.TaskListPrefix, column.index)
-			eventCount := int(math.Round(row[column.index] * cfg.QPSScale * rowInterval.Seconds()))
+			eventCount := int(math.Round(row[column.index] * scale * rowInterval.Seconds()))
 			if eventCount <= 0 {
 				continue
 			}
@@ -230,6 +240,38 @@ func makeTraceEvents(rows [][]float64, columns []traceColumn, cfg traceConfig, r
 
 func scaledTraceInterval(cfg traceConfig) time.Duration {
 	return time.Duration(float64(cfg.Interval) / cfg.TimeScale)
+}
+
+func traceQPSScaleAt(cfg traceConfig, elapsed time.Duration, rampDuration time.Duration) float64 {
+	if !cfg.QPSScaleRamp.enabled() {
+		return cfg.QPSScale
+	}
+	if rampDuration <= 0 || elapsed >= rampDuration {
+		return cfg.QPSScaleRamp.End
+	}
+	progress := float64(elapsed) / float64(rampDuration)
+	return cfg.QPSScaleRamp.Start + (cfg.QPSScaleRamp.End-cfg.QPSScaleRamp.Start)*progress
+}
+
+func traceRampDuration(cfg traceConfig, rowCount int, rowInterval time.Duration) time.Duration {
+	if !cfg.QPSScaleRamp.enabled() {
+		return 0
+	}
+	if cfg.QPSScaleRamp.Duration > 0 {
+		return cfg.QPSScaleRamp.Duration
+	}
+	return time.Duration(rowCount) * rowInterval
+}
+
+func maxTraceQPSScale(cfg traceConfig) float64 {
+	if !cfg.QPSScaleRamp.enabled() {
+		return cfg.QPSScale
+	}
+	return math.Max(cfg.QPSScaleRamp.Start, cfg.QPSScaleRamp.End)
+}
+
+func (r traceScaleRamp) enabled() bool {
+	return r.Start > 0 || r.End > 0 || r.Duration > 0
 }
 
 func traceTaskListName(prefix string, column int) string {
