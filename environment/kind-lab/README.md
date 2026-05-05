@@ -192,14 +192,22 @@ Save the workload log when running experiments so it can be plotted later:
 ./environment/kind-lab/scripts/run-load.sh trace-21-12 | tee clean.log
 ```
 
+Sample pod CPU and throttling while the workload is running:
+
+```bash
+./environment/kind-lab/scripts/sample-utilization.sh 15 1800 \
+  environment/kind-lab/results/greedy-unweighted-utilization.csv
+```
+
 `cadence-matching-lab` emits `summary_json` lines with per-window throughput
 and latency data. Plot completed throughput and p95 latency for multiple runs:
 
 ```bash
 ./environment/kind-lab/scripts/plot-matching-lab.py \
-  --run clean=clean.log \
-  --run latency=latency.log \
-  --run cpuseconds=cpuseconds.log \
+  --run "GREEDY unweighted=clean.log" \
+  --run "GREEDY latency-weighted=latency.log" \
+  --run "GREEDY CPU-cost-weighted=cpuseconds.log" \
+  --mark-errors \
   --output-dir environment/kind-lab/results/plots
 ```
 
@@ -207,6 +215,21 @@ This writes:
 
 - `matching-lab-throughput.png`
 - `matching-lab-p95-latency.png`
+
+Plot matching executor CPU utilization and throttling:
+
+```bash
+./environment/kind-lab/scripts/plot-utilization.py \
+  --run "GREEDY unweighted=environment/kind-lab/results/greedy-unweighted-utilization.csv" \
+  --run "GREEDY latency-weighted=environment/kind-lab/results/latency-utilization.csv" \
+  --run "GREEDY CPU-cost-weighted=environment/kind-lab/results/cpuseconds-utilization.csv" \
+  --prefix matching-executors
+```
+
+This writes:
+
+- `matching-executors-matching-cpu.png`
+- `matching-executors-matching-throttling.png`
 
 ## Verify State
 
@@ -264,6 +287,7 @@ Useful signals:
 - matching pod CPU limits
 - matching pod `gomaxprocs`
 - shard-distributor rebalance decisions from logs
+- matching pod CPU cores and throttling over time from `sample-utilization.sh`
 
 Still useful to add:
 
