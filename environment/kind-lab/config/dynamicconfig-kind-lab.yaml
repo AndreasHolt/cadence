@@ -15,10 +15,26 @@ shardDistributor.migrationMode:
     constraints:
       namespace: cadence-matching-kind-lab
 shardDistributor.loadBalancingMode:
-  - value: naive
+  - value: greedy
     constraints:
       namespace: cadence-matching-kind-lab
-shardDistributor.loadBalancingNaive.maxDeviation:
-  - value: 1.2
+shardDistributor.loadBalancingGreedy.moveBudgetProportion:
+  - value: 0.01
+    constraints:
+      namespace: cadence-matching-kind-lab
+shardDistributor.loadBalancingGreedy.hysteresisUpperBand:
+  - value: 1.15
+    constraints:
+      namespace: cadence-matching-kind-lab
+shardDistributor.loadBalancingGreedy.hysteresisLowerBand:
+  - value: 0.9
+    constraints:
+      namespace: cadence-matching-kind-lab
+shardDistributor.loadBalancingGreedy.severeImbalanceRatio:
+  - value: 1.3
+    constraints:
+      namespace: cadence-matching-kind-lab
+shardDistributor.loadBalancingGreedy.perShardCooldown:
+  - value: 1m
     constraints:
       namespace: cadence-matching-kind-lab
