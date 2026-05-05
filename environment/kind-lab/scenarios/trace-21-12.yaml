@@ -20,4 +20,5 @@ trace:
   start_row: 0
   rows: 180
   poller_capacity_qps: 50
+  start_workers: 512
   process_time: 0s
