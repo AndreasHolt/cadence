@@ -115,7 +115,13 @@ func PlanRebalance(
 			movedShards[shardToMove] = struct{}{}
 
 			if metricsScope != nil {
-				metricsScope.UpdateGauge(metrics.ShardDistributorAssignLoopMovedShardLoad, namespaceState.ShardStats[shardToMove].SmoothedLoad)
+				load := 0.0
+				if stats, ok := namespaceState.ShardStats[shardToMove]; ok {
+					load = stats.SmoothedLoad
+				} else if report := namespaceState.Executors[sourceExecutor].ReportedShards[shardToMove]; report != nil {
+					load = report.ShardLoad
+				}
+				metricsScope.UpdateGauge(metrics.ShardDistributorAssignLoopMovedShardLoad, load)
 			}
 			updateExecutorLoadsAfterMove(namespaceState, sourceExecutor, destExecutor, loads, shardToMove)
 			moveBudget--
@@ -150,10 +156,11 @@ func computeExecutorLoads(currentAssignments map[string][]string, state *store.N
 
 	for executorID, shards := range currentAssignments {
 		for _, shardID := range shards {
-			stats, ok := state.ShardStats[shardID]
 			load := 0.0
-			if ok {
+			if stats, ok := state.ShardStats[shardID]; ok {
 				load = stats.SmoothedLoad
+			} else if report := state.Executors[executorID].ReportedShards[shardID]; report != nil {
+				load = report.ShardLoad
 			}
 			loads[executorID] += load
 			total += load
@@ -263,15 +270,17 @@ func findShardToMove(
 			continue
 		}
 
-		stats, ok := state.ShardStats[shard]
-		if !ok {
-			continue
-		}
-		if perShardCooldown > 0 && !stats.LastMoveTime.IsZero() && now.Sub(stats.LastMoveTime) < perShardCooldown {
+		stats, hasStats := state.ShardStats[shard]
+		if hasStats && !stats.LastMoveTime.IsZero() && perShardCooldown > 0 && now.Sub(stats.LastMoveTime) < perShardCooldown {
 			continue
 		}
 
-		load := stats.SmoothedLoad
+		load := 0.0
+		if hasStats {
+			load = stats.SmoothedLoad
+		} else if report := state.Executors[source].ReportedShards[shard]; report != nil {
+			load = report.ShardLoad
+		}
 
 		benefit := computeBenefitOfMove(sourceLoad, destLoad, load)
 		if benefit <= 0 {
@@ -313,10 +322,12 @@ func updateExecutorLoadsAfterMove(
 	executorLoads map[string]float64,
 	shardID string,
 ) {
-	stats, ok := state.ShardStats[shardID]
-	if !ok {
-		return
+	load := 0.0
+	if stats, ok := state.ShardStats[shardID]; ok {
+		load = stats.SmoothedLoad
+	} else if report := state.Executors[source].ReportedShards[shardID]; report != nil {
+		load = report.ShardLoad
 	}
-	executorLoads[source] -= stats.SmoothedLoad
-	executorLoads[destination] += stats.SmoothedLoad
+	executorLoads[source] -= load
+	executorLoads[destination] += load
 }
