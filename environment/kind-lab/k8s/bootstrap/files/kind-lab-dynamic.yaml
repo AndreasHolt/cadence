@@ -38,3 +38,15 @@ shardDistributor.loadBalancingGreedy.perShardCooldown:
   - value: 1m
     constraints:
       namespace: cadence-matching-kind-lab
+matching.enableAdaptiveScaler:
+  - value: false
+    constraints:
+      namespace: cadence-matching-kind-lab
+matching.numTasklistReadPartitions:
+  - value: 1
+    constraints:
+      namespace: cadence-matching-kind-lab
+matching.numTasklistWritePartitions:
+  - value: 1
+    constraints:
+      namespace: cadence-matching-kind-lab
