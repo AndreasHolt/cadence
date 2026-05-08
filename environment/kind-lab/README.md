@@ -142,16 +142,30 @@ production hosts.
 
 ## Build And Deploy
 
-Build the local Cadence image and load it into kind:
+Build the local Cadence image:
 
 ```bash
 ./environment/kind-lab/scripts/build-image.sh
 ```
 
-Create the cluster:
+Create the cluster and load all required images into it:
 
 ```bash
 ./environment/kind-lab/scripts/create-cluster.sh
+```
+
+`create-cluster.sh` also preloads the external Cassandra and etcd images used
+by the lab. By default it pulls them for `linux/amd64`, which is the expected
+platform on the rented Ubuntu machines:
+
+```bash
+KIND_IMAGE_PLATFORM=linux/amd64 ./environment/kind-lab/scripts/create-cluster.sh
+```
+
+If you already have a cluster and only need to reload those dependency images:
+
+```bash
+./environment/kind-lab/scripts/load-dependency-images.sh
 ```
 
 Reset the lab namespace before a clean experiment run:
