@@ -71,6 +71,7 @@ func run() error {
 		upperBand         float64
 		lowerBand         float64
 		severeRatio       float64
+		useOptimal        int
 	)
 
 	flag.StringVar(&csvPath, "csv", "", "Path to input CSV file (required)")
@@ -83,6 +84,7 @@ func run() error {
 	flag.Float64Var(&upperBand, "upper-band", 1.15, "Hysteresis upper-band multiplier")
 	flag.Float64Var(&lowerBand, "lower-band", 0.90, "Hysteresis lower-band multiplier")
 	flag.Float64Var(&severeRatio, "severe-ratio", 1.3, "Severe-imbalance escape-hatch ratio")
+	flag.IntVar(&useOptimal, "optimal", 1, "Compare to optimal")
 	flag.Parse()
 
 	if csvPath == "" {
@@ -264,9 +266,14 @@ func run() error {
 		applyMoves(assignments, ns, moves)
 
 		// ── Optimal assignment from the pre-greedy starting point ───────────────
-		optAssignment := optimal.Solve(preGreedyRawLoads, executors, preGreedyAssignments)
-		optMetrics := optimal.ComputeMetrics(optAssignment, preGreedyRawLoads)
-		optMoves := optimal.DiffAssignments(preGreedyAssignments, optAssignment)
+		var optAssignment optimal.Assignment
+		var optMetrics optimal.Metrics
+		var optMoves int
+		if useOptimal == 1 {
+			optAssignment = optimal.Solve(preGreedyRawLoads, executors, preGreedyAssignments)
+			optMetrics = optimal.ComputeMetrics(optAssignment, preGreedyRawLoads)
+			optMoves = optimal.DiffAssignments(preGreedyAssignments, optAssignment)
+		}
 
 		// Compute and record metrics.
 		loadsSmooth := computeLoads(assignments, ns)
@@ -311,16 +318,17 @@ func run() error {
 		if err := writeRow(wMoves, float64(len(moves))); err != nil {
 			return fmt.Errorf("write moves: %w", err)
 		}
-		if err := writeRow(wOptMM, optMetrics.MaxOverMean); err != nil {
-			return fmt.Errorf("write optimal mm: %w", err)
+		if useOptimal == 1 {
+			if err := writeRow(wOptMM, optMetrics.MaxOverMean); err != nil {
+				return fmt.Errorf("write optimal mm: %w", err)
+			}
+			if err := writeRow(wOptCV, optMetrics.CV); err != nil {
+				return fmt.Errorf("write optimal cv: %w", err)
+			}
+			if err := writeRow(wOptMoves, float64(optMoves)); err != nil {
+				return fmt.Errorf("write optimal moves: %w", err)
+			}
 		}
-		if err := writeRow(wOptCV, optMetrics.CV); err != nil {
-			return fmt.Errorf("write optimal cv: %w", err)
-		}
-		if err := writeRow(wOptMoves, float64(optMoves)); err != nil {
-			return fmt.Errorf("write optimal moves: %w", err)
-		}
-
 		tickCount++
 		printProgress(tickCount, estimatedTotalTicks, currentHistoryIdx, len(history))
 
