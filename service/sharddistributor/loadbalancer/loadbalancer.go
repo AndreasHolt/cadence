@@ -39,6 +39,7 @@ func PlanRebalance(
 	state *store.NamespaceState,
 	currentAssignments map[string][]string,
 	now time.Time,
+	shardStatsStaleAfter time.Duration,
 	logger log.Logger,
 	metricsScope metrics.Scope,
 ) ([]plan.Move, error) {
@@ -47,7 +48,7 @@ func PlanRebalance(
 	case types.LoadBalancingModeNAIVE:
 		return naive.PlanRebalance(cfg.LoadBalancingNaive, namespace, state, currentAssignments, logger, metricsScope)
 	case types.LoadBalancingModeGREEDY:
-		return greedy.PlanRebalance(cfg.LoadBalancingGreedy, namespace, state, currentAssignments, now, metricsScope)
+		return greedy.PlanRebalance(cfg.LoadBalancingGreedy, namespace, state, currentAssignments, now, shardStatsStaleAfter, metricsScope)
 	default:
 		return nil, fmt.Errorf("unsupported load balancing mode: %s", mode)
 	}

@@ -60,7 +60,7 @@ func TestPlanRebalance(t *testing.T) {
 			return config.LoadBalancingModeINVALID
 		},
 	}
-	moves, err := PlanRebalance(cfg, "test-namespace", &store.NamespaceState{}, nil, time.Time{}, nil, metrics.NoopScope)
+	moves, err := PlanRebalance(cfg, "test-namespace", &store.NamespaceState{}, nil, time.Time{}, 0, nil, metrics.NoopScope)
 	require.Error(t, err)
 	assert.Nil(t, moves)
 	assert.ErrorContains(t, err, "unsupported load balancing mode")

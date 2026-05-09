@@ -455,6 +455,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		namespaceState,
 		currentAssignments,
 		p.timeSource.Now(),
+		p.cfg.HeartbeatTTL,
 		p.logger,
 		metricsLoopScope,
 	)

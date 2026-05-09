@@ -19,12 +19,7 @@ load_image() {
   echo "Pulling $image for $IMAGE_PLATFORM"
   docker pull --platform "$IMAGE_PLATFORM" "$image"
 
-  echo "Loading $image into kind cluster $CLUSTER_NAME"
-  if kind load docker-image "$image" --name "$CLUSTER_NAME"; then
-    return
-  fi
-
-  echo "kind load failed for $image; falling back to ctr import"
+  echo "Importing $image into kind cluster $CLUSTER_NAME"
   docker save "$image" \
     | docker exec -i "${CLUSTER_NAME}-control-plane" ctr -n k8s.io images import -
 }
