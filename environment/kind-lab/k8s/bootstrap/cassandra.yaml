@@ -34,16 +34,21 @@ spec:
               name: cql
           env:
             - name: MAX_HEAP_SIZE
-              value: 1536M
+              value: 8G
             - name: HEAP_NEWSIZE
-              value: 512M
+              value: 2G
           readinessProbe:
             tcpSocket:
               port: 9042
-            initialDelaySeconds: 60
+            initialDelaySeconds: 120
             periodSeconds: 10
           livenessProbe:
             tcpSocket:
               port: 9042
-            initialDelaySeconds: 120
+            initialDelaySeconds: 180
             periodSeconds: 20
+          startupProbe:
+            tcpSocket:
+              port: 9042
+            failureThreshold: 30
+            periodSeconds: 10

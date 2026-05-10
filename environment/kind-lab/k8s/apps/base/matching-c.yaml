@@ -44,7 +44,7 @@ spec:
                 fieldRef:
                   fieldPath: status.podIP
             - name: MATCHING_LAB_ADD_TASK_CPU_BURN_ITERATIONS
-              value: "0"
+              value: "10000000"
           command:
             - cadence-server
             - --root
