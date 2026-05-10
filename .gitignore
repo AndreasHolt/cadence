@@ -30,6 +30,8 @@ replication-simulator-output/
 dockerize
 *.crt
 
+P10-Paper/
+
 # Executables produced by cadence repo
 /cadence
 /cadence-server

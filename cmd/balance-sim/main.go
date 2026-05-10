@@ -42,9 +42,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/sharddistributor/config"
+	"go.uber.org/zap"
 	"github.com/uber/cadence/service/sharddistributor/loadbalancer/plan"
 	"github.com/uber/cadence/service/sharddistributor/loadbalancer/strategy/greedy"
 	"github.com/uber/cadence/service/sharddistributor/loadbalancer/strategy/optimal"
@@ -72,6 +74,7 @@ func run() error {
 		lowerBand         float64
 		severeRatio       float64
 		useOptimal        int
+		enableSwap        bool
 	)
 
 	flag.StringVar(&csvPath, "csv", "", "Path to input CSV file (required)")
@@ -85,12 +88,22 @@ func run() error {
 	flag.Float64Var(&lowerBand, "lower-band", 0.90, "Hysteresis lower-band multiplier")
 	flag.Float64Var(&severeRatio, "severe-ratio", 1.3, "Severe-imbalance escape-hatch ratio")
 	flag.IntVar(&useOptimal, "optimal", 1, "Compare to optimal")
+	flag.BoolVar(&enableSwap, "swap", true, "Enable pairwise shard swaps in greedy rebalancer")
 	flag.Parse()
 
 	if csvPath == "" {
 		flag.Usage()
 		return fmt.Errorf("-csv is required")
 	}
+
+	zapCfg := zap.NewDevelopmentConfig()
+	zapCfg.OutputPaths = []string{"stderr"}
+	zapCfg.ErrorOutputPaths = []string{"stderr"}
+	zapLogger, err := zapCfg.Build()
+	if err != nil {
+		return fmt.Errorf("create logger: %w", err)
+	}
+	logger := log.NewLogger(zapLogger)
 	if numExecutors < 1 {
 		return fmt.Errorf("-executors must be >= 1")
 	}
@@ -121,6 +134,7 @@ func run() error {
 		HysteresisUpperBand:  func(string) float64 { return upperBand },
 		HysteresisLowerBand:  func(string) float64 { return lowerBand },
 		SevereImbalanceRatio: func(string) float64 { return severeRatio },
+		EnableSwap:           enableSwap,
 	}
 
 	// ── Initialise namespace state ────────────────────────────────────────────
@@ -259,7 +273,7 @@ func run() error {
 		preGreedyAssignments := cloneAssignments(assignments)
 		preGreedyRawLoads := history[currentHistoryIdx].ShardLoads
 
-		moves, err := greedy.PlanRebalance(cfg, "sim", ns, assignments, now, metrics.NoopScope)
+		moves, err := greedy.PlanRebalance(cfg, "sim", ns, assignments, now, logger, metrics.NoopScope)
 		if err != nil {
 			return fmt.Errorf("rebalance at tick %d: %w", tickCount, err)
 		}

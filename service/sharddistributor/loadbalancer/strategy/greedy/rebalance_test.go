@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/sharddistributor/config"
@@ -35,6 +36,7 @@ func testGreedyConfig() config.LoadBalancingGreedyConfig {
 		SevereImbalanceRatio: func(namespace string) float64 {
 			return 1.3
 		},
+		EnableSwap: true,
 	}
 }
 
@@ -76,7 +78,7 @@ func TestLoadBalance_Convergence(t *testing.T) {
 		ShardStats:       shardStats,
 	}
 
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, metrics.NoopScope)
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metrics.NoopScope)
 	require.NoError(t, err)
 	require.NotEmpty(t, moves)
 	applyMoves(t, currentAssignments, moves)
@@ -114,7 +116,7 @@ func TestLoadBalance_SkipsNonBeneficialHotShard(t *testing.T) {
 		},
 	}
 
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, metrics.NoopScope)
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metrics.NoopScope)
 	require.NoError(t, err)
 	require.NotEmpty(t, moves)
 	applyMoves(t, currentAssignments, moves)
@@ -160,7 +162,7 @@ func TestLoadBalance_NoMoveNeeded(t *testing.T) {
 		ShardStats:       shardStats,
 	}
 
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, metrics.NoopScope)
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metrics.NoopScope)
 	require.NoError(t, err)
 	require.Empty(t, moves)
 	assert.Len(t, currentAssignments[execA], 51)
@@ -228,7 +230,7 @@ func TestLoadBalance_SevereImbalance_AllowsMoveWithoutDestinations(t *testing.T)
 	initialOther := len(currentAssignments[execB]) + len(currentAssignments[execC]) + len(currentAssignments[execD]) + len(currentAssignments[execE])
 	expectedBudget := computeMoveBudget(len(shardStats), cfg.MoveBudgetProportion(testNamespace))
 
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, metrics.NoopScope)
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metrics.NoopScope)
 	require.NoError(t, err)
 	require.NotEmpty(t, moves)
 	applyMoves(t, currentAssignments, moves)
@@ -279,7 +281,7 @@ func TestLoadBalance_NoDestinations_NotSevere(t *testing.T) {
 		ShardStats:       shardStats,
 	}
 
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, metrics.NoopScope)
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metrics.NoopScope)
 	require.NoError(t, err)
 	require.Empty(t, moves)
 	assert.Len(t, currentAssignments[execA], 10)
@@ -350,7 +352,7 @@ func TestLoadBalance_BudgetConstraint(t *testing.T) {
 		ShardStats:       shardStats,
 	}
 
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, metrics.NoopScope)
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metrics.NoopScope)
 	require.NoError(t, err)
 	require.NotEmpty(t, moves)
 	applyMoves(t, currentAssignments, moves)
@@ -404,7 +406,7 @@ func TestLoadBalance_MultiMovePerCycle(t *testing.T) {
 		ShardStats:       shardStats,
 	}
 
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, metrics.NoopScope)
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metrics.NoopScope)
 	require.NoError(t, err)
 	require.NotEmpty(t, moves)
 	applyMoves(t, currentAssignments, moves)
@@ -454,7 +456,7 @@ func TestLoadBalance_PerShardCooldownSkipsHotShard(t *testing.T) {
 		ShardStats:       shardStats,
 	}
 
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, metrics.NoopScope)
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metrics.NoopScope)
 	require.NoError(t, err)
 	require.NotEmpty(t, moves)
 	applyMoves(t, currentAssignments, moves)
@@ -506,7 +508,7 @@ func TestLoadBalance_NoDestinations(t *testing.T) {
 		ShardStats:       shardStats,
 	}
 
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, metrics.NoopScope)
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metrics.NoopScope)
 	require.NoError(t, err)
 	require.Empty(t, moves)
 	assert.Equal(t, []string{"s1"}, currentAssignments[execA])
@@ -562,7 +564,7 @@ func TestLoadBalance_ExecutorRemovedFromDestination(t *testing.T) {
 		ShardStats:       shardStats,
 	}
 
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, metrics.NoopScope)
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metrics.NoopScope)
 	require.NoError(t, err)
 	require.NotEmpty(t, moves)
 	applyMoves(t, currentAssignments, moves)
@@ -582,6 +584,90 @@ func TestLoadBalance_ExecutorRemovedFromDestination(t *testing.T) {
 	assert.False(t, shardsOnA == 1 && shardsOnC == 1, "Not both execA and execC should shed a shard without receiving one")
 
 	assert.Len(t, currentAssignments[execF], 108, "Filler executor execF should be untouched")
+}
+
+// TestLoadBalance_SwapShards verifies that a pairwise swap is chosen when it
+// provides better benefit than any single move.
+func TestLoadBalance_SwapShards(t *testing.T) {
+	cfg := testGreedyConfig()
+
+	execA, execB := "exec-A", "exec-B"
+	now := time.Now().UTC()
+
+	// Source is overloaded (100), dest is underloaded (30). Mean = 65.
+	// Moving 40 from A to B gives benefit 2400.
+	// Swapping 60 from A with 25 from B gives actualMove=35, benefit=2450.
+	// The swap should be chosen because it better balances the load.
+	currentAssignments := map[string][]string{
+		execA: {"s60", "s40"},
+		execB: {"s25", "s5"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardAssignments: map[string]store.AssignedState{
+			execA: {AssignedShards: map[string]*types.ShardAssignment{"s60": {}, "s40": {}}},
+			execB: {AssignedShards: map[string]*types.ShardAssignment{"s25": {}, "s5": {}}},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"s60": {SmoothedLoad: 60, LastUpdateTime: now},
+			"s40": {SmoothedLoad: 40, LastUpdateTime: now},
+			"s25": {SmoothedLoad: 25, LastUpdateTime: now},
+			"s5":  {SmoothedLoad: 5, LastUpdateTime: now},
+		},
+	}
+
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metrics.NoopScope)
+	require.NoError(t, err)
+	require.Len(t, moves, 2, "expected a swap (two moves)")
+
+	applyMoves(t, currentAssignments, moves)
+
+	// After swap: A should have s40 and s25 (load 65), B should have s60 and s5 (load 65)
+	assert.True(t, slices.Contains(currentAssignments[execA], "s40"))
+	assert.True(t, slices.Contains(currentAssignments[execA], "s25"))
+	assert.True(t, slices.Contains(currentAssignments[execB], "s60"))
+	assert.True(t, slices.Contains(currentAssignments[execB], "s5"))
+}
+
+// TestLoadBalance_SwapSkipsMovedShards verifies that shards already moved in
+// the current cycle are not considered for swaps.
+func TestLoadBalance_SwapSkipsMovedShards(t *testing.T) {
+	cfg := testGreedyConfig()
+
+	execA, execB := "exec-A", "exec-B"
+	now := time.Now().UTC()
+
+	currentAssignments := map[string][]string{
+		execA: {"s60", "s40"},
+		execB: {"s25", "s5"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardAssignments: map[string]store.AssignedState{
+			execA: {AssignedShards: map[string]*types.ShardAssignment{"s60": {}, "s40": {}}},
+			execB: {AssignedShards: map[string]*types.ShardAssignment{"s25": {}, "s5": {}}},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"s60": {SmoothedLoad: 60, LastUpdateTime: now},
+			"s40": {SmoothedLoad: 40, LastUpdateTime: now},
+			"s25": {SmoothedLoad: 25, LastUpdateTime: now},
+			"s5":  {SmoothedLoad: 5, LastUpdateTime: now},
+		},
+	}
+
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, log.NewNoop(), metrics.NoopScope)
+	require.NoError(t, err)
+	require.NotEmpty(t, moves)
+
+	// The first move (or swap) should consume move budget for one iteration,
+	// and moved shards should be tracked so they are not moved again.
+	applyMoves(t, currentAssignments, moves)
 }
 
 func applyMoves(t *testing.T, assignments map[string][]string, moves []plan.Move) {

@@ -53,6 +53,7 @@ type (
 		HysteresisUpperBand  dynamicproperties.Float64PropertyFnWithNamespaceFilters
 		HysteresisLowerBand  dynamicproperties.Float64PropertyFnWithNamespaceFilters
 		SevereImbalanceRatio dynamicproperties.Float64PropertyFnWithNamespaceFilters
+		EnableSwap           bool
 	}
 
 	StaticConfig struct {
