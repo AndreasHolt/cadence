@@ -38,6 +38,10 @@ shardDistributor.loadBalancingGreedy.perShardCooldown:
   - value: 1m
     constraints:
       namespace: cadence-matching-kind-lab
+shardDistributor.loadBalancingGreedy.heterogeneityMode:
+  - value: off
+    constraints:
+      namespace: cadence-matching-kind-lab
 matching.enableAdaptiveScaler:
   - value: false
     constraints:

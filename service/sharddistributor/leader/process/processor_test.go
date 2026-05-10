@@ -732,6 +732,9 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 		SevereImbalanceRatio: func(namespace string) float64 {
 			return 1.3
 		},
+		HeterogeneityMode: func(namespace string) string {
+			return config.GreedyHeterogeneityModeOff
+		},
 	}
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 

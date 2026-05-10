@@ -53,6 +53,7 @@ type (
 		HysteresisUpperBand  dynamicproperties.Float64PropertyFnWithNamespaceFilters
 		HysteresisLowerBand  dynamicproperties.Float64PropertyFnWithNamespaceFilters
 		SevereImbalanceRatio dynamicproperties.Float64PropertyFnWithNamespaceFilters
+		HeterogeneityMode    dynamicproperties.StringPropertyFnWithNamespaceFilters
 	}
 
 	StaticConfig struct {
@@ -148,6 +149,7 @@ func NewConfig(dc *dynamicconfig.Collection) *Config {
 			HysteresisUpperBand:  dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyHysteresisUpperBand),
 			HysteresisLowerBand:  dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyHysteresisLowerBand),
 			SevereImbalanceRatio: dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedySevereImbalanceRatio),
+			HeterogeneityMode:    dc.GetStringPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyHeterogeneityMode),
 		},
 	}
 }
@@ -166,6 +168,12 @@ const (
 	LoadBalancingModeINVALID = "invalid"
 	LoadBalancingModeNAIVE   = "naive"
 	LoadBalancingModeGREEDY  = "greedy"
+)
+
+const (
+	GreedyHeterogeneityModeOff        = "off"
+	GreedyHeterogeneityModeLatency    = "latency"
+	GreedyHeterogeneityModeCPUSeconds = "cpu_seconds"
 )
 
 // LoadBalancingMode maps string migration mode values to types.LoadBalancingMode

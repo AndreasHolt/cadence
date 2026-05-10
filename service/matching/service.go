@@ -48,6 +48,10 @@ type Service struct {
 	drainObserver                  clientcommon.DrainSignalObserver
 }
 
+type latencyObserver interface {
+	ObserveRequestLatency(time.Duration)
+}
+
 // NewService builds a new cadence-matching service
 func NewService(
 	params *resource.Params,
@@ -116,7 +120,11 @@ func (s *Service) Start() {
 		s.drainObserver,
 	)
 
-	s.handler = handler.NewHandler(engine, s.config, s.GetDomainCache(), s.GetMetricsClient(), s.GetLogger(), s.GetThrottledLogger())
+	var observeLatency func(time.Duration)
+	if observer, ok := engine.(latencyObserver); ok {
+		observeLatency = observer.ObserveRequestLatency
+	}
+	s.handler = handler.NewHandler(engine, s.config, s.GetDomainCache(), s.GetMetricsClient(), s.GetLogger(), s.GetThrottledLogger(), observeLatency)
 
 	thriftHandler := thrift.NewThriftHandler(s.handler)
 	thriftHandler.Register(s.GetDispatcher())

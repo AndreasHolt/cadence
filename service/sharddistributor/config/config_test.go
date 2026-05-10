@@ -26,6 +26,7 @@ func TestNewDynamicConfigCreatesInstanceWithProperties(t *testing.T) {
 	assert.NotNil(t, config.LoadBalancingGreedy.HysteresisUpperBand)
 	assert.NotNil(t, config.LoadBalancingGreedy.HysteresisLowerBand)
 	assert.NotNil(t, config.LoadBalancingGreedy.SevereImbalanceRatio)
+	assert.NotNil(t, config.LoadBalancingGreedy.HeterogeneityMode)
 }
 
 func TestGetMigrationMode(t *testing.T) {

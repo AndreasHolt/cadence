@@ -11,6 +11,7 @@ import (
 
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/types"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/config"
 	"github.com/uber/cadence/service/sharddistributor/loadbalancer/plan"
 	"github.com/uber/cadence/service/sharddistributor/store"
@@ -35,7 +36,57 @@ func testGreedyConfig() config.LoadBalancingGreedyConfig {
 		SevereImbalanceRatio: func(namespace string) float64 {
 			return 1.3
 		},
+		HeterogeneityMode: func(namespace string) string {
+			return config.GreedyHeterogeneityModeOff
+		},
 	}
+}
+
+func TestComputeExecutorCapacityWeightsLatencyMode(t *testing.T) {
+	currentAssignments := map[string][]string{
+		"fast": {"shard-1"},
+		"slow": {"shard-2"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			"fast": {
+				Metadata: map[string]string{
+					capacity.GoMaxProcsMetadataKey:    "4",
+					capacity.LatencyEWmaMsMetadataKey: "20",
+				},
+			},
+			"slow": {
+				Metadata: map[string]string{
+					capacity.GoMaxProcsMetadataKey:    "4",
+					capacity.LatencyEWmaMsMetadataKey: "80",
+				},
+			},
+		},
+	}
+
+	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeLatency, currentAssignments, namespaceState)
+
+	require.Greater(t, weights["fast"], weights["slow"])
+	require.InDelta(t, 5.656854, weights["fast"], 0.0001)
+	require.InDelta(t, 3.162278, weights["slow"], 0.0001)
+}
+
+func TestComputeExecutorCapacityWeightsOffModeIgnoresMetadata(t *testing.T) {
+	currentAssignments := map[string][]string{
+		"small": {"shard-1"},
+		"large": {"shard-2"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			"small": {Metadata: map[string]string{capacity.GoMaxProcsMetadataKey: "1"}},
+			"large": {Metadata: map[string]string{capacity.GoMaxProcsMetadataKey: "8"}},
+		},
+	}
+
+	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeOff, currentAssignments, namespaceState)
+
+	require.Equal(t, 1.0, weights["small"])
+	require.Equal(t, 1.0, weights["large"])
 }
 
 // TestLoadBalance_Convergence verifies the balancer moves shards from an overloaded executor to an underloaded one.

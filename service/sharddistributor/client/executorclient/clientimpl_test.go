@@ -3,6 +3,7 @@ package executorclient
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/uber/cadence/common/clock"
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/types"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/client/executorclient/syncgeneric"
 )
 
@@ -70,6 +72,12 @@ func expectDrainingHeartbeat(t *testing.T, mockClient *sharddistributorexecutor.
 		})
 }
 
+func expectedHeartbeatMetadata() map[string]string {
+	return map[string]string{
+		capacity.GoMaxProcsMetadataKey: fmt.Sprintf("%d", runtime.GOMAXPROCS(0)),
+	}
+}
+
 func newTestExecutor(
 	client sharddistributorexecutor.Client,
 	factory ShardProcessorFactory[*MockShardProcessor],
@@ -109,7 +117,7 @@ func TestHeartBeatLoop(t *testing.T) {
 			ExecutorID:         "test-executor-id",
 			Status:             types.ExecutorStatusACTIVE,
 			ShardStatusReports: make(map[string]*types.ShardStatusReport),
-			Metadata:           make(map[string]string),
+			Metadata:           expectedHeartbeatMetadata(),
 		}, gomock.Any()).
 		Return(&types.ExecutorHeartbeatResponse{
 			ShardAssignments: map[string]*types.ShardAssignment{
@@ -178,7 +186,7 @@ func TestHeartbeat(t *testing.T) {
 				"test-shard-id1": {Status: types.ShardStatusREADY, ShardLoad: 0.123},
 				"test-shard-id2": {Status: types.ShardStatusREADY, ShardLoad: 0.456},
 			},
-			Metadata: make(map[string]string),
+			Metadata: expectedHeartbeatMetadata(),
 		}, gomock.Any()).Return(&types.ExecutorHeartbeatResponse{
 		ShardAssignments: map[string]*types.ShardAssignment{
 			"test-shard-id1": {Status: types.AssignmentStatusREADY},
@@ -421,7 +429,7 @@ func TestHeartbeat_WithMigrationMode(t *testing.T) {
 			ExecutorID:         "test-executor-id",
 			Status:             types.ExecutorStatusACTIVE,
 			ShardStatusReports: map[string]*types.ShardStatusReport{},
-			Metadata:           make(map[string]string),
+			Metadata:           expectedHeartbeatMetadata(),
 		}, gomock.Any()).Return(&types.ExecutorHeartbeatResponse{
 		ShardAssignments: map[string]*types.ShardAssignment{
 			"test-shard-id1": {Status: types.AssignmentStatusREADY},

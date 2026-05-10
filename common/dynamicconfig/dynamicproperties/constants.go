@@ -2689,6 +2689,7 @@ const (
 	// Value type: string ["test-domain","test-domain2"]
 	// Default value: ""
 	ESAnalyzerWorkflowVersionMetricDomains
+
 	// ESAnalyzerWorkflowTypeMetricDomains defines the domains we want to emit wf type metrics on
 	// KeyName: worker.ESAnalyzerWorkflowTypeMetricDomains
 	// Value type: string ["test-domain","test-domain2"]
@@ -2757,6 +2758,15 @@ const (
 	// Default value: "naive"
 	// Allowed filters: namespace
 	ShardDistributorLoadBalancingMode
+
+	// ShardDistributorLoadBalancingGreedyHeterogeneityMode selects the executor-capacity signal used by
+	// greedy load balancing.
+	//
+	// KeyName: shardDistributor.loadBalancingGreedy.heterogeneityMode
+	// Value type: String
+	// Default value: "off"
+	// Allowed filters: namespace
+	ShardDistributorLoadBalancingGreedyHeterogeneityMode
 
 	// HistoryTaskDeadLetterQueueMode is the key to enable history task dead letter queue
 	// KeyName: history.historyTaskDeadLetterQueueMode
@@ -5466,6 +5476,12 @@ var StringKeys = map[StringKey]DynamicString{
 		KeyName:      "shardDistributor.loadBalancingMode",
 		Description:  "ShardDistributorLoadBalancingMode is the load balancing mode for the shard distributor. Depending on the mode, the shard distributor will use different ways to distribute the shards",
 		DefaultValue: "naive",
+	},
+	ShardDistributorLoadBalancingGreedyHeterogeneityMode: {
+		KeyName:      "shardDistributor.loadBalancingGreedy.heterogeneityMode",
+		Description:  "ShardDistributorLoadBalancingGreedyHeterogeneityMode selects the executor-capacity signal used by greedy load balancing",
+		DefaultValue: "off",
+		Filters:      []Filter{Namespace},
 	},
 	HistoryTaskDeadLetterQueueMode: {
 		KeyName:      "history.historyTaskDeadLetterQueueMode",

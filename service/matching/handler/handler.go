@@ -46,6 +46,7 @@ type (
 		logger            log.Logger
 		throttledLogger   log.Logger
 		domainCache       cache.DomainCache
+		observeLatency    func(time.Duration)
 	}
 )
 
@@ -61,6 +62,7 @@ func NewHandler(
 	metricsClient metrics.Client,
 	logger log.Logger,
 	throttledLogger log.Logger,
+	observeLatency func(time.Duration),
 ) Handler {
 	handler := &handlerImpl{
 		metricsClient: metricsClient,
@@ -84,6 +86,7 @@ func NewHandler(
 		logger:          logger,
 		throttledLogger: throttledLogger,
 		domainCache:     domainCache,
+		observeLatency:  observeLatency,
 	}
 	// prevent us from trying to serve requests before matching engine is started and ready
 	handler.startWG.Add(1)
@@ -131,6 +134,12 @@ func (h *handlerImpl) AddActivityTask(
 	request *types.AddActivityTaskRequest,
 ) (resp *types.AddActivityTaskResponse, retError error) {
 	defer func() { log.CapturePanic(recover(), h.logger, &retError) }()
+	startTime := time.Now()
+	defer func() {
+		if h.observeLatency != nil {
+			h.observeLatency(time.Since(startTime))
+		}
+	}()
 
 	domainName := h.domainName(request.GetDomainUUID())
 	hCtx := h.newHandlerContext(
@@ -164,6 +173,12 @@ func (h *handlerImpl) AddDecisionTask(
 	request *types.AddDecisionTaskRequest,
 ) (resp *types.AddDecisionTaskResponse, retError error) {
 	defer func() { log.CapturePanic(recover(), h.logger, &retError) }()
+	startTime := time.Now()
+	defer func() {
+		if h.observeLatency != nil {
+			h.observeLatency(time.Since(startTime))
+		}
+	}()
 
 	domainName := h.domainName(request.GetDomainUUID())
 	hCtx := h.newHandlerContext(
