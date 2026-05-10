@@ -9,8 +9,8 @@ spec:
         - name: matching
           resources:
             requests:
-              cpu: "3"
+              cpu: "4"
               memory: 512Mi
             limits:
-              cpu: "3"
+              cpu: "4"
               memory: 512Mi
