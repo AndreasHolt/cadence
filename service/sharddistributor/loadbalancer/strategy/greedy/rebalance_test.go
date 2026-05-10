@@ -167,125 +167,36 @@ func TestLoadBalance_NoMoveNeeded(t *testing.T) {
 	assert.Len(t, currentAssignments[execB], 49)
 }
 
-func TestLoadBalance_EstimatesMissingLoadWithAverageKnownLoad(t *testing.T) {
-	cfg := testGreedyConfig()
-
-	execA, execB := "exec-A", "exec-B"
-	now := time.Now().UTC()
-	currentAssignments := map[string][]string{
-		execA: {"hot-1", "hot-2"},
-		execB: {"unknown"},
-	}
-	namespaceState := &store.NamespaceState{
-		Executors: map[string]store.HeartbeatState{
-			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
-			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
-		},
-		ShardAssignments: map[string]store.AssignedState{
-			execA: {AssignedShards: map[string]*types.ShardAssignment{"hot-1": {}, "hot-2": {}}},
-			execB: {AssignedShards: map[string]*types.ShardAssignment{"unknown": {}}},
-		},
-		ShardStats: map[string]store.ShardStatistics{
-			"hot-1": {SmoothedLoad: 60, LastUpdateTime: now},
-			"hot-2": {SmoothedLoad: 60, LastUpdateTime: now},
-		},
-	}
-
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, time.Minute, metrics.NoopScope)
-	require.NoError(t, err)
-	require.Empty(t, moves)
-}
-
-func TestLoadBalance_ReportedZeroLoadIsKnown(t *testing.T) {
-	cfg := testGreedyConfig()
-
-	execA, execB := "exec-A", "exec-B"
-	now := time.Now().UTC()
-	currentAssignments := map[string][]string{
-		execA: {"hot-1", "hot-2"},
-		execB: {"idle"},
-	}
-	namespaceState := &store.NamespaceState{
-		Executors: map[string]store.HeartbeatState{
-			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
-			execB: {
-				Status:        types.ExecutorStatusACTIVE,
-				LastHeartbeat: now,
-				ReportedShards: map[string]*types.ShardStatusReport{
-					"idle": {Status: types.ShardStatusREADY, ShardLoad: 0},
-				},
-			},
-		},
-		ShardAssignments: map[string]store.AssignedState{
-			execA: {AssignedShards: map[string]*types.ShardAssignment{"hot-1": {}, "hot-2": {}}},
-			execB: {AssignedShards: map[string]*types.ShardAssignment{"idle": {}}},
-		},
-		ShardStats: map[string]store.ShardStatistics{
-			"hot-1": {SmoothedLoad: 60, LastUpdateTime: now},
-			"hot-2": {SmoothedLoad: 60, LastUpdateTime: now},
-		},
-	}
-
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, time.Minute, metrics.NoopScope)
-	require.NoError(t, err)
-	require.Len(t, moves, 1)
-	assert.Equal(t, execB, moves[0].To)
-}
-
-func TestLoadBalance_StaleSmoothedLoadFallsBackToReportedLoad(t *testing.T) {
-	cfg := testGreedyConfig()
-
-	execA, execB := "exec-A", "exec-B"
-	now := time.Now().UTC()
-	currentAssignments := map[string][]string{
-		execA: {"stale-1", "stale-2"},
-		execB: {"b-1"},
-	}
-	namespaceState := &store.NamespaceState{
-		Executors: map[string]store.HeartbeatState{
-			execA: {
-				Status:        types.ExecutorStatusACTIVE,
-				LastHeartbeat: now,
-				ReportedShards: map[string]*types.ShardStatusReport{
-					"stale-1": {Status: types.ShardStatusREADY, ShardLoad: 1},
-					"stale-2": {Status: types.ShardStatusREADY, ShardLoad: 1},
-				},
-			},
-			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
-		},
-		ShardAssignments: map[string]store.AssignedState{
-			execA: {AssignedShards: map[string]*types.ShardAssignment{"stale-1": {}, "stale-2": {}}},
-			execB: {AssignedShards: map[string]*types.ShardAssignment{"b-1": {}}},
-		},
-		ShardStats: map[string]store.ShardStatistics{
-			"stale-1": {SmoothedLoad: 50, LastUpdateTime: now.Add(-2 * time.Minute)},
-			"stale-2": {SmoothedLoad: 50, LastUpdateTime: now.Add(-2 * time.Minute)},
-			"b-1":     {SmoothedLoad: 1, LastUpdateTime: now},
-		},
-	}
-
-	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, time.Minute, metrics.NoopScope)
-	require.NoError(t, err)
-	require.Empty(t, moves)
-}
-
-func TestLoadBalance_DoesNotMoveUnknownLoadShard(t *testing.T) {
+func TestLoadBalance_HighMissingShardStatsRatioSkipsRebalance(t *testing.T) {
 	cfg := testGreedyConfig()
 
 	execA, execB := "exec-A", "exec-B"
 	now := time.Now().UTC()
 	currentAssignments := map[string][]string{
 		execA: {},
-		execB: {"known"},
+		execB: {},
 	}
 	assignments := map[string]store.AssignedState{
 		execA: {AssignedShards: make(map[string]*types.ShardAssignment)},
-		execB: {AssignedShards: map[string]*types.ShardAssignment{"known": {}}},
+		execB: {AssignedShards: make(map[string]*types.ShardAssignment)},
 	}
-	for i := range 10 {
-		shardID := fmt.Sprintf("unknown-%d", i)
+	shardStats := make(map[string]store.ShardStatistics)
+	for i := range 300 {
+		shardID := fmt.Sprintf("hot-%d", i)
 		currentAssignments[execA] = append(currentAssignments[execA], shardID)
 		assignments[execA].AssignedShards[shardID] = &types.ShardAssignment{}
+		shardStats[shardID] = store.ShardStatistics{SmoothedLoad: 2, LastUpdateTime: now}
+	}
+	for i := range 100 {
+		shardID := fmt.Sprintf("cold-%d", i)
+		currentAssignments[execB] = append(currentAssignments[execB], shardID)
+		assignments[execB].AssignedShards[shardID] = &types.ShardAssignment{}
+		shardStats[shardID] = store.ShardStatistics{SmoothedLoad: 0.1, LastUpdateTime: now}
+	}
+	for i := range 15 {
+		shardID := fmt.Sprintf("missing-%d", i)
+		currentAssignments[execB] = append(currentAssignments[execB], shardID)
+		assignments[execB].AssignedShards[shardID] = &types.ShardAssignment{}
 	}
 	namespaceState := &store.NamespaceState{
 		Executors: map[string]store.HeartbeatState{
@@ -293,10 +204,10 @@ func TestLoadBalance_DoesNotMoveUnknownLoadShard(t *testing.T) {
 			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
 		},
 		ShardAssignments: assignments,
-		ShardStats: map[string]store.ShardStatistics{
-			"known": {SmoothedLoad: 10, LastUpdateTime: now},
-		},
+		ShardStats:       shardStats,
 	}
+	unthrottledBudget := computeMoveBudget(len(currentAssignments[execA])+len(currentAssignments[execB]), cfg.MoveBudgetProportion(testNamespace))
+	require.Greater(t, unthrottledBudget, 1)
 
 	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, time.Minute, metrics.NoopScope)
 	require.NoError(t, err)
