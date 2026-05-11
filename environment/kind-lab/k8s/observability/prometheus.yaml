@@ -1,4 +1,37 @@
 apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cadence-kind-lab-prometheus
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/metrics
+      - nodes/proxy
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cadence-kind-lab-prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cadence-kind-lab-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: cadence-kind-lab
+---
+apiVersion: v1
 kind: ConfigMap
 metadata:
   name: kind-lab-prometheus-config
@@ -18,6 +51,22 @@ data:
               - cadence-matching-a-0.cadence-matching-a-headless:9090
               - cadence-matching-b-0.cadence-matching-b-headless:9090
               - cadence-matching-c-0.cadence-matching-c-headless:9090
+
+      - job_name: kubernetes-cadvisor
+        scheme: https
+        kubernetes_sd_configs:
+          - role: node
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        tls_config:
+          insecure_skip_verify: true
+        metrics_path: /metrics/cadvisor
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+        metric_relabel_configs:
+          - source_labels: [namespace]
+            regex: cadence-kind-lab
+            action: keep
 ---
 apiVersion: v1
 kind: Service
@@ -47,6 +96,7 @@ spec:
         app.kubernetes.io/part-of: cadence-kind-lab
         app.kubernetes.io/component: prometheus
     spec:
+      serviceAccountName: prometheus
       containers:
         - name: prometheus
           image: prom/prometheus:v2.54.1
