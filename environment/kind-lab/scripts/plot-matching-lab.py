@@ -45,29 +45,31 @@ def first_error_time(points):
 
 
 def plot_completed_rps(ax, runs, show_started, mark_errors, title):
-    if show_started and runs:
-        _, first_points = runs[0]
-        ax.plot(
-            series(first_points, "at_seconds"),
-            series(first_points, "window_started_rps"),
-            color="black",
-            linestyle="--",
-            linewidth=1.6,
-            alpha=0.8,
-            label="started/sec",
-        )
-
     for label, points in runs:
         ax.plot(
             series(points, "at_seconds"),
             series(points, "window_completed_rps"),
             linewidth=1.8,
             label=f"{label} completed/sec",
+            zorder=2,
         )
         if mark_errors:
             error_at = first_error_time(points)
             if error_at is not None:
                 ax.axvline(error_at, color="tab:red", linestyle=":", linewidth=1.2, alpha=0.7)
+
+    if show_started and runs:
+        _, first_points = runs[0]
+        ax.plot(
+            series(first_points, "at_seconds"),
+            series(first_points, "window_started_rps"),
+            color="black",
+            linestyle=(0, (6, 4)),
+            linewidth=1.7,
+            alpha=0.9,
+            label="started/sec",
+            zorder=4,
+        )
 
     ax.set_title(title or "Cluster Completed Throughput Over Time")
     ax.set_xlabel("Time since start (s)")
