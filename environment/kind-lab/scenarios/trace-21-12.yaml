@@ -14,11 +14,11 @@ trace:
   qps_scale: 1.0
   qps_scale_ramp:
     start: 0.005
-    end: 0.05
+    end: 0.075
   time_scale: 1
   top_n: 1000
   start_row: 0
-  rows: 180
+  rows: 186
   poller_capacity_qps: 50
   start_workers: 512
   process_time: 0s
