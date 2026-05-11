@@ -30,24 +30,33 @@ def parse_timestamp(value):
 
 def read_utilization(path, matching_only):
     rows = []
+    skipped_negative = 0
     with path.open("r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
             pod = row["pod"]
             if matching_only and not pod.startswith("cadence-matching-"):
                 continue
+            cpu_cores = float(row["cpu_cores"])
+            throttled_cores = float(row["throttled_cores"])
+            throttled_events = float(row["throttled_events"])
+            if cpu_cores < 0 or throttled_cores < 0 or throttled_events < 0:
+                skipped_negative += 1
+                continue
             rows.append(
                 {
                     "timestamp": parse_timestamp(row["timestamp"]),
                     "pod": pod,
-                    "cpu_cores": float(row["cpu_cores"]),
-                    "throttled_cores": float(row["throttled_cores"]),
-                    "throttled_events": float(row["throttled_events"]),
+                    "cpu_cores": cpu_cores,
+                    "throttled_cores": throttled_cores,
+                    "throttled_events": throttled_events,
                     "memory_mib": float(row["memory_mib"]),
                 }
             )
     if not rows:
         raise ValueError(f"{path} contains no matching utilization rows")
+    if skipped_negative:
+        print(f"warning: skipped {skipped_negative} negative utilization rows from {path}")
 
     start = min(row["timestamp"] for row in rows)
     for row in rows:

@@ -78,9 +78,15 @@ write_delta_rows() {
       next
     }
     ($1 in usage) {
-      cpu_cores = ($2 - usage[$1]) / (interval * 1000000)
-      throttled_cores = ($3 - throttled[$1]) / (interval * 1000000)
-      throttled_events = $4 - nr_throttled[$1]
+      usage_delta = $2 - usage[$1]
+      throttled_delta = $3 - throttled[$1]
+      throttled_events_delta = $4 - nr_throttled[$1]
+      if (usage_delta < 0 || throttled_delta < 0 || throttled_events_delta < 0) {
+        next
+      }
+      cpu_cores = usage_delta / (interval * 1000000)
+      throttled_cores = throttled_delta / (interval * 1000000)
+      throttled_events = throttled_events_delta
       memory_mib = $5 / 1048576
       printf "%s,%s,%.4f,%.4f,%d,%.2f,%s\n", ts, $1, cpu_cores, throttled_cores, throttled_events, memory_mib, $6
     }
