@@ -402,20 +402,19 @@ func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, 
 	if s.cfg.GetLoadBalancingMode(namespace) == types.LoadBalancingModeGREEDY {
 		statsUpdates, errUpdate := s.prepareShardStatisticsUpdates(ctx, namespace, request.NewState.ShardAssignments)
 		if errUpdate != nil {
-			return fmt.Errorf("prepare shard statistics: %w", errUpdate)
+			s.logger.Warn("failed to prepare shard statistics updates", tag.Error(errUpdate), tag.ShardNamespace(namespace))
+		} else {
+			defer func() {
+				// Apply the shard statistics updates after the main transaction commits.
+				// Only apply if there was no error in the main transaction.
+				if err != nil {
+					return
+				}
+				if updateErr := s.applyShardStatisticsUpdates(ctx, namespace, statsUpdates); updateErr != nil {
+					s.logger.Warn("failed to apply shard statistics updates", tag.Error(updateErr), tag.ShardNamespace(namespace))
+				}
+			}()
 		}
-
-		defer func() {
-			// Apply the shard statistics updates after the main transaction commits.
-			// Only apply if there was no error in the main transaction.
-			if err != nil {
-				return
-			}
-			if updateErr := s.applyShardStatisticsUpdates(ctx, namespace, statsUpdates); updateErr != nil {
-				s.logger.Error("failed to apply shard statistics updates", tag.Error(updateErr))
-				err = updateErr
-			}
-		}()
 	}
 
 	// 1. Prepare operations to delete stale executors and add comparisons to ensure they haven't been modified
