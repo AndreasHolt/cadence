@@ -73,7 +73,7 @@ func run() error {
 		upperBand         float64
 		lowerBand         float64
 		severeRatio       float64
-		useOptimal        int
+		useOptimal        bool
 		enableSwap        bool
 	)
 
@@ -87,7 +87,7 @@ func run() error {
 	flag.Float64Var(&upperBand, "upper-band", 1.15, "Hysteresis upper-band multiplier")
 	flag.Float64Var(&lowerBand, "lower-band", 0.90, "Hysteresis lower-band multiplier")
 	flag.Float64Var(&severeRatio, "severe-ratio", 1.3, "Severe-imbalance escape-hatch ratio")
-	flag.IntVar(&useOptimal, "optimal", 1, "Compare to optimal")
+	flag.BoolVar(&useOptimal, "optimal", true, "Compare to optimal")
 	flag.BoolVar(&enableSwap, "swap", true, "Enable pairwise shard swaps in greedy rebalancer")
 	flag.Parse()
 
@@ -283,7 +283,7 @@ func run() error {
 		var optAssignment optimal.Assignment
 		var optMetrics optimal.Metrics
 		var optMoves int
-		if useOptimal == 1 {
+		if useOptimal {
 			optAssignment = optimal.Solve(preGreedyRawLoads, executors, preGreedyAssignments)
 			optMetrics = optimal.ComputeMetrics(optAssignment, preGreedyRawLoads)
 			optMoves = optimal.DiffAssignments(preGreedyAssignments, optAssignment)
@@ -332,7 +332,7 @@ func run() error {
 		if err := writeRow(wMoves, float64(len(moves))); err != nil {
 			return fmt.Errorf("write moves: %w", err)
 		}
-		if useOptimal == 1 {
+		if useOptimal {
 			if err := writeRow(wOptMM, optMetrics.MaxOverMean); err != nil {
 				return fmt.Errorf("write optimal mm: %w", err)
 			}

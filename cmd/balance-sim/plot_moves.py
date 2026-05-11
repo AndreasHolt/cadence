@@ -298,14 +298,13 @@ def plot_load_imbalance(events, outdir):
     plt.close(fig)
 
 
-def _stacked_bar(ax, x, shards, highlighted, color_muted, color_highlight, edgecolor="#95a5a6"):
+def _stacked_bar(ax, x, shards, highlighted, color_muted, color_highlight, edgecolor="black", highlight_edgecolor="black", lw=0.5):
     """Draw a single stacked bar at position x. shards is {id: load}."""
     bottom = 0.0
     for shard_id, load in sorted(shards.items(), key=lambda kv: kv[1], reverse=True):
         is_highlight = shard_id in highlighted
         color = color_highlight if is_highlight else color_muted
-        ec = "black" if is_highlight else edgecolor
-        lw = 2.0 if is_highlight else 0.5
+        ec = highlight_edgecolor if is_highlight else edgecolor
         ax.bar(x, load, bottom=bottom, color=color, edgecolor=ec, linewidth=lw, width=0.6)
         bottom += load
     return bottom
@@ -547,6 +546,140 @@ def plot_swap_vs_single_comparison(events, outdir, max_swaps=5):
     plt.close(fig)
 
 
+def _plot_one_single_vs_swap(ax_single, ax_swap, ev, single_info, idx):
+    """Render one row with Best Single Move on the left and Actual Swap on the right.
+    Returns (single_caption, swap_caption) for figure-level text."""
+    src, dst = ev["source"], ev["dest"]
+    src_before = ev["source_shards_before"]
+    dst_before = ev["dest_shards_before"]
+    src_load_before = ev["source_load_before"]
+    dst_load_before = ev["dest_load_before"]
+
+    # Identify shards in the actual swap
+    swap_src_to_dst = set()
+    swap_dst_to_src = set()
+    for m in ev["planned_moves"]:
+        if m["From"] == src and m["To"] == dst:
+            swap_src_to_dst.add(m["ShardID"])
+        elif m["From"] == dst and m["To"] == src:
+            swap_dst_to_src.add(m["ShardID"])
+
+    single_shard_id = single_info["single_shard_id"]
+    single_from = single_info["single_from"]
+    single_to = single_info["single_to"]
+    single_load = single_info["single_load"]
+    single_src_after = single_info["single_src_after"]
+    single_dst_after = single_info["single_dst_after"]
+    single_src_load_after = single_info["single_src_load_after"]
+    single_dst_load_after = single_info["single_dst_load_after"]
+
+    positions = [0, 1, 2.5, 3.5]
+    labels = [f"{src}\n(Before)", f"{dst}\n(Before)", f"{src}\n(After)", f"{dst}\n(After)"]
+
+    # --- LEFT: Best Single Move ---
+    single_highlight_src_before = {single_shard_id} if single_from == src else set()
+    single_highlight_dst_before = {single_shard_id} if single_from == dst else set()
+    single_highlight_src_after = {single_shard_id} if single_to == src else set()
+    single_highlight_dst_after = {single_shard_id} if single_to == dst else set()
+    _stacked_bar(ax_single, positions[0], src_before, single_highlight_src_before, "#bdc3c7", "#f39c12",
+                 highlight_edgecolor="black")
+    _stacked_bar(ax_single, positions[1], dst_before, single_highlight_dst_before, "#bdc3c7", "#f39c12",
+                 highlight_edgecolor="black")
+    _stacked_bar(ax_single, positions[2], single_src_after, single_highlight_src_after, "#bdc3c7", "#f39c12",
+                 highlight_edgecolor="black")
+    _stacked_bar(ax_single, positions[3], single_dst_after, single_highlight_dst_after, "#bdc3c7", "#f39c12",
+                 highlight_edgecolor="black")
+    ax_single.set_xticks(positions)
+    ax_single.set_xticklabels(labels, fontsize=20)
+    ax_single.set_ylabel("Req/s", fontsize=20)
+    ax_single.tick_params(axis="y", labelsize=18)
+    ax_single.set_axisbelow(True)
+    ax_single.grid(True, alpha=0.5, axis="y", color="#bdc3c7", linestyle="-")
+
+    # --- RIGHT: Actual Swap ---
+    _stacked_bar(ax_swap, positions[0], src_before, swap_src_to_dst, "#bdc3c7", "#e74c3c",
+                 highlight_edgecolor="black")
+    _stacked_bar(ax_swap, positions[1], dst_before, swap_dst_to_src, "#bdc3c7", "#2ecc71",
+                 highlight_edgecolor="black")
+    _stacked_bar(ax_swap, positions[2], ev["source_shards_after"], swap_dst_to_src, "#bdc3c7", "#2ecc71",
+                 highlight_edgecolor="black")
+    _stacked_bar(ax_swap, positions[3], ev["dest_shards_after"], swap_src_to_dst, "#bdc3c7", "#e74c3c",
+                 highlight_edgecolor="black")
+    ax_swap.set_xticks(positions)
+    ax_swap.set_xticklabels(labels, fontsize=20)
+    ax_swap.set_ylabel("Req/s", fontsize=20)
+    ax_swap.tick_params(axis="y", labelsize=18)
+    ax_swap.set_axisbelow(True)
+    ax_swap.grid(True, alpha=0.5, axis="y", color="#bdc3c7", linestyle="-")
+
+    # Ensure both axes share the same scale with headroom so no bar touches the top.
+    all_totals = [
+        sum(src_before.values()), sum(dst_before.values()),
+        sum(single_src_after.values()), sum(single_dst_after.values()),
+        sum(ev["source_shards_after"].values()), sum(ev["dest_shards_after"].values()),
+    ]
+    y_max = max(all_totals) * 1.15
+    ax_single.set_ylim(top=y_max)
+    ax_swap.set_ylim(top=y_max)
+
+    single_caption = (
+        f"BEST SINGLE #{idx+1}: {single_from} → {single_to} (shard {single_shard_id}, load {single_load:.1f})\n"
+        f"{src}: {src_load_before:.1f}→{single_src_load_after:.1f}  |  "
+        f"{dst}: {dst_load_before:.1f}→{single_dst_load_after:.1f}"
+    )
+    swap_caption = (
+        f"SWAP #{idx+1}: {src} ↔ {dst}\n"
+        f"{src}: {src_load_before:.1f}→{ev['source_load_after']:.1f}  |  "
+        f"{dst}: {dst_load_before:.1f}→{ev['dest_load_after']:.1f}"
+    )
+    return single_caption, swap_caption
+
+
+def plot_best_swap(events, outdir):
+    """Plot the single best swap (by advantage over best single move).
+    Layout matches swap_vs_single_comparison: best single on the left, actual swap on the right."""
+    _require_matplotlib()
+    swaps = [e for e in events if e["move_type"] == "swap" and e.get("best_single_move")]
+    if not swaps:
+        print("No swaps with rejected single moves found — skipping best_swap plot")
+        return
+
+    # Compute advantage score the same way as plot_swap_vs_single_comparison.
+    scored = []
+    for ev in swaps:
+        single_info = _compute_single_after_state(ev)
+        swap_diff = abs(ev["source_load_after"] - ev["dest_load_after"])
+        single_diff = abs(single_info["single_src_load_after"] - single_info["single_dst_load_after"])
+        advantage = single_diff - swap_diff
+        scored.append((advantage, ev, single_info))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    advantage, ev, single_info = scored[0]
+
+    fig, axes = plt.subplots(1, 2, figsize=(18, 7))
+    single_caption, swap_caption = _plot_one_single_vs_swap(axes[0], axes[1], ev, single_info, 0)
+    print(single_caption)
+    print(swap_caption)
+
+    from matplotlib.patches import Patch
+    legend_items = [
+        Patch(facecolor="#f39c12", edgecolor="#95a5a6", label="Shard in single move"),
+        Patch(facecolor="#e74c3c", edgecolor="#95a5a6", label="Shard src→dst (swap)"),
+        Patch(facecolor="#2ecc71", edgecolor="#95a5a6", label="Shard dst→src (swap)"),
+        Patch(facecolor="#bdc3c7", edgecolor="#95a5a6", label="Unchanged shard"),
+    ]
+    fig.legend(handles=legend_items, loc="lower center", ncol=4, bbox_to_anchor=(0.5, -0.02), fontsize=18)
+    fig.suptitle(
+        f"Best Single Move vs Best Swap",
+        fontsize=27, y=1.0
+    )
+    fig.text(0.25, -0.02, single_caption, ha="center", va="top", fontsize=18)
+    fig.text(0.75, -0.02, swap_caption, ha="center", va="top", fontsize=18)
+    fig.tight_layout(rect=[0, 0.10, 1, 1])
+    fig.savefig(outdir / "best_swap.png", dpi=150)
+    plt.close(fig)
+
+
 def plot_biggest_swap_vs_single(events, outdir):
     """Plot the single swap with the biggest advantage over the best single move."""
     _require_matplotlib()
@@ -634,6 +767,7 @@ def main():
     plot_load_imbalance(events, outdir)
     plot_first_swap_detail(events, outdir)
     plot_swap_vs_single_comparison(events, outdir)
+    plot_best_swap(events, outdir)
     plot_biggest_swap_vs_single(events, outdir)
 
     print(f"Done. Plots saved to ./{outdir}/")
