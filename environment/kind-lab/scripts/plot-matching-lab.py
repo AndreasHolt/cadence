@@ -45,24 +45,23 @@ def first_error_time(points):
 
 
 def plot_completed_rps(ax, runs, show_started, mark_errors, title):
-    if show_started and runs:
-        first_label, first_points = runs[0]
-        ax.plot(
-            series(first_points, "at_seconds"),
-            series(first_points, "window_started_rps"),
-            color="black",
-            linestyle="--",
-            linewidth=1.6,
-            label=f"{first_label} started/sec",
-        )
-
     for label, points in runs:
-        ax.plot(
+        completed_line = ax.plot(
             series(points, "at_seconds"),
             series(points, "window_completed_rps"),
             linewidth=1.8,
             label=f"{label} completed/sec",
-        )
+        )[0]
+        if show_started:
+            ax.plot(
+                series(points, "at_seconds"),
+                series(points, "window_started_rps"),
+                color=completed_line.get_color(),
+                linestyle="--",
+                linewidth=1.4,
+                alpha=0.8,
+                label=f"{label} started/sec",
+            )
         if mark_errors:
             error_at = first_error_time(points)
             if error_at is not None:
