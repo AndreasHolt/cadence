@@ -64,7 +64,7 @@ func TestComputeExecutorCapacityWeightsLatencyMode(t *testing.T) {
 		},
 	}
 
-	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeLatency, currentAssignments, namespaceState)
+	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeLatency, currentAssignments, namespaceState, nil, nil)
 
 	require.Greater(t, weights["fast"], weights["slow"])
 	require.InDelta(t, 5.656854, weights["fast"], 0.0001)
@@ -83,10 +83,98 @@ func TestComputeExecutorCapacityWeightsOffModeIgnoresMetadata(t *testing.T) {
 		},
 	}
 
-	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeOff, currentAssignments, namespaceState)
+	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeOff, currentAssignments, namespaceState, nil, nil)
 
 	require.Equal(t, 1.0, weights["small"])
 	require.Equal(t, 1.0, weights["large"])
+}
+
+func TestComputeExecutorCapacityWeightsCPUSecondsMode(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	currentAssignments := map[string][]string{
+		"fast": {"shard-1"},
+		"slow": {"shard-2"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			"fast": {Metadata: capacity.HeartbeatMetadataWithOptions(nil, capacity.HeartbeatMetadataOptions{
+				GoMaxProcs:        4,
+				ProcessCPUSeconds: 10,
+				HasProcessCPU:     true,
+				SampleTime:        now,
+			})},
+			"slow": {Metadata: capacity.HeartbeatMetadataWithOptions(nil, capacity.HeartbeatMetadataOptions{
+				GoMaxProcs:        4,
+				ProcessCPUSeconds: 20,
+				HasProcessCPU:     true,
+				SampleTime:        now,
+			})},
+		},
+	}
+	cpuState := NewCPUObservationState()
+	loads := map[string]float64{
+		"fast": 10,
+		"slow": 10,
+	}
+
+	firstWeights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
+	require.Equal(t, 4.0, firstWeights["fast"])
+	require.Equal(t, 4.0, firstWeights["slow"])
+
+	later := now.Add(10 * time.Second)
+	namespaceState.Executors["fast"] = store.HeartbeatState{Metadata: capacity.HeartbeatMetadataWithOptions(nil, capacity.HeartbeatMetadataOptions{
+		GoMaxProcs:        4,
+		ProcessCPUSeconds: 20,
+		HasProcessCPU:     true,
+		SampleTime:        later,
+	})}
+	namespaceState.Executors["slow"] = store.HeartbeatState{Metadata: capacity.HeartbeatMetadataWithOptions(nil, capacity.HeartbeatMetadataOptions{
+		GoMaxProcs:        4,
+		ProcessCPUSeconds: 40,
+		HasProcessCPU:     true,
+		SampleTime:        later,
+	})}
+
+	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
+
+	require.InDelta(t, 6.0, weights["fast"], 1e-9)
+	require.InDelta(t, 3.0, weights["slow"], 1e-9)
+}
+
+func TestComputeExecutorCapacityWeightsCPUSecondsModeKeepsBaseWeightForMissingCost(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	currentAssignments := map[string][]string{
+		"unknown": {"shard-1"},
+		"ready":   {"shard-2"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			"unknown": {Metadata: map[string]string{capacity.GoMaxProcsMetadataKey: "4"}},
+			"ready": {Metadata: capacity.HeartbeatMetadataWithOptions(nil, capacity.HeartbeatMetadataOptions{
+				GoMaxProcs:        8,
+				ProcessCPUSeconds: 10,
+				HasProcessCPU:     true,
+				SampleTime:        now,
+			})},
+		},
+	}
+	cpuState := NewCPUObservationState()
+	loads := map[string]float64{
+		"unknown": 10,
+		"ready":   10,
+	}
+	computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
+
+	namespaceState.Executors["ready"] = store.HeartbeatState{Metadata: capacity.HeartbeatMetadataWithOptions(nil, capacity.HeartbeatMetadataOptions{
+		GoMaxProcs:        8,
+		ProcessCPUSeconds: 20,
+		HasProcessCPU:     true,
+		SampleTime:        now.Add(10 * time.Second),
+	})}
+	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
+
+	require.Equal(t, 4.0, weights["unknown"])
+	require.Equal(t, 8.0, weights["ready"])
 }
 
 // TestLoadBalance_Convergence verifies the balancer moves shards from an overloaded executor to an underloaded one.

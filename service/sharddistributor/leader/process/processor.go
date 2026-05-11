@@ -74,6 +74,7 @@ type namespaceProcessor struct {
 	wg            sync.WaitGroup
 	shardStore    store.Store
 	election      store.Election
+	lbRuntime     loadbalancer.RuntimeState
 }
 
 // NewProcessorFactory creates a new processor factory
@@ -117,6 +118,7 @@ func (f *processorFactory) CreateProcessor(cfg config.Namespace, shardStore stor
 		election:      election, // Store the election object
 		metricsClient: f.metricsClient,
 		sdConfig:      f.sdConfig,
+		lbRuntime:     loadbalancer.NewRuntimeState(),
 	}
 }
 
@@ -458,6 +460,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		p.cfg.HeartbeatTTL,
 		p.logger,
 		metricsLoopScope,
+		&p.lbRuntime,
 	)
 	if err != nil {
 		return fmt.Errorf("load balance: %w", err)

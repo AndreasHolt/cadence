@@ -30,6 +30,7 @@ func PlanRebalance(
 	now time.Time,
 	shardStatsStaleAfter time.Duration,
 	metricsScope metrics.Scope,
+	cpuObservationState ...*CPUObservationState,
 ) ([]plan.Move, error) {
 	now = now.UTC()
 	workingAssignments := cloneAssignments(currentAssignments)
@@ -38,7 +39,11 @@ func PlanRebalance(
 		return nil, nil
 	}
 
-	targetLoads := computeTargetLoads(loads, computeExecutorCapacityWeights(cfg.HeterogeneityMode(namespace), workingAssignments, namespaceState), totalLoad)
+	var cpuState *CPUObservationState
+	if len(cpuObservationState) > 0 {
+		cpuState = cpuObservationState[0]
+	}
+	targetLoads := computeTargetLoads(loads, computeExecutorCapacityWeights(cfg.HeterogeneityMode(namespace), workingAssignments, namespaceState, loads, cpuState), totalLoad)
 	totalShards := 0
 	for _, shards := range currentAssignments {
 		totalShards += len(shards)
@@ -187,15 +192,28 @@ func computeExecutorCapacityWeights(
 	heterogeneityMode string,
 	currentAssignments map[string][]string,
 	state *store.NamespaceState,
+	loads map[string]float64,
+	cpuObservationState *CPUObservationState,
 ) map[string]float64 {
 	weights := make(map[string]float64, len(currentAssignments))
 	for executorID := range currentAssignments {
 		weights[executorID] = 1
 	}
-	if heterogeneityMode != config.GreedyHeterogeneityModeLatency {
+	switch heterogeneityMode {
+	case config.GreedyHeterogeneityModeLatency:
+		return computeLatencyAdjustedWeights(currentAssignments, state, weights)
+	case config.GreedyHeterogeneityModeCPUSeconds:
+		return computeCPUSecondsAdjustedWeights(currentAssignments, state, loads, cpuObservationState, weights)
+	default:
 		return weights
 	}
+}
 
+func computeLatencyAdjustedWeights(
+	currentAssignments map[string][]string,
+	state *store.NamespaceState,
+	weights map[string]float64,
+) map[string]float64 {
 	meanLatencyMs := computeMeanLatencyMs(currentAssignments, state)
 	for executorID := range currentAssignments {
 		weight := capacity.WeightFromMetadata(state.Executors[executorID].Metadata)
@@ -207,6 +225,53 @@ func computeExecutorCapacityWeights(
 			}
 		}
 		weights[executorID] = weight
+	}
+
+	return weights
+}
+
+func computeCPUSecondsAdjustedWeights(
+	currentAssignments map[string][]string,
+	state *store.NamespaceState,
+	loads map[string]float64,
+	cpuObservationState *CPUObservationState,
+	weights map[string]float64,
+) map[string]float64 {
+	for executorID := range currentAssignments {
+		weights[executorID] = capacity.WeightFromMetadata(state.Executors[executorID].Metadata)
+	}
+	if cpuObservationState == nil {
+		return weights
+	}
+
+	busyCoresMap := cpuObservationState.updateExecutorCPUObservations(state)
+	cpuCosts := make(map[string]float64)
+	totalCPUCost := 0.0
+	validCount := 0
+	for executorID, load := range loads {
+		busyCores, ok := busyCoresMap[executorID]
+		if !ok || load <= 0 || busyCores <= 0 {
+			continue
+		}
+		cost := busyCores / load
+		if math.IsNaN(cost) || math.IsInf(cost, 0) {
+			continue
+		}
+		cpuCosts[executorID] = cost
+		totalCPUCost += cost
+		validCount++
+	}
+	if validCount == 0 {
+		return weights
+	}
+
+	averageCPUCost := totalCPUCost / float64(validCount)
+	for executorID := range currentAssignments {
+		cost := cpuCosts[executorID]
+		if cost <= 0 {
+			cost = averageCPUCost
+		}
+		weights[executorID] *= averageCPUCost / cost
 	}
 
 	return weights
