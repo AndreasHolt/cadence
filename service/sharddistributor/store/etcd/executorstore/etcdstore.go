@@ -398,6 +398,25 @@ func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, 
 	var comparisons []clientv3.Cmp
 	comparisonMaps := make(map[string]int64)
 
+	// TODO: Should be extracted to a higher level so that statistics updates are prepared
+	if s.cfg.GetLoadBalancingMode(namespace) == types.LoadBalancingModeGREEDY {
+		statsUpdates, errUpdate := s.prepareShardStatisticsUpdates(ctx, namespace, request.NewState.ShardAssignments)
+		if errUpdate != nil {
+			s.logger.Warn("failed to prepare shard statistics updates", tag.Error(errUpdate), tag.ShardNamespace(namespace))
+		} else {
+			defer func() {
+				// Apply the shard statistics updates after the main transaction commits.
+				// Only apply if there was no error in the main transaction.
+				if err != nil {
+					return
+				}
+				if updateErr := s.applyShardStatisticsUpdates(ctx, namespace, statsUpdates); updateErr != nil {
+					s.logger.Warn("failed to apply shard statistics updates", tag.Error(updateErr), tag.ShardNamespace(namespace))
+				}
+			}()
+		}
+	}
+
 	// 1. Prepare operations to delete stale executors and add comparisons to ensure they haven't been modified
 	for executorID, expectedModRevision := range request.ExecutorsToDelete {
 		// Build the assigned state key to check for concurrent modifications
@@ -489,10 +508,6 @@ func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, 
 			}
 		}
 		return fmt.Errorf("%w: transaction failed, a shard may have been concurrently assigned, %v", store.ErrVersionConflict, failingRevisionString)
-	}
-
-	if s.cfg.GetLoadBalancingMode(namespace) == types.LoadBalancingModeGREEDY {
-		s.updateShardStatisticsBestEffort(namespace, request.NewState.ShardAssignments)
 	}
 
 	return nil
@@ -891,20 +906,6 @@ func (s *executorStoreImpl) prepareShardStatisticsUpdates(ctx context.Context, n
 		})
 	}
 	return shardStatisticsUpdates, nil
-}
-
-func (s *executorStoreImpl) updateShardStatisticsBestEffort(namespace string, assignments map[string]store.AssignedState) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	statsUpdates, err := s.prepareShardStatisticsUpdates(ctx, namespace, assignments)
-	if err != nil {
-		s.logger.Warn("failed to prepare shard statistics updates", tag.Error(err), tag.ShardNamespace(namespace))
-		return
-	}
-	if err := s.applyShardStatisticsUpdates(ctx, namespace, statsUpdates); err != nil {
-		s.logger.Warn("failed to apply shard statistics updates", tag.Error(err), tag.ShardNamespace(namespace))
-	}
 }
 
 // loadStatsForUpdate loads the current stats for executorID, or returns an empty map
