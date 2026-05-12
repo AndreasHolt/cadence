@@ -3270,6 +3270,8 @@ const (
 	ShardDistributorAssignmentSmoothedLoadStaleRatio
 	// ShardDistributorIsLeader reports whether this instance is currently the leader (1) or not (0) for a namespace
 	ShardDistributorIsLeader
+	// ShardDistributorExecutorCPUCapacity reports the computed CPU capacity (busy cores) per executor
+	ShardDistributorExecutorCPUCapacity
 
 	NumShardDistributorMetrics
 )
@@ -4231,6 +4233,10 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 			metricType: Gauge,
 		},
 		ShardDistributorIsLeader: {metricName: "shard_distributor_is_leader", metricType: Gauge},
+		ShardDistributorExecutorCPUCapacity: {
+			metricName: "shard_distributor_executor_cpu_capacity",
+			metricType: Gauge,
+		},
 	},
 }
 

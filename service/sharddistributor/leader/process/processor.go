@@ -473,6 +473,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	p.emitExecutorMetric(namespaceState, metricsLoopScope)
 	emitSmoothedLoadMetrics := p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name) == types.LoadBalancingModeGREEDY
 	p.emitAssignmentImbalanceMetrics(metricsLoopScope, currentAssignments, namespaceState, emitSmoothedLoadMetrics)
+	p.emitExecutorCPUCapacityMetric(metricsLoopScope)
 
 	distributionChanged := len(deletedShards) > 0 || len(staleExecutors) > 0 || assignedToEmptyExecutors || updatedAssignments || isRebalancedByShardLoad
 	if !distributionChanged {
@@ -525,6 +526,15 @@ func (p *namespaceProcessor) emitActiveShardMetric(shardAssignments map[string]s
 func (p *namespaceProcessor) emitExecutorMetric(namespaceState *store.NamespaceState, metricsLoopScope metrics.Scope) {
 	for status, count := range namespaceState.CountExecutorsByStatus() {
 		metricsLoopScope.Tagged(metrics.ExecutorStatusTag(status.String())).UpdateGauge(metrics.ShardDistributorTotalExecutors, float64(count))
+	}
+}
+
+func (p *namespaceProcessor) emitExecutorCPUCapacityMetric(metricsLoopScope metrics.Scope) {
+	if p.lbRuntime.GreedyCPUObservations == nil {
+		return
+	}
+	for executorID, capacity := range p.lbRuntime.GreedyCPUObservations.GetExecutorCPUCapacity() {
+		metricsLoopScope.Tagged(metrics.InstanceTag(executorID)).UpdateGauge(metrics.ShardDistributorExecutorCPUCapacity, capacity)
 	}
 }
 

@@ -75,6 +75,19 @@ func (s *CPUObservationState) updateExecutorCPUObservations(state *store.Namespa
 	return busyCoresMap
 }
 
+// GetExecutorCPUCapacity returns the last computed (smoothed or raw) busy-cores
+// value for each executor. The map is a snapshot; callers must not modify it.
+func (s *CPUObservationState) GetExecutorCPUCapacity() map[string]float64 {
+	if s == nil || s.smoothed == nil {
+		return nil
+	}
+	result := make(map[string]float64, len(s.smoothed))
+	for id, v := range s.smoothed {
+		result[id] = v.busyCores
+	}
+	return result
+}
+
 func (s *CPUObservationState) updateExecutorCPUObservation(executorID string, metadata map[string]string) (float64, bool) {
 	if s.samples == nil {
 		s.samples = make(map[string]executorCPUSample)
@@ -104,6 +117,10 @@ func (s *CPUObservationState) updateExecutorCPUObservation(executorID string, me
 	}
 
 	if s.smoothingTau <= 0 {
+		s.smoothed[executorID] = executorCPUSmoothed{
+			busyCores:  busyCores,
+			lastUpdate: currentSample.sampleTime,
+		}
 		return busyCores, true
 	}
 
