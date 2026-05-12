@@ -45,6 +45,9 @@ func testGreedyConfig() config.LoadBalancingGreedyConfig {
 		MoveCostCoefficient: func(namespace string) float64 {
 			return 1.0
 		},
+		CPUSecondsSmoothingTau: func(namespace string) time.Duration {
+			return 5 * time.Minute
+		},
 	}
 }
 

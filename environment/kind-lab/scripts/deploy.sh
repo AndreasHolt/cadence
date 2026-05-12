@@ -10,6 +10,7 @@ MATCHING_HETEROGENEITY_PROFILE="${MATCHING_HETEROGENEITY_PROFILE:-equal_burn}"
 MATCHING_BASE_BURN_ITERATIONS="${MATCHING_BASE_BURN_ITERATIONS:-15000000}"
 MATCHING_FAST_BURN_ITERATIONS="${MATCHING_FAST_BURN_ITERATIONS:-10000000}"
 MATCHING_SLOW_BURN_ITERATIONS="${MATCHING_SLOW_BURN_ITERATIONS:-20000000}"
+GREEDY_CPU_SECONDS_SMOOTHING_TAU="${GREEDY_CPU_SECONDS_SMOOTHING_TAU:-5m}"
 
 case "$MODE" in
   homogeneous|heterogeneous)
@@ -87,7 +88,7 @@ kubectl apply -k "$ROOT/environment/kind-lab/k8s/bootstrap"
 tmp_config_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_config_dir"' EXIT
 cp "$ROOT"/environment/kind-lab/k8s/bootstrap/files/* "$tmp_config_dir"/
-awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GREEDY_MOVE_SCORING_MODE" '
+awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GREEDY_MOVE_SCORING_MODE" -v cpu_smoothing_tau="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" '
   $0 == "shardDistributor.loadBalancingGreedy.heterogeneityMode:" {
     in_heterogeneity_key = 1
     print
@@ -95,6 +96,11 @@ awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GR
   }
   $0 == "shardDistributor.loadBalancingGreedy.moveScoringMode:" {
     in_move_scoring_key = 1
+    print
+    next
+  }
+  $0 == "shardDistributor.loadBalancingGreedy.cpuSecondsSmoothingTau:" {
+    in_cpu_smoothing_tau_key = 1
     print
     next
   }
@@ -106,6 +112,11 @@ awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GR
   in_move_scoring_key && $1 == "-" && $2 == "value:" {
     print "  - value: " move_scoring_mode
     in_move_scoring_key = 0
+    next
+  }
+  in_cpu_smoothing_tau_key && $1 == "-" && $2 == "value:" {
+    print "  - value: " cpu_smoothing_tau
+    in_cpu_smoothing_tau_key = 0
     next
   }
   { print }
@@ -123,6 +134,7 @@ echo "matching heterogeneity profile: $MATCHING_HETEROGENEITY_PROFILE"
 echo "  cadence-matching-a: cpu=$MATCHING_A_CPU burn_iterations=$MATCHING_A_BURN"
 echo "  cadence-matching-b: cpu=$MATCHING_B_CPU burn_iterations=$MATCHING_B_BURN"
 echo "  cadence-matching-c: cpu=$MATCHING_C_CPU burn_iterations=$MATCHING_C_BURN"
+echo "greedy cpu seconds smoothing tau: $GREEDY_CPU_SECONDS_SMOOTHING_TAU"
 
 kubectl rollout status statefulset/cassandra -n "$NAMESPACE" --timeout=5m
 kubectl rollout status statefulset/etcd -n "$NAMESPACE" --timeout=2m

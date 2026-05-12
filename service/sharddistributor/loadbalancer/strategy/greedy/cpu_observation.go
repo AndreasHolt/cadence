@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/uber/cadence/service/sharddistributor/capacity"
+	"github.com/uber/cadence/service/sharddistributor/statistics"
 	"github.com/uber/cadence/service/sharddistributor/store"
 )
 
@@ -13,16 +14,33 @@ type executorCPUSample struct {
 	sampleTime        time.Time
 }
 
+type executorCPUSmoothed struct {
+	busyCores  float64
+	lastUpdate time.Time
+}
+
 // CPUObservationState tracks previous executor CPU samples across rebalance cycles.
 type CPUObservationState struct {
-	samples map[string]executorCPUSample
+	samples       map[string]executorCPUSample
+	smoothed      map[string]executorCPUSmoothed
+	smoothingTau  time.Duration
 }
 
 // NewCPUObservationState creates state for CPU-seconds based greedy balancing.
 func NewCPUObservationState() *CPUObservationState {
 	return &CPUObservationState{
-		samples: make(map[string]executorCPUSample),
+		samples:  make(map[string]executorCPUSample),
+		smoothed: make(map[string]executorCPUSmoothed),
 	}
+}
+
+// SetSmoothingTau configures the EWMA time constant for CPU capacity smoothing.
+// A value <= 0 disables smoothing and returns raw per-interval busy-cores rates.
+func (s *CPUObservationState) SetSmoothingTau(tau time.Duration) {
+	if s == nil {
+		return
+	}
+	s.smoothingTau = tau
 }
 
 func (s *CPUObservationState) updateExecutorCPUObservations(state *store.NamespaceState) map[string]float64 {
@@ -48,6 +66,11 @@ func (s *CPUObservationState) updateExecutorCPUObservations(state *store.Namespa
 			delete(s.samples, executorID)
 		}
 	}
+	for executorID := range s.smoothed {
+		if _, ok := seenExecutors[executorID]; !ok {
+			delete(s.smoothed, executorID)
+		}
+	}
 
 	return busyCoresMap
 }
@@ -56,20 +79,54 @@ func (s *CPUObservationState) updateExecutorCPUObservation(executorID string, me
 	if s.samples == nil {
 		s.samples = make(map[string]executorCPUSample)
 	}
+	if s.smoothed == nil {
+		s.smoothed = make(map[string]executorCPUSmoothed)
+	}
 
 	currentSample, ok := executorCPUSampleFromMetadata(metadata)
 	if !ok {
 		delete(s.samples, executorID)
+		delete(s.smoothed, executorID)
 		return 0, false
 	}
 
 	previousSample, hasPreviousSample := s.samples[executorID]
 	s.samples[executorID] = currentSample
 	if !hasPreviousSample {
+		delete(s.smoothed, executorID)
 		return 0, false
 	}
 
-	return computeExecutorCPUObservation(previousSample, currentSample)
+	busyCores, ok := computeExecutorCPUObservation(previousSample, currentSample)
+	if !ok {
+		delete(s.smoothed, executorID)
+		return 0, false
+	}
+
+	if s.smoothingTau <= 0 {
+		return busyCores, true
+	}
+
+	prevSmoothed, hasPrevSmoothed := s.smoothed[executorID]
+	if !hasPrevSmoothed {
+		s.smoothed[executorID] = executorCPUSmoothed{
+			busyCores:  busyCores,
+			lastUpdate: currentSample.sampleTime,
+		}
+		return busyCores, true
+	}
+
+	newSmoothed, err := statistics.CalculateSmoothedLoadWithTau(prevSmoothed.busyCores, busyCores, prevSmoothed.lastUpdate, currentSample.sampleTime, s.smoothingTau)
+	if err != nil {
+		delete(s.smoothed, executorID)
+		return busyCores, true
+	}
+
+	s.smoothed[executorID] = executorCPUSmoothed{
+		busyCores:  newSmoothed,
+		lastUpdate: currentSample.sampleTime,
+	}
+	return newSmoothed, true
 }
 
 func executorCPUSampleFromMetadata(metadata map[string]string) (executorCPUSample, bool) {
