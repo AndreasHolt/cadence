@@ -110,6 +110,16 @@ func (s *CPUObservationState) updateExecutorCPUObservation(executorID string, me
 		return 0, false
 	}
 
+	// Duplicate heartbeat sample (rebalance ran faster than heartbeat).
+	// Preserve the smoothed state and return the last known value.
+	if currentSample.sampleTime.Equal(previousSample.sampleTime) {
+		prevSmoothed, hasPrevSmoothed := s.smoothed[executorID]
+		if hasPrevSmoothed {
+			return prevSmoothed.busyCores, true
+		}
+		return 0, false
+	}
+
 	busyCores, ok := computeExecutorCPUObservation(previousSample, currentSample)
 	if !ok {
 		delete(s.smoothed, executorID)

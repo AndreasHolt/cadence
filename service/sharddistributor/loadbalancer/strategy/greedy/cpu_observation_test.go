@@ -177,3 +177,22 @@ func TestUpdateExecutorCPUObservation_RawWhenTauIsZero(t *testing.T) {
 	require.Contains(t, state.smoothed, "exec-1")
 	require.InDelta(t, 2.5, state.smoothed["exec-1"].busyCores, 1e-9)
 }
+
+func TestUpdateExecutorCPUObservation_DuplicateSamplePreservesSmoothed(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	state := NewCPUObservationState()
+	state.SetSmoothingTau(300 * time.Second)
+
+	// First two samples build up a smoothed value.
+	state.updateExecutorCPUObservation("exec-1", meta(10, now))
+	state.updateExecutorCPUObservation("exec-1", meta(25, now.Add(10*time.Second)))
+	state.updateExecutorCPUObservation("exec-1", meta(45, now.Add(20*time.Second)))
+
+	smoothedBefore := state.smoothed["exec-1"].busyCores
+
+	// Same sample again (rebalance ran before next heartbeat).
+	busyCores, ok := state.updateExecutorCPUObservation("exec-1", meta(45, now.Add(20*time.Second)))
+	require.True(t, ok)
+	require.InDelta(t, smoothedBefore, busyCores, 1e-9)
+	require.InDelta(t, smoothedBefore, state.smoothed["exec-1"].busyCores, 1e-9)
+}
