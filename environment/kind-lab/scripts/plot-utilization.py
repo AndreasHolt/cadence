@@ -113,6 +113,12 @@ def plot_throttling(ax, runs):
     ax.legend()
 
 
+def apply_time_axis(ax, x_min, x_max):
+    if x_min is not None or x_max is not None:
+        left, right = ax.get_xlim()
+        ax.set_xlim(x_min if x_min is not None else left, x_max if x_max is not None else right)
+
+
 def safe_filename(value):
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-")
 
@@ -168,6 +174,18 @@ def main():
         action="store_true",
         help="Write one CPU/throttling plot pair per pod.",
     )
+    parser.add_argument(
+        "--x-min",
+        type=float,
+        default=None,
+        help="Minimum x-axis value in seconds for generated plots.",
+    )
+    parser.add_argument(
+        "--x-max",
+        type=float,
+        default=None,
+        help="Maximum x-axis value in seconds for generated plots, e.g. 1800 for 30-minute figures.",
+    )
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -212,12 +230,14 @@ def main():
             fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
             plot_cpu(ax, pod_runs, show_limits=False)
             ax.set_title(f"{pod} CPU Utilization Over Time")
+            apply_time_axis(ax, args.x_min, args.x_max)
             fig.savefig(cpu_path, dpi=180)
             plt.close(fig)
 
             fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
             plot_throttling(ax, pod_runs)
             ax.set_title(f"{pod} CPU Throttling Events Over Time")
+            apply_time_axis(ax, args.x_min, args.x_max)
             fig.savefig(throttling_path, dpi=180)
             plt.close(fig)
 
@@ -230,11 +250,13 @@ def main():
 
     fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
     plot_cpu(ax, runs, show_limits=not args.no_cpu_limits and not args.all_pods)
+    apply_time_axis(ax, args.x_min, args.x_max)
     fig.savefig(cpu_path, dpi=180)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
     plot_throttling(ax, runs)
+    apply_time_axis(ax, args.x_min, args.x_max)
     fig.savefig(throttling_path, dpi=180)
     plt.close(fig)
 

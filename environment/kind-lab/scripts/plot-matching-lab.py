@@ -174,6 +174,12 @@ def plot_completed_rps(ax, runs, show_started, mark_errors, title):
     ax.legend()
 
 
+def apply_time_axis(ax, x_min, x_max):
+    if x_min is not None or x_max is not None:
+        left, right = ax.get_xlim()
+        ax.set_xlim(x_min if x_min is not None else left, x_max if x_max is not None else right)
+
+
 def plot_completed_cumulative(ax, runs, title):
     for label, points in runs:
         total = completed_total(points)
@@ -337,6 +343,18 @@ def main():
         help="Override the p95 latency plot title.",
     )
     parser.add_argument(
+        "--x-min",
+        type=float,
+        default=None,
+        help="Minimum x-axis value in seconds for generated plots.",
+    )
+    parser.add_argument(
+        "--x-max",
+        type=float,
+        default=None,
+        help="Maximum x-axis value in seconds for generated plots, e.g. 1800 for 30-minute figures.",
+    )
+    parser.add_argument(
         "--completed-total-title",
         default="",
         help="Override the cumulative completed plot title.",
@@ -384,28 +402,33 @@ def main():
         args.mark_errors,
         args.throughput_title,
     )
+    apply_time_axis(ax, args.x_min, args.x_max)
     fig.savefig(throughput_path, dpi=180)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
     plot_completed_cumulative(ax, runs, args.completed_total_title)
+    apply_time_axis(ax, args.x_min, args.x_max)
     fig.savefig(completed_total_path, dpi=180)
     plt.close(fig)
     write_completed_totals(completed_totals_csv_path, runs)
 
     fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
     plot_p95_latency(ax, runs, args.mark_errors, args.latency_title)
+    apply_time_axis(ax, args.x_min, args.x_max)
     fig.savefig(latency_path, dpi=180)
     plt.close(fig)
 
     if churn_runs:
         fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
         plot_churn_rate(ax, churn_runs, args.churn_title)
+        apply_time_axis(ax, args.x_min, args.x_max)
         fig.savefig(churn_rate_path, dpi=180)
         plt.close(fig)
 
         fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
         plot_churn_total(ax, churn_runs, args.churn_total_title)
+        apply_time_axis(ax, args.x_min, args.x_max)
         fig.savefig(churn_total_path, dpi=180)
         plt.close(fig)
         write_churn_totals(churn_totals_csv_path, churn_runs)
