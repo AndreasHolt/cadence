@@ -4,6 +4,7 @@ import csv
 import json
 import math
 import os
+import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -139,6 +140,26 @@ def infer_churn_kind(path, explicit):
     if "rate" in name or "per_sec" in name or "per-second" in name:
         return "rate"
     return "counter"
+
+
+def default_churn_csv_path(prometheus_dir, label):
+    return prometheus_dir / label / "csv" / "sd_load_based_moves_total.csv"
+
+
+def resolve_churn_run_args(run_args, explicit_churn_args, prometheus_dir, no_auto_churn):
+    if explicit_churn_args or no_auto_churn:
+        return explicit_churn_args
+
+    churn_args = []
+    for label, _ in run_args:
+        candidate = default_churn_csv_path(prometheus_dir, label)
+        if candidate.exists():
+            churn_args.append((label, candidate))
+
+    if churn_args:
+        found = ", ".join(f"{label}={path}" for label, path in churn_args)
+        print(f"auto-detected churn CSV: {found}", file=sys.stderr)
+    return churn_args
 
 
 def plot_completed_rps(ax, runs, show_started, mark_errors, title):
@@ -318,6 +339,20 @@ def main():
         help="Interpret --churn-run values as Prometheus counters or rates.",
     )
     parser.add_argument(
+        "--prometheus-dir",
+        type=Path,
+        default=Path("environment/kind-lab/results/prometheus"),
+        help=(
+            "Directory containing collect-prometheus-run.py outputs. "
+            "Used to auto-detect LABEL/csv/sd_load_based_moves_total.csv."
+        ),
+    )
+    parser.add_argument(
+        "--no-auto-churn",
+        action="store_true",
+        help="Do not auto-detect shard move churn CSVs from --prometheus-dir.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("environment/kind-lab/results/plots"),
@@ -386,10 +421,17 @@ def main():
 
     import matplotlib.pyplot as plt
 
+    churn_run_args = resolve_churn_run_args(
+        args.run,
+        args.churn_run,
+        args.prometheus_dir,
+        args.no_auto_churn,
+    )
+
     runs = [(label, read_summary_json(path)) for label, path in args.run]
     churn_runs = [
         (label, read_prometheus_series_csv(path), infer_churn_kind(path, args.churn_kind))
-        for label, path in args.churn_run
+        for label, path in churn_run_args
     ]
 
     throughput_path = args.output_dir / f"{args.prefix}-throughput.png"
