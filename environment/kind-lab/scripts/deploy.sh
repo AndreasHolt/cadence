@@ -6,6 +6,10 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 NAMESPACE="cadence-kind-lab"
 GREEDY_HETEROGENEITY_MODE="${GREEDY_HETEROGENEITY_MODE:-off}"
 GREEDY_MOVE_SCORING_MODE="${GREEDY_MOVE_SCORING_MODE:-benefit}"
+MATCHING_HETEROGENEITY_PROFILE="${MATCHING_HETEROGENEITY_PROFILE:-equal_burn}"
+MATCHING_BASE_BURN_ITERATIONS="${MATCHING_BASE_BURN_ITERATIONS:-10000000}"
+MATCHING_FAST_BURN_ITERATIONS="${MATCHING_FAST_BURN_ITERATIONS:-7500000}"
+MATCHING_SLOW_BURN_ITERATIONS="${MATCHING_SLOW_BURN_ITERATIONS:-12500000}"
 
 case "$MODE" in
   homogeneous|heterogeneous)
@@ -33,6 +37,50 @@ case "$GREEDY_MOVE_SCORING_MODE" in
     exit 2
     ;;
 esac
+
+case "$MATCHING_HETEROGENEITY_PROFILE" in
+  equal_burn)
+    MATCHING_A_CPU="1"
+    MATCHING_B_CPU="2"
+    MATCHING_C_CPU="4"
+    MATCHING_A_BURN="$MATCHING_BASE_BURN_ITERATIONS"
+    MATCHING_B_BURN="$MATCHING_BASE_BURN_ITERATIONS"
+    MATCHING_C_BURN="$MATCHING_BASE_BURN_ITERATIONS"
+    ;;
+  equal_cores)
+    MATCHING_A_CPU="2"
+    MATCHING_B_CPU="2"
+    MATCHING_C_CPU="2"
+    MATCHING_A_BURN="$MATCHING_FAST_BURN_ITERATIONS"
+    MATCHING_B_BURN="$MATCHING_BASE_BURN_ITERATIONS"
+    MATCHING_C_BURN="$MATCHING_SLOW_BURN_ITERATIONS"
+    ;;
+  mixed)
+    MATCHING_A_CPU="1"
+    MATCHING_B_CPU="2"
+    MATCHING_C_CPU="4"
+    MATCHING_A_BURN="$MATCHING_FAST_BURN_ITERATIONS"
+    MATCHING_B_BURN="$MATCHING_BASE_BURN_ITERATIONS"
+    MATCHING_C_BURN="$MATCHING_SLOW_BURN_ITERATIONS"
+    ;;
+  *)
+    echo "MATCHING_HETEROGENEITY_PROFILE must be one of: equal_burn, equal_cores, mixed" >&2
+    exit 2
+    ;;
+esac
+
+configure_matching_executor() {
+  local suffix="$1"
+  local cpu="$2"
+  local burn_iterations="$3"
+  local statefulset="cadence-matching-${suffix}"
+
+  kubectl set resources "statefulset/${statefulset}" -n "$NAMESPACE" -c matching \
+    --requests="cpu=${cpu},memory=512Mi" \
+    --limits="cpu=${cpu},memory=512Mi"
+  kubectl set env "statefulset/${statefulset}" -n "$NAMESPACE" \
+    "MATCHING_LAB_ADD_TASK_CPU_BURN_ITERATIONS=${burn_iterations}"
+}
 
 kubectl apply -k "$ROOT/environment/kind-lab/k8s/bootstrap"
 
@@ -71,6 +119,10 @@ kubectl create configmap cadence-kind-lab-config -n "$NAMESPACE" \
   --dry-run=client -o yaml | kubectl apply -f -
 echo "greedy heterogeneity mode: $GREEDY_HETEROGENEITY_MODE"
 echo "greedy move scoring mode: $GREEDY_MOVE_SCORING_MODE"
+echo "matching heterogeneity profile: $MATCHING_HETEROGENEITY_PROFILE"
+echo "  cadence-matching-a: cpu=$MATCHING_A_CPU burn_iterations=$MATCHING_A_BURN"
+echo "  cadence-matching-b: cpu=$MATCHING_B_CPU burn_iterations=$MATCHING_B_BURN"
+echo "  cadence-matching-c: cpu=$MATCHING_C_CPU burn_iterations=$MATCHING_C_BURN"
 
 kubectl rollout status statefulset/cassandra -n "$NAMESPACE" --timeout=5m
 kubectl rollout status statefulset/etcd -n "$NAMESPACE" --timeout=2m
@@ -80,6 +132,11 @@ kubectl apply -f "$ROOT/environment/kind-lab/k8s/bootstrap/schema-job.yaml" -n "
 kubectl wait -n "$NAMESPACE" --for=condition=complete job/cadence-schema-setup --timeout=5m
 
 kubectl apply -k "$ROOT/environment/kind-lab/k8s/apps/overlays/$MODE"
+if [[ "$MODE" == "heterogeneous" ]]; then
+  configure_matching_executor "a" "$MATCHING_A_CPU" "$MATCHING_A_BURN"
+  configure_matching_executor "b" "$MATCHING_B_CPU" "$MATCHING_B_BURN"
+  configure_matching_executor "c" "$MATCHING_C_CPU" "$MATCHING_C_BURN"
+fi
 
 kubectl rollout status statefulset/cadence-shard-distributor -n "$NAMESPACE" --timeout=5m
 kubectl rollout status statefulset/cadence-frontend -n "$NAMESPACE" --timeout=5m
