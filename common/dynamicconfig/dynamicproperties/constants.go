@@ -2621,6 +2621,15 @@ const (
 	// Allowed filters: namespace
 	ShardDistributorLoadBalancingGreedySevereImbalanceRatio
 
+	// ShardDistributorLoadBalancingGreedyMoveCostCoefficient scales the modeled
+	// cost of moving a shard in greedy cost-aware move scoring.
+	//
+	// KeyName: shardDistributor.loadBalancingGreedy.moveCostCoefficient
+	// Value type: Float64
+	// Default value: 1.0
+	// Allowed filters: namespace
+	ShardDistributorLoadBalancingGreedyMoveCostCoefficient
+
 	// LastFloatKey must be the last one in this const group
 	LastFloatKey
 )
@@ -2767,6 +2776,15 @@ const (
 	// Default value: "off"
 	// Allowed filters: namespace
 	ShardDistributorLoadBalancingGreedyHeterogeneityMode
+
+	// ShardDistributorLoadBalancingGreedyMoveScoringMode selects how greedy
+	// load balancing scores candidate shard moves.
+	//
+	// KeyName: shardDistributor.loadBalancingGreedy.moveScoringMode
+	// Value type: String
+	// Default value: "benefit"
+	// Allowed filters: namespace
+	ShardDistributorLoadBalancingGreedyMoveScoringMode
 
 	// HistoryTaskDeadLetterQueueMode is the key to enable history task dead letter queue
 	// KeyName: history.historyTaskDeadLetterQueueMode
@@ -5374,6 +5392,12 @@ var FloatKeys = map[FloatKey]DynamicFloat{
 		DefaultValue: 1.3,
 		Filters:      []Filter{Namespace},
 	},
+	ShardDistributorLoadBalancingGreedyMoveCostCoefficient: {
+		KeyName:      "shardDistributor.loadBalancingGreedy.moveCostCoefficient",
+		Description:  "ShardDistributorLoadBalancingGreedyMoveCostCoefficient scales the modeled cost of moving a shard in greedy cost-aware move scoring",
+		DefaultValue: 1.0,
+		Filters:      []Filter{Namespace},
+	},
 }
 
 var StringKeys = map[StringKey]DynamicString{
@@ -5481,6 +5505,12 @@ var StringKeys = map[StringKey]DynamicString{
 		KeyName:      "shardDistributor.loadBalancingGreedy.heterogeneityMode",
 		Description:  "ShardDistributorLoadBalancingGreedyHeterogeneityMode selects the executor-capacity signal used by greedy load balancing",
 		DefaultValue: "off",
+		Filters:      []Filter{Namespace},
+	},
+	ShardDistributorLoadBalancingGreedyMoveScoringMode: {
+		KeyName:      "shardDistributor.loadBalancingGreedy.moveScoringMode",
+		Description:  "ShardDistributorLoadBalancingGreedyMoveScoringMode selects how greedy load balancing scores candidate shard moves",
+		DefaultValue: "benefit",
 		Filters:      []Filter{Namespace},
 	},
 	HistoryTaskDeadLetterQueueMode: {

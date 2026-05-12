@@ -57,6 +57,9 @@ func PlanRebalance(
 	}
 	moves := make([]plan.Move, 0, moveBudget)
 	movedShards := make(map[string]struct{})
+	moveScoringMode := cfg.MoveScoringMode(namespace)
+	moveCostCoefficient := cfg.MoveCostCoefficient(namespace)
+	perShardCooldown := cfg.PerShardCooldown(namespace)
 
 	// Plan multiple moves per cycle (within budget), recomputing eligibility after each move.
 	// Stop early once sources/destinations are empty, i.e. imbalance is within hysteresis bands.
@@ -91,6 +94,43 @@ func PlanRebalance(
 			destinationExecutors = relaxed
 		}
 
+		if moveScoringMode == config.GreedyMoveScoringModeCostAware {
+			candidate, found := findBestCostAwareMove(
+				workingAssignments,
+				namespaceState,
+				sourceExecutors,
+				destinationExecutors,
+				loads,
+				targetLoads,
+				movedShards,
+				now,
+				perShardCooldown,
+				totalShards,
+				totalLoad,
+				moveCostCoefficient,
+			)
+			if !found {
+				break
+			}
+
+			if err := moveShard(workingAssignments, candidate.source, candidate.destination, candidate.shard, candidate.idx); err != nil {
+				return nil, err
+			}
+			moves = append(moves, plan.Move{
+				ShardID: candidate.shard,
+				From:    candidate.source,
+				To:      candidate.destination,
+			})
+			movedShards[candidate.shard] = struct{}{}
+
+			if metricsScope != nil {
+				metricsScope.UpdateGauge(metrics.ShardDistributorAssignLoopMovedShardLoad, candidate.load)
+			}
+			updateExecutorLoadsAfterMove(namespaceState, candidate.source, candidate.destination, loads, candidate.shard)
+			moveBudget--
+			continue
+		}
+
 		sources := sourcesSortedByDescendingExcessLoad(sourceExecutors, loads, targetLoads)
 
 		destExecutor := findBestDestination(destinationExecutors, loads, targetLoads)
@@ -115,7 +155,7 @@ func PlanRebalance(
 				targetLoads,
 				movedShards,
 				now,
-				cfg.PerShardCooldown(namespace),
+				perShardCooldown,
 			)
 			if !found {
 				// No eligible shard for this source+destination (cooldown, or no beneficial move), try the next source.
@@ -506,8 +546,147 @@ func findShardToMove(
 	return bestShard, idx, bestShard != ""
 }
 
+type scoredMoveCandidate struct {
+	source      string
+	destination string
+	shard       string
+	idx         int
+	load        float64
+	netBenefit  float64
+}
+
+func findBestCostAwareMove(
+	currentAssignments map[string][]string,
+	state *store.NamespaceState,
+	sourceExecutors map[string]struct{},
+	destinationExecutors map[string]struct{},
+	executorLoads map[string]float64,
+	targetLoads map[string]float64,
+	movedShards map[string]struct{},
+	now time.Time,
+	perShardCooldown time.Duration,
+	totalShards int,
+	totalLoad float64,
+	moveCostCoefficient float64,
+) (scoredMoveCandidate, bool) {
+	best := scoredMoveCandidate{}
+	found := false
+	sources := sourcesSortedByDescendingExcessLoad(sourceExecutors, executorLoads, targetLoads)
+	destinations := destinationsSortedByDescendingDeficit(destinationExecutors, executorLoads, targetLoads)
+
+	for _, source := range sources {
+		for _, destination := range destinations {
+			if source == destination {
+				continue
+			}
+
+			for i, shard := range currentAssignments[source] {
+				if _, ok := movedShards[shard]; ok {
+					continue
+				}
+
+				stats, hasStats := state.ShardStats[shard]
+				if hasStats && !stats.LastMoveTime.IsZero() && perShardCooldown > 0 && now.Sub(stats.LastMoveTime) < perShardCooldown {
+					continue
+				}
+
+				load := shardLoad(state, source, shard)
+				benefit := computeCapacityNormalizedBenefitOfMove(
+					executorLoads[source],
+					targetLoads[source],
+					executorLoads[destination],
+					targetLoads[destination],
+					load,
+				)
+				if benefit <= 0 {
+					continue
+				}
+
+				cost := computeMoveCost(totalShards, totalLoad, load, moveCostCoefficient)
+				netBenefit := benefit - cost
+				if netBenefit <= 0 {
+					continue
+				}
+				if !found || netBenefit > best.netBenefit {
+					best = scoredMoveCandidate{
+						source:      source,
+						destination: destination,
+						shard:       shard,
+						idx:         i,
+						load:        load,
+						netBenefit:  netBenefit,
+					}
+					found = true
+				}
+			}
+		}
+	}
+
+	return best, found
+}
+
+func destinationsSortedByDescendingDeficit(destinationExecutors map[string]struct{}, executorLoads, targetLoads map[string]float64) []string {
+	destinations := make([]string, 0, len(destinationExecutors))
+	for executorID := range destinationExecutors {
+		destinations = append(destinations, executorID)
+	}
+
+	slices.SortFunc(destinations, func(a, b string) int {
+		da := targetLoads[a] - executorLoads[a]
+		db := targetLoads[b] - executorLoads[b]
+		switch {
+		case da > db:
+			return -1
+		case da < db:
+			return 1
+		default:
+			return 0
+		}
+	})
+
+	return destinations
+}
+
 func computeBenefitOfMove(sourceLoad, sourceTargetLoad, destinationLoad, destinationTargetLoad, shardLoad float64) float64 {
 	return 2*shardLoad*((sourceLoad-sourceTargetLoad)-(destinationLoad-destinationTargetLoad)) - 2*shardLoad*shardLoad
+}
+
+func computeCapacityNormalizedBenefitOfMove(
+	sourceLoad,
+	sourceTargetLoad,
+	destinationLoad,
+	destinationTargetLoad,
+	shardLoad float64,
+) float64 {
+	scoreBefore := normalizedSSE(sourceLoad, sourceTargetLoad) + normalizedSSE(destinationLoad, destinationTargetLoad)
+	scoreAfter := normalizedSSE(sourceLoad-shardLoad, sourceTargetLoad) + normalizedSSE(destinationLoad+shardLoad, destinationTargetLoad)
+	return scoreBefore - scoreAfter
+}
+
+func normalizedSSE(load, targetLoad float64) float64 {
+	if targetLoad <= 0 {
+		return 0
+	}
+	normalizedDeviation := load/targetLoad - 1
+	return normalizedDeviation * normalizedDeviation
+}
+
+func computeMoveCost(totalShards int, totalLoad, shardLoad, coefficient float64) float64 {
+	if coefficient <= 0 {
+		return 0
+	}
+
+	fixedCost := 0.0
+	if totalShards > 0 {
+		fixedCost = 1 / float64(totalShards)
+	}
+
+	loadCost := 0.0
+	if totalLoad > 0 && shardLoad > 0 {
+		loadCost = shardLoad / totalLoad
+	}
+
+	return coefficient * (fixedCost + loadCost)
 }
 
 func moveShard(currentAssignments map[string][]string, sourceExecutor string, destExecutor string, shardID string, idx int) error {
@@ -532,12 +711,17 @@ func updateExecutorLoadsAfterMove(
 	executorLoads map[string]float64,
 	shardID string,
 ) {
-	load := 0.0
-	if stats, ok := state.ShardStats[shardID]; ok {
-		load = stats.SmoothedLoad
-	} else if report := state.Executors[source].ReportedShards[shardID]; report != nil {
-		load = report.ShardLoad
-	}
+	load := shardLoad(state, source, shardID)
 	executorLoads[source] -= load
 	executorLoads[destination] += load
+}
+
+func shardLoad(state *store.NamespaceState, source string, shardID string) float64 {
+	if stats, ok := state.ShardStats[shardID]; ok {
+		return stats.SmoothedLoad
+	}
+	if report := state.Executors[source].ReportedShards[shardID]; report != nil {
+		return report.ShardLoad
+	}
+	return 0
 }

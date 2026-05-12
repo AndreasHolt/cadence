@@ -35,10 +35,18 @@ shardDistributor.loadBalancingGreedy.severeImbalanceRatio:
     constraints:
       namespace: cadence-matching-kind-lab
 shardDistributor.loadBalancingGreedy.perShardCooldown:
-  - value: 1m
+  - value: 3m
     constraints:
       namespace: cadence-matching-kind-lab
 shardDistributor.loadBalancingGreedy.heterogeneityMode:
   - value: off
+    constraints:
+      namespace: cadence-matching-kind-lab
+shardDistributor.loadBalancingGreedy.moveScoringMode:
+  - value: benefit
+    constraints:
+      namespace: cadence-matching-kind-lab
+shardDistributor.loadBalancingGreedy.moveCostCoefficient:
+  - value: 1.0
     constraints:
       namespace: cadence-matching-kind-lab

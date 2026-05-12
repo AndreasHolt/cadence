@@ -735,6 +735,12 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 		HeterogeneityMode: func(namespace string) string {
 			return config.GreedyHeterogeneityModeOff
 		},
+		MoveScoringMode: func(namespace string) string {
+			return config.GreedyMoveScoringModeBenefit
+		},
+		MoveCostCoefficient: func(namespace string) float64 {
+			return 1.0
+		},
 	}
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 

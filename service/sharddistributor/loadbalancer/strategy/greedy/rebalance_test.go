@@ -39,6 +39,12 @@ func testGreedyConfig() config.LoadBalancingGreedyConfig {
 		HeterogeneityMode: func(namespace string) string {
 			return config.GreedyHeterogeneityModeOff
 		},
+		MoveScoringMode: func(namespace string) string {
+			return config.GreedyMoveScoringModeBenefit
+		},
+		MoveCostCoefficient: func(namespace string) float64 {
+			return 1.0
+		},
 	}
 }
 
@@ -177,6 +183,18 @@ func TestComputeExecutorCapacityWeightsCPUSecondsModeKeepsBaseWeightForMissingCo
 	require.Equal(t, 8.0, weights["ready"])
 }
 
+func TestComputeBenefitOfMoveUsesOriginalAbsoluteSSEDelta(t *testing.T) {
+	benefit := computeBenefitOfMove(60, 50, 40, 50, 1)
+
+	require.Equal(t, 38.0, benefit)
+}
+
+func TestComputeCapacityNormalizedBenefitOfMoveUsesNormalizedSSEDelta(t *testing.T) {
+	benefit := computeCapacityNormalizedBenefitOfMove(60, 50, 40, 50, 1)
+
+	require.InDelta(t, 0.0152, benefit, 1e-9)
+}
+
 // TestLoadBalance_Convergence verifies the balancer moves shards from an overloaded executor to an underloaded one.
 func TestLoadBalance_Convergence(t *testing.T) {
 	cfg := testGreedyConfig()
@@ -259,6 +277,104 @@ func TestLoadBalance_SkipsNonBeneficialHotShard(t *testing.T) {
 	applyMoves(t, currentAssignments, moves)
 	assert.True(t, slices.Contains(currentAssignments[execB], "warm"))
 	assert.False(t, slices.Contains(currentAssignments[execB], "hot"))
+}
+
+func TestLoadBalance_CostAwareRejectsPositiveButUnderpricedMove(t *testing.T) {
+	cfg := testGreedyConfig()
+	cfg.MoveScoringMode = func(namespace string) string {
+		return config.GreedyMoveScoringModeCostAware
+	}
+	cfg.MoveCostCoefficient = func(namespace string) float64 {
+		return 1.0
+	}
+
+	execA, execB := "exec-A", "exec-B"
+	now := time.Now().UTC()
+	assignments := map[string]store.AssignedState{
+		execA: {AssignedShards: make(map[string]*types.ShardAssignment)},
+		execB: {AssignedShards: make(map[string]*types.ShardAssignment)},
+	}
+	currentAssignments := map[string][]string{
+		execA: {},
+		execB: {},
+	}
+	shardStats := make(map[string]store.ShardStatistics)
+
+	for i := range 60 {
+		shardID := fmt.Sprintf("a-%d", i)
+		assignments[execA].AssignedShards[shardID] = &types.ShardAssignment{}
+		currentAssignments[execA] = append(currentAssignments[execA], shardID)
+		shardStats[shardID] = store.ShardStatistics{SmoothedLoad: 1, LastUpdateTime: now}
+	}
+	for i := range 40 {
+		shardID := fmt.Sprintf("b-%d", i)
+		assignments[execB].AssignedShards[shardID] = &types.ShardAssignment{}
+		currentAssignments[execB] = append(currentAssignments[execB], shardID)
+		shardStats[shardID] = store.ShardStatistics{SmoothedLoad: 1, LastUpdateTime: now}
+	}
+
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardAssignments: assignments,
+		ShardStats:       shardStats,
+	}
+
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, time.Minute, metrics.NoopScope)
+	require.NoError(t, err)
+	require.Empty(t, moves)
+}
+
+func TestLoadBalance_CostAwareAcceptsMoveThatPaysForCost(t *testing.T) {
+	cfg := testGreedyConfig()
+	cfg.MoveScoringMode = func(namespace string) string {
+		return config.GreedyMoveScoringModeCostAware
+	}
+	cfg.MoveCostCoefficient = func(namespace string) float64 {
+		return 1.0
+	}
+
+	execA, execB := "exec-A", "exec-B"
+	now := time.Now().UTC()
+	assignments := map[string]store.AssignedState{
+		execA: {AssignedShards: make(map[string]*types.ShardAssignment)},
+		execB: {AssignedShards: make(map[string]*types.ShardAssignment)},
+	}
+	currentAssignments := map[string][]string{
+		execA: {},
+		execB: {},
+	}
+	shardStats := make(map[string]store.ShardStatistics)
+
+	for i := range 80 {
+		shardID := fmt.Sprintf("a-%d", i)
+		assignments[execA].AssignedShards[shardID] = &types.ShardAssignment{}
+		currentAssignments[execA] = append(currentAssignments[execA], shardID)
+		shardStats[shardID] = store.ShardStatistics{SmoothedLoad: 1, LastUpdateTime: now}
+	}
+	for i := range 20 {
+		shardID := fmt.Sprintf("b-%d", i)
+		assignments[execB].AssignedShards[shardID] = &types.ShardAssignment{}
+		currentAssignments[execB] = append(currentAssignments[execB], shardID)
+		shardStats[shardID] = store.ShardStatistics{SmoothedLoad: 1, LastUpdateTime: now}
+	}
+
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardAssignments: assignments,
+		ShardStats:       shardStats,
+	}
+
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, time.Minute, metrics.NoopScope)
+	require.NoError(t, err)
+	require.Len(t, moves, 1)
+	assert.Equal(t, execA, moves[0].From)
+	assert.Equal(t, execB, moves[0].To)
 }
 
 // TestLoadBalance_NoMoveNeeded verifies the balancer does nothing when already within hysteresis bands.

@@ -54,6 +54,8 @@ type (
 		HysteresisLowerBand  dynamicproperties.Float64PropertyFnWithNamespaceFilters
 		SevereImbalanceRatio dynamicproperties.Float64PropertyFnWithNamespaceFilters
 		HeterogeneityMode    dynamicproperties.StringPropertyFnWithNamespaceFilters
+		MoveScoringMode      dynamicproperties.StringPropertyFnWithNamespaceFilters
+		MoveCostCoefficient  dynamicproperties.Float64PropertyFnWithNamespaceFilters
 	}
 
 	StaticConfig struct {
@@ -150,6 +152,8 @@ func NewConfig(dc *dynamicconfig.Collection) *Config {
 			HysteresisLowerBand:  dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyHysteresisLowerBand),
 			SevereImbalanceRatio: dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedySevereImbalanceRatio),
 			HeterogeneityMode:    dc.GetStringPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyHeterogeneityMode),
+			MoveScoringMode:      dc.GetStringPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyMoveScoringMode),
+			MoveCostCoefficient:  dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyMoveCostCoefficient),
 		},
 	}
 }
@@ -174,6 +178,11 @@ const (
 	GreedyHeterogeneityModeOff        = "off"
 	GreedyHeterogeneityModeLatency    = "latency"
 	GreedyHeterogeneityModeCPUSeconds = "cpu_seconds"
+)
+
+const (
+	GreedyMoveScoringModeBenefit   = "benefit"
+	GreedyMoveScoringModeCostAware = "cost_aware"
 )
 
 // LoadBalancingMode maps string migration mode values to types.LoadBalancingMode
