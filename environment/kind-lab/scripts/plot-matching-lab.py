@@ -2,6 +2,7 @@
 import argparse
 import csv
 import json
+import math
 import os
 from pathlib import Path
 from datetime import datetime, timezone
@@ -177,7 +178,12 @@ def plot_completed_rps(ax, runs, show_started, mark_errors, title):
 def apply_time_axis(ax, x_min, x_max):
     if x_min is not None or x_max is not None:
         left, right = ax.get_xlim()
-        ax.set_xlim(x_min if x_min is not None else left, x_max if x_max is not None else right)
+        left = x_min if x_min is not None else left
+        right = x_max if x_max is not None else right
+        ax.set_xlim(left, right)
+        tick_start = math.ceil(left / 250) * 250
+        tick_end = math.floor(right / 250) * 250
+        ax.set_xticks(list(range(int(tick_start), int(tick_end) + 1, 250)))
 
 
 def plot_completed_cumulative(ax, runs, title):
