@@ -125,6 +125,11 @@ def apply_time_axis(ax, x_min, x_max):
         ax.set_xticks(list(range(int(tick_start), int(tick_end) + 1, 250)))
 
 
+def apply_cpu_axis(ax, y_max):
+    if y_max is not None and y_max > 0:
+        ax.set_ylim(0, y_max)
+
+
 def safe_filename(value):
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-")
 
@@ -192,6 +197,12 @@ def main():
         default=None,
         help="Maximum x-axis value in seconds for generated plots, e.g. 1800 for 30-minute figures.",
     )
+    parser.add_argument(
+        "--cpu-y-max",
+        type=float,
+        default=5.0,
+        help="Maximum y-axis value for CPU utilization plots. Use 0 to auto-scale.",
+    )
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -237,6 +248,7 @@ def main():
             plot_cpu(ax, pod_runs, show_limits=False)
             ax.set_title(f"{pod} CPU Utilization Over Time")
             apply_time_axis(ax, args.x_min, args.x_max)
+            apply_cpu_axis(ax, args.cpu_y_max)
             fig.savefig(cpu_path, dpi=180)
             plt.close(fig)
 
@@ -257,6 +269,7 @@ def main():
     fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
     plot_cpu(ax, runs, show_limits=not args.no_cpu_limits and not args.all_pods)
     apply_time_axis(ax, args.x_min, args.x_max)
+    apply_cpu_axis(ax, args.cpu_y_max)
     fig.savefig(cpu_path, dpi=180)
     plt.close(fig)
 
