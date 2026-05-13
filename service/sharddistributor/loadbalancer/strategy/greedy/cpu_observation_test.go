@@ -173,9 +173,8 @@ func TestUpdateExecutorCPUObservation_RawWhenTauIsZero(t *testing.T) {
 	require.True(t, ok)
 	require.InDelta(t, 2.5, busyCores, 1e-9)
 
-	// Raw mode still stores the latest value so it can be retrieved for metrics.
-	require.Contains(t, state.smoothed, "exec-1")
-	require.InDelta(t, 2.5, state.smoothed["exec-1"].busyCores, 1e-9)
+	// No smoothed state should be accumulated in raw mode.
+	require.NotContains(t, state.smoothed, "exec-1")
 }
 
 func TestUpdateExecutorCPUObservation_DuplicateSamplePreservesSmoothed(t *testing.T) {
