@@ -52,6 +52,14 @@ const (
 	_defaultHeartbeatTTL = 10 * time.Second
 	_defaultTimeout      = 1 * time.Second
 	_defaultCooldown     = 250 * time.Millisecond
+
+	// Stale executor reassignment is intentionally delayed beyond HeartbeatTTL.
+	// HeartbeatTTL is short so the leader can notice unhealthy executors quickly,
+	// but immediately evacuating every shard from a briefly CPU-starved executor can
+	// avalanche backed-up hot task lists onto the remaining executors.  Only the
+	// longer hard-stale window is allowed to trigger destructive reassignment and
+	// executor-key cleanup.
+	_hardStaleExecutorTTLMultiplier = 6
 )
 
 type processorFactory struct {
@@ -313,19 +321,38 @@ func (p *namespaceProcessor) runShardStatsCleanupLoop(ctx context.Context) {
 	}
 }
 
-// identifyStaleExecutors returns a list of executors who have not reported a heartbeat recently.
-func (p *namespaceProcessor) identifyStaleExecutors(namespaceState *store.NamespaceState) map[string]int64 {
+// identifyStaleExecutors returns executors whose heartbeat lag exceeds the provided TTL.
+func (p *namespaceProcessor) identifyStaleExecutors(namespaceState *store.NamespaceState, staleAfter time.Duration, reason string) map[string]int64 {
 	expiredExecutors := make(map[string]int64)
 	now := p.timeSource.Now().UTC()
 
 	for executorID, state := range namespaceState.Executors {
-		if now.Sub(state.LastHeartbeat) > p.cfg.HeartbeatTTL {
-			p.logger.Info("Executor has not reported a heartbeat recently", tag.ShardExecutor(executorID), tag.ShardNamespace(p.namespaceCfg.Name), tag.Value(state.LastHeartbeat))
-			expiredExecutors[executorID] = namespaceState.ShardAssignments[executorID].ModRevision
+		lag := now.Sub(state.LastHeartbeat)
+		if lag > staleAfter {
+			p.logger.Info("Executor has not reported a heartbeat recently",
+				tag.ShardExecutor(executorID),
+				tag.ShardNamespace(p.namespaceCfg.Name),
+				tag.Value(state.LastHeartbeat),
+				tag.Dynamic("heartbeat_lag", lag.String()),
+				tag.Dynamic("stale_after", staleAfter.String()),
+				tag.Dynamic("stale_reason", reason),
+			)
+			if assignments, ok := namespaceState.ShardAssignments[executorID]; ok {
+				expiredExecutors[executorID] = assignments.ModRevision
+			} else {
+				expiredExecutors[executorID] = 0
+			}
 		}
 	}
 
 	return expiredExecutors
+}
+
+func (p *namespaceProcessor) hardStaleExecutorTTL() time.Duration {
+	if p.cfg.HeartbeatTTL <= 0 {
+		return _defaultHeartbeatTTL * _hardStaleExecutorTTLMultiplier
+	}
+	return p.cfg.HeartbeatTTL * _hardStaleExecutorTTLMultiplier
 }
 
 // identifyStaleShardStats returns a list of shard statistics that are no longer relevant.
@@ -416,23 +443,21 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		return fmt.Errorf("get state: %w", err)
 	}
 
-	// Identify stale executors that need to be removed
-	staleExecutors := p.identifyStaleExecutors(namespaceState)
-	if len(staleExecutors) > 0 {
-		p.logger.Info("Identified stale executors for removal", tag.ShardExecutors(slices.Collect(maps.Keys(staleExecutors))))
+	// Identify heartbeat-lagged executors for visibility, but only hard-stale
+	// executors are eligible for destructive reassignment/deletion. This prevents
+	// a brief CPU-saturation event from evacuating many backed-up shards at once.
+	softStaleExecutors := p.identifyStaleExecutors(namespaceState, p.cfg.HeartbeatTTL, "soft")
+	hardStaleExecutors := p.identifyStaleExecutors(namespaceState, p.hardStaleExecutorTTL(), "hard")
+	if len(softStaleExecutors) > 0 {
+		p.logger.Info("Identified soft-stale executors; preserving assignments until hard-stale TTL", tag.ShardExecutors(slices.Collect(maps.Keys(softStaleExecutors))))
+	}
+	if len(hardStaleExecutors) > 0 {
+		p.logger.Info("Identified hard-stale executors for removal", tag.ShardExecutors(slices.Collect(maps.Keys(hardStaleExecutors))))
 	}
 
-	activeExecutors := p.getActiveExecutors(namespaceState, staleExecutors)
+	activeExecutors := p.getActiveExecutors(namespaceState, hardStaleExecutors)
 	if len(activeExecutors) == 0 {
-		p.logger.Error("No active executors found. Cannot assign shards.")
-
-		// Cleanup stale executors even if no active executors remain
-		if len(staleExecutors) > 0 {
-			p.logger.Info("Cleaning up stale executors (no active executors)", tag.ShardExecutors(slices.Collect(maps.Keys(staleExecutors))))
-			if err := p.shardStore.DeleteExecutors(ctx, p.namespaceCfg.Name, slices.Collect(maps.Keys(staleExecutors)), p.election.Guard()); err != nil {
-				p.logger.Error("Failed to delete stale executors", tag.Error(err))
-			}
-		}
+		p.logger.Error("No active executors found. Cannot assign shards; preserving executor state to avoid deleting all shard ownership.")
 		return nil
 	}
 	p.logger.Info("Active executors", tag.ShardExecutors(activeExecutors))
@@ -443,7 +468,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	}
 	metricsLoopScope.AddCounter(metrics.ShardDistributorAssignLoopDeletedShards, int64(len(deletedShards)))
 
-	shardsToReassign, currentAssignments := p.findShardsToReassign(activeExecutors, namespaceState, deletedShards, staleExecutors)
+	shardsToReassign, currentAssignments := p.findShardsToReassign(activeExecutors, namespaceState, deletedShards, hardStaleExecutors)
 
 	metricsLoopScope.AddCounter(metrics.ShardDistributorAssignLoopNumRebalancedShards, int64(len(shardsToReassign)))
 
@@ -474,7 +499,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	emitSmoothedLoadMetrics := p.sdConfig.GetLoadBalancingMode(p.namespaceCfg.Name) == types.LoadBalancingModeGREEDY
 	p.emitAssignmentImbalanceMetrics(metricsLoopScope, currentAssignments, namespaceState, emitSmoothedLoadMetrics)
 
-	distributionChanged := len(deletedShards) > 0 || len(staleExecutors) > 0 || assignedToEmptyExecutors || updatedAssignments || isRebalancedByShardLoad
+	distributionChanged := len(deletedShards) > 0 || len(hardStaleExecutors) > 0 || assignedToEmptyExecutors || updatedAssignments || isRebalancedByShardLoad
 	if !distributionChanged {
 		p.logger.Info("No changes to distribution detected. Skipping rebalance.")
 		return nil
@@ -488,14 +513,18 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		p.logger.Info("Running rebalancing in shadow mode", tag.Dynamic("old_assignments", namespaceState.ShardAssignments), tag.Dynamic("new_assignments", newState))
 		p.emitActiveShardMetric(namespaceState.ShardAssignments, metricsLoopScope)
 
-		if len(staleExecutors) > 0 {
-			p.logger.Info("Cleaning up stale executors in shadow mode", tag.ShardExecutors(slices.Collect(maps.Keys(staleExecutors))))
-			if err := p.shardStore.DeleteExecutors(ctx, p.namespaceCfg.Name, slices.Collect(maps.Keys(staleExecutors)), p.election.Guard()); err != nil {
+		if len(hardStaleExecutors) > 0 {
+			p.logger.Info("Cleaning up hard-stale executors in shadow mode", tag.ShardExecutors(slices.Collect(maps.Keys(hardStaleExecutors))))
+			if err := p.shardStore.DeleteExecutors(ctx, p.namespaceCfg.Name, slices.Collect(maps.Keys(hardStaleExecutors)), p.election.Guard()); err != nil {
 				p.logger.Error("Failed to delete stale executors in shadow mode", tag.Error(err))
 				// Non-blocking: stale executors in shadow mode will be cleaned up the next cycle
 			}
 		}
 		return nil
+	}
+
+	if err := p.validateFixedNamespaceAssignments(newState); err != nil {
+		return err
 	}
 
 	namespaceState.ShardAssignments = newState
@@ -504,7 +533,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	// Use the leader guard for the assign and delete operation.
 	err = p.shardStore.AssignShards(ctx, p.namespaceCfg.Name, store.AssignShardsRequest{
 		NewState:          namespaceState,
-		ExecutorsToDelete: staleExecutors,
+		ExecutorsToDelete: hardStaleExecutors,
 	}, p.election.Guard())
 	if err != nil {
 		return fmt.Errorf("assign shards: %w", err)
@@ -654,6 +683,28 @@ func (p *namespaceProcessor) getNewAssignmentsState(namespaceState *store.Namesp
 	}
 
 	return newState
+}
+
+func (p *namespaceProcessor) validateFixedNamespaceAssignments(assignments map[string]store.AssignedState) error {
+	if p.namespaceCfg.Type != config.NamespaceTypeFixed {
+		return nil
+	}
+
+	seen := make(map[string]string, p.namespaceCfg.ShardNum)
+	for executorID, assignedState := range assignments {
+		for shardID := range assignedState.AssignedShards {
+			if previousExecutor, ok := seen[shardID]; ok {
+				return fmt.Errorf("fixed namespace assignment invariant violated: shard %s assigned to both %s and %s", shardID, previousExecutor, executorID)
+			}
+			seen[shardID] = executorID
+		}
+	}
+
+	if int64(len(seen)) != p.namespaceCfg.ShardNum {
+		return fmt.Errorf("fixed namespace assignment invariant violated: assigned shard count %d does not match configured shard count %d", len(seen), p.namespaceCfg.ShardNum)
+	}
+
+	return nil
 }
 
 func (p *namespaceProcessor) addHandoverStatsToExecutorAssignedState(
