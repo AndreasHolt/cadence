@@ -741,6 +741,9 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 		MoveCostCoefficient: func(namespace string) float64 {
 			return 1.0
 		},
+		CPUSecondsSmoothingTau: func(namespace string) time.Duration {
+			return 5 * time.Minute
+		},
 	}
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 

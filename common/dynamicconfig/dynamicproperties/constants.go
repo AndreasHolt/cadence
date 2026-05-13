@@ -3354,6 +3354,15 @@ const (
 	// Allowed filters: namespace
 	ShardDistributorLoadBalancingGreedyPerShardCooldown
 
+	// ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau is the EWMA time constant
+	// for smoothing CPU-seconds based capacity observations. A value of 0 disables smoothing
+	// and returns raw per-interval busy-cores rates.
+	// KeyName: shardDistributor.loadBalancingGreedy.cpuSecondsSmoothingTau
+	// Value type: Duration
+	// Default value: 5 minutes
+	// Allowed filters: namespace
+	ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau
+
 	// LastDurationKey must be the last one in this const group
 	LastDurationKey
 )
@@ -6034,6 +6043,12 @@ var DurationKeys = map[DurationKey]DynamicDuration{
 		Filters:      []Filter{Namespace},
 		Description:  "ShardDistributorLoadBalancingGreedyPerShardCooldown is the minimum time between moving the same shard in greedy load balancing mode",
 		DefaultValue: time.Minute,
+	},
+	ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau: {
+		KeyName:      "shardDistributor.loadBalancingGreedy.cpuSecondsSmoothingTau",
+		Filters:      []Filter{Namespace},
+		Description:  "ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau is the EWMA time constant for smoothing CPU-seconds based capacity observations. 0 disables smoothing.",
+		DefaultValue: 5 * time.Minute,
 	},
 }
 

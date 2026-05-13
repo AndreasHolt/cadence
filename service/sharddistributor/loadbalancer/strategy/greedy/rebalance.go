@@ -43,6 +43,9 @@ func PlanRebalance(
 	if len(cpuObservationState) > 0 {
 		cpuState = cpuObservationState[0]
 	}
+	if cpuState != nil {
+		cpuState.SetSmoothingTau(cfg.CPUSecondsSmoothingTau(namespace))
+	}
 	targetLoads := computeTargetLoads(loads, computeExecutorCapacityWeights(cfg.HeterogeneityMode(namespace), workingAssignments, namespaceState, loads, cpuState), totalLoad)
 	totalShards := 0
 	for _, shards := range currentAssignments {
