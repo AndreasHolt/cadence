@@ -186,7 +186,7 @@ func TestRebalanceShards_ExecutorStale(t *testing.T) {
 	now := mocks.timeSource.Now()
 	heartbeats := map[string]store.HeartbeatState{
 		"exec-1": {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
-		"exec-2": {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now.Add(-processor.hardStaleExecutorTTL()).Add(-time.Second)},
+		"exec-2": {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now.Add(-2 * time.Second)},
 	}
 	assignments := map[string]store.AssignedState{
 		"exec-1": {
@@ -249,9 +249,19 @@ func TestRebalanceShards_NoActiveExecutors_WithStaleExecutors(t *testing.T) {
 			"exec-1": {Status: types.ExecutorStatusDRAINING, LastHeartbeat: now},
 			"exec-2": {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now.Add(-10 * time.Minute)},
 		}
+		expectedStaleExecutorIDs := []string{"exec-2"}
+
 		mocks.store.EXPECT().GetState(gomock.Any(), mocks.cfg.Name).Return(&store.NamespaceState{
 			Executors: executorStates,
 		}, nil)
+
+		mocks.election.EXPECT().Guard().Return(store.NopGuard())
+		mocks.store.EXPECT().DeleteExecutors(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, namespace string, executorIDs []string, _ store.GuardFunc) error {
+				assert.ElementsMatch(t, expectedStaleExecutorIDs, executorIDs)
+				assert.Equal(t, mocks.cfg.Name, namespace)
+				return nil
+			})
 
 		err := processor.rebalanceShards(context.Background())
 		require.NoError(t, err)
@@ -267,9 +277,19 @@ func TestRebalanceShards_NoActiveExecutors_WithStaleExecutors(t *testing.T) {
 			"exec-1": {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now.Add(-10 * time.Minute)},
 			"exec-2": {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now.Add(-10 * time.Minute)},
 		}
+		expectedStaleExecutorIDs := []string{"exec-1", "exec-2"}
+
 		mocks.store.EXPECT().GetState(gomock.Any(), mocks.cfg.Name).Return(&store.NamespaceState{
 			Executors: executorStates,
 		}, nil)
+
+		mocks.election.EXPECT().Guard().Return(store.NopGuard())
+		mocks.store.EXPECT().DeleteExecutors(gomock.Any(), mocks.cfg.Name, gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, namespace string, executorIDs []string, _ store.GuardFunc) error {
+				assert.ElementsMatch(t, expectedStaleExecutorIDs, executorIDs)
+				assert.Equal(t, mocks.cfg.Name, namespace)
+				return nil
+			})
 
 		err := processor.rebalanceShards(context.Background())
 		require.NoError(t, err)
@@ -289,7 +309,7 @@ func TestCleanupStaleExecutors(t *testing.T) {
 
 	namespaceState := &store.NamespaceState{Executors: heartbeats}
 
-	staleExecutors := processor.identifyStaleExecutors(namespaceState, processor.cfg.HeartbeatTTL, "test")
+	staleExecutors := processor.identifyStaleExecutors(namespaceState)
 	assert.Equal(t, map[string]int64{"exec-stale": 0}, staleExecutors)
 }
 
