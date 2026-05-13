@@ -146,8 +146,72 @@ func TestComputeExecutorCapacityWeightsCPUSecondsMode(t *testing.T) {
 
 	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
 
-	require.InDelta(t, 6.0, weights["fast"], 1e-9)
-	require.InDelta(t, 3.0, weights["slow"], 1e-9)
+	require.InDelta(t, 4.898979486, weights["fast"], 1e-9)
+	require.InDelta(t, 3.464101615, weights["slow"], 1e-9)
+}
+
+func TestComputeExecutorCapacityWeightsCPUSecondsModeClampsRelativeCost(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	currentAssignments := map[string][]string{
+		"fast-1": {"shard-1"},
+		"fast-2": {"shard-2"},
+		"slow":   {"shard-3"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			"fast-1": {Metadata: capacity.HeartbeatMetadataWithOptions(nil, capacity.HeartbeatMetadataOptions{
+				GoMaxProcs:        4,
+				ProcessCPUSeconds: 10,
+				HasProcessCPU:     true,
+				SampleTime:        now,
+			})},
+			"fast-2": {Metadata: capacity.HeartbeatMetadataWithOptions(nil, capacity.HeartbeatMetadataOptions{
+				GoMaxProcs:        4,
+				ProcessCPUSeconds: 10,
+				HasProcessCPU:     true,
+				SampleTime:        now,
+			})},
+			"slow": {Metadata: capacity.HeartbeatMetadataWithOptions(nil, capacity.HeartbeatMetadataOptions{
+				GoMaxProcs:        4,
+				ProcessCPUSeconds: 10,
+				HasProcessCPU:     true,
+				SampleTime:        now,
+			})},
+		},
+	}
+	cpuState := NewCPUObservationState()
+	loads := map[string]float64{
+		"fast-1": 10,
+		"fast-2": 10,
+		"slow":   10,
+	}
+	computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
+
+	later := now.Add(10 * time.Second)
+	namespaceState.Executors["fast-1"] = store.HeartbeatState{Metadata: capacity.HeartbeatMetadataWithOptions(nil, capacity.HeartbeatMetadataOptions{
+		GoMaxProcs:        4,
+		ProcessCPUSeconds: 11,
+		HasProcessCPU:     true,
+		SampleTime:        later,
+	})}
+	namespaceState.Executors["fast-2"] = store.HeartbeatState{Metadata: capacity.HeartbeatMetadataWithOptions(nil, capacity.HeartbeatMetadataOptions{
+		GoMaxProcs:        4,
+		ProcessCPUSeconds: 11,
+		HasProcessCPU:     true,
+		SampleTime:        later,
+	})}
+	namespaceState.Executors["slow"] = store.HeartbeatState{Metadata: capacity.HeartbeatMetadataWithOptions(nil, capacity.HeartbeatMetadataOptions{
+		GoMaxProcs:        4,
+		ProcessCPUSeconds: 1010,
+		HasProcessCPU:     true,
+		SampleTime:        later,
+	})}
+
+	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
+
+	require.InDelta(t, 5.656854249, weights["fast-1"], 1e-9)
+	require.InDelta(t, 5.656854249, weights["fast-2"], 1e-9)
+	require.InDelta(t, 2.828427125, weights["slow"], 1e-9)
 }
 
 func TestComputeExecutorCapacityWeightsCPUSecondsModeKeepsBaseWeightForMissingCost(t *testing.T) {
