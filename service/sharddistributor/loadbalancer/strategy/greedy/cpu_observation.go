@@ -14,23 +14,23 @@ type executorCPUSample struct {
 	sampleTime        time.Time
 }
 
-type executorCPUSmoothed struct {
-	busyCores  float64
+type executorCPUCostSmoothed struct {
+	cost       float64
 	lastUpdate time.Time
 }
 
 // CPUObservationState tracks previous executor CPU samples across rebalance cycles.
 type CPUObservationState struct {
 	samples       map[string]executorCPUSample
-	smoothed      map[string]executorCPUSmoothed
+	smoothedCosts map[string]executorCPUCostSmoothed
 	smoothingTau  time.Duration
 }
 
 // NewCPUObservationState creates state for CPU-seconds based greedy balancing.
 func NewCPUObservationState() *CPUObservationState {
 	return &CPUObservationState{
-		samples:  make(map[string]executorCPUSample),
-		smoothed: make(map[string]executorCPUSmoothed),
+		samples:       make(map[string]executorCPUSample),
+		smoothedCosts: make(map[string]executorCPUCostSmoothed),
 	}
 }
 
@@ -43,7 +43,7 @@ func (s *CPUObservationState) SetSmoothingTau(tau time.Duration) {
 	s.smoothingTau = tau
 }
 
-func (s *CPUObservationState) updateExecutorCPUObservations(state *store.NamespaceState) map[string]float64 {
+func (s *CPUObservationState) updateExecutorCPUCostObservations(state *store.NamespaceState, loads map[string]float64) map[string]float64 {
 	if s == nil {
 		return nil
 	}
@@ -51,13 +51,13 @@ func (s *CPUObservationState) updateExecutorCPUObservations(state *store.Namespa
 		s.samples = make(map[string]executorCPUSample)
 	}
 
-	busyCoresMap := make(map[string]float64)
+	costs := make(map[string]float64)
 	seenExecutors := make(map[string]struct{}, len(state.Executors))
 	for executorID, executor := range state.Executors {
 		seenExecutors[executorID] = struct{}{}
-		busyCores, ok := s.updateExecutorCPUObservation(executorID, executor.Metadata)
+		cost, ok := s.updateExecutorCPUCostObservation(executorID, executor.Metadata, loads[executorID])
 		if ok {
-			busyCoresMap[executorID] = busyCores
+			costs[executorID] = cost
 		}
 	}
 
@@ -66,74 +66,84 @@ func (s *CPUObservationState) updateExecutorCPUObservations(state *store.Namespa
 			delete(s.samples, executorID)
 		}
 	}
-	for executorID := range s.smoothed {
+	for executorID := range s.smoothedCosts {
 		if _, ok := seenExecutors[executorID]; !ok {
-			delete(s.smoothed, executorID)
+			delete(s.smoothedCosts, executorID)
 		}
 	}
 
-	return busyCoresMap
+	return costs
 }
 
-func (s *CPUObservationState) updateExecutorCPUObservation(executorID string, metadata map[string]string) (float64, bool) {
+func (s *CPUObservationState) updateExecutorCPUCostObservation(executorID string, metadata map[string]string, load float64) (float64, bool) {
 	if s.samples == nil {
 		s.samples = make(map[string]executorCPUSample)
 	}
-	if s.smoothed == nil {
-		s.smoothed = make(map[string]executorCPUSmoothed)
+	if s.smoothedCosts == nil {
+		s.smoothedCosts = make(map[string]executorCPUCostSmoothed)
 	}
 
 	currentSample, ok := executorCPUSampleFromMetadata(metadata)
 	if !ok {
 		delete(s.samples, executorID)
-		delete(s.smoothed, executorID)
+		delete(s.smoothedCosts, executorID)
 		return 0, false
 	}
 
 	previousSample, hasPreviousSample := s.samples[executorID]
 	s.samples[executorID] = currentSample
 	if !hasPreviousSample {
-		delete(s.smoothed, executorID)
+		delete(s.smoothedCosts, executorID)
 		return 0, false
 	}
 
 	// Duplicate heartbeat sample (rebalance ran faster than heartbeat).
-	// Preserve the smoothed state and return the last known value.
+	// Preserve the smoothed CPU cost and return the last known value. Reusing
+	// the cost avoids recomputing stale busy cores against a newer assignment load.
 	if currentSample.sampleTime.Equal(previousSample.sampleTime) {
-		prevSmoothed, hasPrevSmoothed := s.smoothed[executorID]
+		prevSmoothed, hasPrevSmoothed := s.smoothedCosts[executorID]
 		if hasPrevSmoothed {
-			return prevSmoothed.busyCores, true
+			return prevSmoothed.cost, true
 		}
 		return 0, false
 	}
 
 	busyCores, ok := computeExecutorCPUObservation(previousSample, currentSample)
 	if !ok {
-		delete(s.smoothed, executorID)
+		delete(s.smoothedCosts, executorID)
+		return 0, false
+	}
+	if load <= 0 {
+		delete(s.smoothedCosts, executorID)
+		return 0, false
+	}
+	cost := busyCores / load
+	if math.IsNaN(cost) || math.IsInf(cost, 0) {
+		delete(s.smoothedCosts, executorID)
 		return 0, false
 	}
 
 	if s.smoothingTau <= 0 {
-		return busyCores, true
+		return cost, true
 	}
 
-	prevSmoothed, hasPrevSmoothed := s.smoothed[executorID]
+	prevSmoothed, hasPrevSmoothed := s.smoothedCosts[executorID]
 	if !hasPrevSmoothed {
-		s.smoothed[executorID] = executorCPUSmoothed{
-			busyCores:  busyCores,
+		s.smoothedCosts[executorID] = executorCPUCostSmoothed{
+			cost:       cost,
 			lastUpdate: currentSample.sampleTime,
 		}
-		return busyCores, true
+		return cost, true
 	}
 
-	newSmoothed, err := statistics.CalculateSmoothedLoadWithTau(prevSmoothed.busyCores, busyCores, prevSmoothed.lastUpdate, currentSample.sampleTime, s.smoothingTau)
+	newSmoothed, err := statistics.CalculateSmoothedLoadWithTau(prevSmoothed.cost, cost, prevSmoothed.lastUpdate, currentSample.sampleTime, s.smoothingTau)
 	if err != nil {
-		delete(s.smoothed, executorID)
-		return busyCores, true
+		delete(s.smoothedCosts, executorID)
+		return cost, true
 	}
 
-	s.smoothed[executorID] = executorCPUSmoothed{
-		busyCores:  newSmoothed,
+	s.smoothedCosts[executorID] = executorCPUCostSmoothed{
+		cost:       newSmoothed,
 		lastUpdate: currentSample.sampleTime,
 	}
 	return newSmoothed, true

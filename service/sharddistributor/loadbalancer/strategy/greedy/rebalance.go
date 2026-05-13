@@ -287,20 +287,16 @@ func computeCPUSecondsAdjustedWeights(
 		return weights
 	}
 
-	busyCoresMap := cpuObservationState.updateExecutorCPUObservations(state)
-	cpuCosts := make(map[string]float64)
+	cpuCosts := cpuObservationState.updateExecutorCPUCostObservations(state, loads)
 	totalCPUCost := 0.0
 	validCount := 0
-	for executorID, load := range loads {
-		busyCores, ok := busyCoresMap[executorID]
-		if !ok || load <= 0 || busyCores <= 0 {
+	for _, cost := range cpuCosts {
+		if cost <= 0 {
 			continue
 		}
-		cost := busyCores / load
 		if math.IsNaN(cost) || math.IsInf(cost, 0) {
 			continue
 		}
-		cpuCosts[executorID] = cost
 		totalCPUCost += cost
 		validCount++
 	}
