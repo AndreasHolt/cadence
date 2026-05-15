@@ -42,8 +42,8 @@ func testGreedyConfig() config.LoadBalancingGreedyConfig {
 		MoveScoringMode: func(namespace string) string {
 			return config.GreedyMoveScoringModeBenefit
 		},
-		MoveCostCoefficient: func(namespace string) float64 {
-			return 1.0
+		MovePenaltyCoefficient: func(namespace string) float64 {
+			return 0.001
 		},
 		CPUSecondsSmoothingTau: func(namespace string) time.Duration {
 			return 5 * time.Minute
@@ -346,15 +346,11 @@ func TestLoadBalance_SkipsNonBeneficialHotShard(t *testing.T) {
 	assert.False(t, slices.Contains(currentAssignments[execB], "hot"))
 }
 
-func TestLoadBalance_CostAwareRejectsPositiveButUnderpricedMove(t *testing.T) {
+func TestLoadBalance_CostAwareMovesWhenImbalanceExists(t *testing.T) {
 	cfg := testGreedyConfig()
 	cfg.MoveScoringMode = func(namespace string) string {
 		return config.GreedyMoveScoringModeCostAware
 	}
-	cfg.MoveCostCoefficient = func(namespace string) float64 {
-		return 1.0
-	}
-
 	execA, execB := "exec-A", "exec-B"
 	now := time.Now().UTC()
 	assignments := map[string]store.AssignedState{
@@ -391,16 +387,15 @@ func TestLoadBalance_CostAwareRejectsPositiveButUnderpricedMove(t *testing.T) {
 
 	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, time.Minute, metrics.NoopScope)
 	require.NoError(t, err)
-	require.Empty(t, moves)
+	require.Len(t, moves, 1)
+	assert.Equal(t, execA, moves[0].From)
+	assert.Equal(t, execB, moves[0].To)
 }
 
 func TestLoadBalance_CostAwareAcceptsMoveThatPaysForCost(t *testing.T) {
 	cfg := testGreedyConfig()
 	cfg.MoveScoringMode = func(namespace string) string {
 		return config.GreedyMoveScoringModeCostAware
-	}
-	cfg.MoveCostCoefficient = func(namespace string) float64 {
-		return 1.0
 	}
 
 	execA, execB := "exec-A", "exec-B"

@@ -63,7 +63,7 @@ func PlanRebalance(
 	moves := make([]plan.Move, 0, moveBudget)
 	movedShards := make(map[string]struct{})
 	moveScoringMode := cfg.MoveScoringMode(namespace)
-	moveCostCoefficient := cfg.MoveCostCoefficient(namespace)
+	movePenaltyCoefficient := cfg.MovePenaltyCoefficient(namespace)
 	perShardCooldown := cfg.PerShardCooldown(namespace)
 
 	// Plan multiple moves per cycle (within budget), recomputing eligibility after each move.
@@ -99,43 +99,6 @@ func PlanRebalance(
 			destinationExecutors = relaxed
 		}
 
-		if moveScoringMode == config.GreedyMoveScoringModeCostAware {
-			candidate, found := findBestCostAwareMove(
-				workingAssignments,
-				namespaceState,
-				sourceExecutors,
-				destinationExecutors,
-				loads,
-				targetLoads,
-				movedShards,
-				now,
-				perShardCooldown,
-				totalShards,
-				totalLoad,
-				moveCostCoefficient,
-			)
-			if !found {
-				break
-			}
-
-			if err := moveShard(workingAssignments, candidate.source, candidate.destination, candidate.shard, candidate.idx); err != nil {
-				return nil, err
-			}
-			moves = append(moves, plan.Move{
-				ShardID: candidate.shard,
-				From:    candidate.source,
-				To:      candidate.destination,
-			})
-			movedShards[candidate.shard] = struct{}{}
-
-			if metricsScope != nil {
-				metricsScope.UpdateGauge(metrics.ShardDistributorAssignLoopMovedShardLoad, candidate.load)
-			}
-			updateExecutorLoadsAfterMove(namespaceState, candidate.source, candidate.destination, loads, candidate.shard)
-			moveBudget--
-			continue
-		}
-
 		sources := sourcesSortedByDescendingExcessLoad(sourceExecutors, loads, targetLoads)
 
 		destExecutor := findBestDestination(destinationExecutors, loads, targetLoads)
@@ -151,6 +114,10 @@ func PlanRebalance(
 			if sourceExecutor == destExecutor {
 				continue
 			}
+			penaltyCoefficient := 0.0
+			if moveScoringMode == config.GreedyMoveScoringModeCostAware {
+				penaltyCoefficient = movePenaltyCoefficient
+			}
 			shardToMove, idx, found := findShardToMove(
 				workingAssignments,
 				namespaceState,
@@ -161,6 +128,8 @@ func PlanRebalance(
 				movedShards,
 				now,
 				perShardCooldown,
+				totalLoad,
+				penaltyCoefficient,
 			)
 			if !found {
 				// No eligible shard for this source+destination (cooldown, or no beneficial move), try the next source.
@@ -507,6 +476,8 @@ func findShardToMove(
 	movedShards map[string]struct{},
 	now time.Time,
 	perShardCooldown time.Duration,
+	totalLoad float64,
+	movePenaltyCoefficient float64,
 ) (string, int, bool) {
 	bestShard := ""
 
@@ -516,7 +487,7 @@ func findShardToMove(
 	destinationTargetLoad := targetLoads[destination]
 	idx := -1
 
-	bestBenefit := 0.0
+	bestScore := 0.0
 	for i, shard := range currentAssignments[source] {
 		if _, ok := movedShards[shard]; ok {
 			continue
@@ -538,93 +509,17 @@ func findShardToMove(
 		if benefit <= 0 {
 			continue
 		}
-		if benefit > bestBenefit {
-			bestBenefit = benefit
+
+		cost := computeMoveCost(totalLoad, load, movePenaltyCoefficient)
+		score := benefit - cost
+		if score > bestScore {
+			bestScore = score
 			bestShard = shard
 			idx = i
 		}
 	}
 
 	return bestShard, idx, bestShard != ""
-}
-
-type scoredMoveCandidate struct {
-	source      string
-	destination string
-	shard       string
-	idx         int
-	load        float64
-	netBenefit  float64
-}
-
-func findBestCostAwareMove(
-	currentAssignments map[string][]string,
-	state *store.NamespaceState,
-	sourceExecutors map[string]struct{},
-	destinationExecutors map[string]struct{},
-	executorLoads map[string]float64,
-	targetLoads map[string]float64,
-	movedShards map[string]struct{},
-	now time.Time,
-	perShardCooldown time.Duration,
-	totalShards int,
-	totalLoad float64,
-	moveCostCoefficient float64,
-) (scoredMoveCandidate, bool) {
-	best := scoredMoveCandidate{}
-	found := false
-	sources := sourcesSortedByDescendingExcessLoad(sourceExecutors, executorLoads, targetLoads)
-	destinations := destinationsSortedByDescendingDeficit(destinationExecutors, executorLoads, targetLoads)
-
-	for _, source := range sources {
-		for _, destination := range destinations {
-			if source == destination {
-				continue
-			}
-
-			for i, shard := range currentAssignments[source] {
-				if _, ok := movedShards[shard]; ok {
-					continue
-				}
-
-				stats, hasStats := state.ShardStats[shard]
-				if hasStats && !stats.LastMoveTime.IsZero() && perShardCooldown > 0 && now.Sub(stats.LastMoveTime) < perShardCooldown {
-					continue
-				}
-
-				load := shardLoad(state, source, shard)
-				benefit := computeCapacityNormalizedBenefitOfMove(
-					executorLoads[source],
-					targetLoads[source],
-					executorLoads[destination],
-					targetLoads[destination],
-					load,
-				)
-				if benefit <= 0 {
-					continue
-				}
-
-				cost := computeMoveCost(totalShards, totalLoad, load, moveCostCoefficient)
-				netBenefit := benefit - cost
-				if netBenefit <= 0 {
-					continue
-				}
-				if !found || netBenefit > best.netBenefit {
-					best = scoredMoveCandidate{
-						source:      source,
-						destination: destination,
-						shard:       shard,
-						idx:         i,
-						load:        load,
-						netBenefit:  netBenefit,
-					}
-					found = true
-				}
-			}
-		}
-	}
-
-	return best, found
 }
 
 func destinationsSortedByDescendingDeficit(destinationExecutors map[string]struct{}, executorLoads, targetLoads map[string]float64) []string {
@@ -673,22 +568,11 @@ func normalizedSSE(load, targetLoad float64) float64 {
 	return normalizedDeviation * normalizedDeviation
 }
 
-func computeMoveCost(totalShards int, totalLoad, shardLoad, coefficient float64) float64 {
-	if coefficient <= 0 {
+func computeMoveCost(totalLoad, shardLoad, penaltyCoefficient float64) float64 {
+	if totalLoad <= 0 || shardLoad <= 0 {
 		return 0
 	}
-
-	fixedCost := 0.0
-	if totalShards > 0 {
-		fixedCost = 1 / float64(totalShards)
-	}
-
-	loadCost := 0.0
-	if totalLoad > 0 && shardLoad > 0 {
-		loadCost = shardLoad / totalLoad
-	}
-
-	return coefficient * (fixedCost + loadCost)
+	return shardLoad * totalLoad * penaltyCoefficient
 }
 
 func moveShard(currentAssignments map[string][]string, sourceExecutor string, destExecutor string, shardID string, idx int) error {

@@ -718,8 +718,8 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 		MoveScoringMode: func(namespace string) string {
 			return config.GreedyMoveScoringModeBenefit
 		},
-		MoveCostCoefficient: func(namespace string) float64 {
-			return 1.0
+		MovePenaltyCoefficient: func(namespace string) float64 {
+			return 0.5
 		},
 		CPUSecondsSmoothingTau: func(namespace string) time.Duration {
 			return 5 * time.Minute
