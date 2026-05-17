@@ -7,7 +7,7 @@ import (
 )
 
 func CalculateSmoothedLoad(prev, current float64, lastUpdate, now time.Time) (float64, error) {
-	return CalculateSmoothedLoadWithTau(prev, current, lastUpdate, now, 30*time.Second)
+	return CalculateSmoothedLoadWithTau(prev, current, lastUpdate, now, time.Minute)
 }
 
 func CalculateSmoothedLoadWithTau(prev, current float64, lastUpdate, now time.Time, tau time.Duration) (float64, error) {

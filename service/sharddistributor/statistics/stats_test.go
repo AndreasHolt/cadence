@@ -42,7 +42,7 @@ func TestCalculateSmoothedLoad(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "normal smoothing - 1 tau elapsed",
+			name:    "normal smoothing - half tau elapsed",
 			prev:    10.0,
 			current: 20.0,
 			setupTime: func(ts clock.MockedTimeSource) (time.Time, time.Time) {
@@ -50,10 +50,10 @@ func TestCalculateSmoothedLoad(t *testing.T) {
 				ts.Advance(30 * time.Second)
 				return lastUpdate, ts.Now()
 			},
-			// dt = 30s, tau = 30s -> dt/tau = 1
-			// alpha = 1 - e^-1 = 1 - 0.367879 = 0.632121
-			// result = (1 - 0.632121)*10 + 0.632121*20 = 0.367879*10 + 0.632121*20 = 3.67879 + 12.64242 = 16.32121
-			want:    16.32120558828557,
+			// dt = 30s, tau = 60s -> dt/tau = 0.5
+			// alpha = 1 - e^-0.5 = 1 - 0.606531 = 0.393469
+			// result = (1 - 0.393469)*10 + 0.393469*20 = 6.06531 + 7.86939 = 13.93469
+			want:    13.934693402873666,
 			wantErr: false,
 		},
 		{
