@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -55,6 +56,7 @@ import (
 	"github.com/uber/cadence/service/matching/config"
 	"github.com/uber/cadence/service/matching/event"
 	"github.com/uber/cadence/service/matching/tasklist"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/client/clientcommon"
 	"github.com/uber/cadence/service/sharddistributor/client/executorclient"
 )
@@ -116,6 +118,7 @@ type (
 		failoverNotificationVersion    int64
 		ShardDistributorMatchingConfig clientcommon.Config
 		drainObserver                  clientcommon.DrainSignalObserver
+		requestLatencyTracker          requestLatencyTracker
 	}
 )
 
@@ -191,6 +194,13 @@ func (e *matchingEngineImpl) Stop() {
 	}
 	e.unregisterDomainFailoverCallback()
 	e.shutdownCompletion.Wait()
+}
+
+func (e *matchingEngineImpl) ObserveRequestLatency(duration time.Duration) {
+	latencyEWMAms := e.requestLatencyTracker.Observe(duration)
+	metadata := e.executor.GetMetadata()
+	metadata[capacity.LatencyEWmaMsMetadataKey] = strconv.FormatFloat(latencyEWMAms, 'f', 6, 64)
+	e.executor.SetMetadata(metadata)
 }
 
 func (e *matchingEngineImpl) setupExecutor(shardDistributorExecutorClient executorclient.Client) {
@@ -442,6 +452,7 @@ func (e *matchingEngineImpl) AddDecisionTask(
 		PartitionConfig:               request.GetPartitionConfig(),
 	}
 
+	burnMatchingLabAddTaskCPU()
 	syncMatched, err := tlMgr.AddTask(hCtx.Context, tasklist.AddTaskParams{
 		TaskInfo:      taskInfo,
 		Source:        request.GetSource(),
@@ -518,6 +529,7 @@ func (e *matchingEngineImpl) AddActivityTask(
 		PartitionConfig:               request.GetPartitionConfig(),
 	}
 
+	burnMatchingLabAddTaskCPU()
 	syncMatched, err := tlMgr.AddTask(hCtx.Context, tasklist.AddTaskParams{
 		TaskInfo:                 taskInfo,
 		Source:                   request.GetSource(),

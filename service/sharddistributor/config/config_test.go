@@ -20,6 +20,15 @@ func TestNewDynamicConfigCreatesInstanceWithProperties(t *testing.T) {
 	assert.NotNil(t, config)
 	assert.NotNil(t, config.LoadBalancingMode)
 	assert.NotNil(t, config.MigrationMode)
+	assert.NotNil(t, config.LoadBalancingNaive.MaxDeviation)
+	assert.NotNil(t, config.LoadBalancingGreedy.PerShardCooldown)
+	assert.NotNil(t, config.LoadBalancingGreedy.MoveBudgetProportion)
+	assert.NotNil(t, config.LoadBalancingGreedy.HysteresisUpperBand)
+	assert.NotNil(t, config.LoadBalancingGreedy.HysteresisLowerBand)
+	assert.NotNil(t, config.LoadBalancingGreedy.SevereImbalanceRatio)
+	assert.NotNil(t, config.LoadBalancingGreedy.HeterogeneityMode)
+	assert.NotNil(t, config.LoadBalancingGreedy.MoveScoringMode)
+	assert.NotNil(t, config.LoadBalancingGreedy.MovePenaltyCoefficient)
 }
 
 func TestGetMigrationMode(t *testing.T) {

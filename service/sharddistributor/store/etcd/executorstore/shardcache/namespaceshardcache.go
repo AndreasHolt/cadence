@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/metrics"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/store"
 	"github.com/uber/cadence/service/sharddistributor/store/etcd/etcdclient"
 	"github.com/uber/cadence/service/sharddistributor/store/etcd/etcdkeys"
@@ -312,11 +314,21 @@ func (n *namespaceShardToExecutor) hasExecutorStateChanged(watchResp clientv3.Wa
 		switch keyType {
 		case etcdkeys.ExecutorShardStatisticsKey:
 			n.handleExecutorStatisticsEvent(executorID, *event)
-		case etcdkeys.ExecutorAssignedStateKey, etcdkeys.ExecutorMetadataKey:
+		case etcdkeys.ExecutorAssignedStateKey:
+			needsRefresh = true
+		case etcdkeys.ExecutorMetadataKey:
+			if isVolatileCapacityMetadataKey(string(event.Kv.Key)) {
+				continue
+			}
 			needsRefresh = true
 		}
 	}
 	return needsRefresh
+}
+
+func isVolatileCapacityMetadataKey(key string) bool {
+	return strings.HasSuffix(key, "/"+string(etcdkeys.ExecutorMetadataKey)+"/"+capacity.ProcessCPUSecondsMetadataKey) ||
+		strings.HasSuffix(key, "/"+string(etcdkeys.ExecutorMetadataKey)+"/"+capacity.SampleUnixNanosMetadataKey)
 }
 
 func (n *namespaceShardToExecutor) refresh(ctx context.Context) error {

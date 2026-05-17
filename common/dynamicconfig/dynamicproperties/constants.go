@@ -2585,6 +2585,52 @@ const (
 	// Allowed filters: namespace
 	ShardDistributorLoadBalancingNaiveMaxDeviation
 
+	// ShardDistributorLoadBalancingGreedyMoveBudgetProportion is the fraction of total shards
+	// that may be moved per greedy load-balance pass.
+	//
+	// KeyName: shardDistributor.loadBalancingGreedy.moveBudgetProportion
+	// Value type: Float64
+	// Default value: 0.01
+	// Allowed filters: namespace
+	ShardDistributorLoadBalancingGreedyMoveBudgetProportion
+
+	// ShardDistributorLoadBalancingGreedyHysteresisUpperBand is the multiplier above mean load
+	// that qualifies an executor as a greedy rebalance source.
+	//
+	// KeyName: shardDistributor.loadBalancingGreedy.hysteresisUpperBand
+	// Value type: Float64
+	// Default value: 1.15
+	// Allowed filters: namespace
+	ShardDistributorLoadBalancingGreedyHysteresisUpperBand
+
+	// ShardDistributorLoadBalancingGreedyHysteresisLowerBand is the multiplier below mean load
+	// that qualifies an executor as a greedy rebalance destination.
+	//
+	// KeyName: shardDistributor.loadBalancingGreedy.hysteresisLowerBand
+	// Value type: Float64
+	// Default value: 0.90
+	// Allowed filters: namespace
+	ShardDistributorLoadBalancingGreedyHysteresisLowerBand
+
+	// ShardDistributorLoadBalancingGreedySevereImbalanceRatio allows relaxing destination
+	// selection when maxLoad/meanLoad reaches this value.
+	//
+	// KeyName: shardDistributor.loadBalancingGreedy.severeImbalanceRatio
+	// Value type: Float64
+	// Default value: 1.3
+	// Allowed filters: namespace
+	ShardDistributorLoadBalancingGreedySevereImbalanceRatio
+
+	// ShardDistributorLoadBalancingGreedyMovePenaltyCoefficient is the penalty
+	// coefficient for the variable move cost in greedy cost-aware scoring.
+	// Cost = shardLoad * totalLoad * coefficient.
+	//
+	// KeyName: shardDistributor.loadBalancingGreedy.movePenaltyCoefficient
+	// Value type: Float64
+	// Default value: 0.0
+	// Allowed filters: namespace
+	ShardDistributorLoadBalancingGreedyMovePenaltyCoefficient
+
 	// LastFloatKey must be the last one in this const group
 	LastFloatKey
 )
@@ -2653,6 +2699,7 @@ const (
 	// Value type: string ["test-domain","test-domain2"]
 	// Default value: ""
 	ESAnalyzerWorkflowVersionMetricDomains
+
 	// ESAnalyzerWorkflowTypeMetricDomains defines the domains we want to emit wf type metrics on
 	// KeyName: worker.ESAnalyzerWorkflowTypeMetricDomains
 	// Value type: string ["test-domain","test-domain2"]
@@ -2721,6 +2768,24 @@ const (
 	// Default value: "naive"
 	// Allowed filters: namespace
 	ShardDistributorLoadBalancingMode
+
+	// ShardDistributorLoadBalancingGreedyHeterogeneityMode selects the executor-capacity signal used by
+	// greedy load balancing.
+	//
+	// KeyName: shardDistributor.loadBalancingGreedy.heterogeneityMode
+	// Value type: String
+	// Default value: "off"
+	// Allowed filters: namespace
+	ShardDistributorLoadBalancingGreedyHeterogeneityMode
+
+	// ShardDistributorLoadBalancingGreedyMoveScoringMode selects how greedy
+	// load balancing scores candidate shard moves.
+	//
+	// KeyName: shardDistributor.loadBalancingGreedy.moveScoringMode
+	// Value type: String
+	// Default value: "benefit"
+	// Allowed filters: namespace
+	ShardDistributorLoadBalancingGreedyMoveScoringMode
 
 	// HistoryTaskDeadLetterQueueMode is the key to enable history task dead letter queue
 	// KeyName: history.historyTaskDeadLetterQueueMode
@@ -3281,6 +3346,23 @@ const (
 	// Default value: 30m (30 * time.Minute)
 	// Allowed filters: ShardID
 	HistoryTaskDLQProcessorInterval
+
+	// ShardDistributorLoadBalancingGreedyPerShardCooldown is the minimum time between
+	// moving the same shard in greedy load balancing mode.
+	// KeyName: shardDistributor.loadBalancingGreedy.perShardCooldown
+	// Value type: Duration
+	// Default value: 1 minute
+	// Allowed filters: namespace
+	ShardDistributorLoadBalancingGreedyPerShardCooldown
+
+	// ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau is the EWMA time constant
+	// for smoothing CPU-seconds based capacity observations. A value of 0 disables smoothing
+	// and returns raw per-interval busy-cores rates.
+	// KeyName: shardDistributor.loadBalancingGreedy.cpuSecondsSmoothingTau
+	// Value type: Duration
+	// Default value: 5 minutes
+	// Allowed filters: namespace
+	ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau
 
 	// LastDurationKey must be the last one in this const group
 	LastDurationKey
@@ -5296,6 +5378,36 @@ var FloatKeys = map[FloatKey]DynamicFloat{
 		DefaultValue: 2.0,
 		Filters:      []Filter{Namespace},
 	},
+	ShardDistributorLoadBalancingGreedyMoveBudgetProportion: {
+		KeyName:      "shardDistributor.loadBalancingGreedy.moveBudgetProportion",
+		Description:  "ShardDistributorLoadBalancingGreedyMoveBudgetProportion is the fraction of total shards that may be moved per greedy load-balance pass",
+		DefaultValue: 0.01,
+		Filters:      []Filter{Namespace},
+	},
+	ShardDistributorLoadBalancingGreedyHysteresisUpperBand: {
+		KeyName:      "shardDistributor.loadBalancingGreedy.hysteresisUpperBand",
+		Description:  "ShardDistributorLoadBalancingGreedyHysteresisUpperBand is the multiplier above mean load that qualifies an executor as a greedy rebalance source",
+		DefaultValue: 1.15,
+		Filters:      []Filter{Namespace},
+	},
+	ShardDistributorLoadBalancingGreedyHysteresisLowerBand: {
+		KeyName:      "shardDistributor.loadBalancingGreedy.hysteresisLowerBand",
+		Description:  "ShardDistributorLoadBalancingGreedyHysteresisLowerBand is the multiplier below mean load that qualifies an executor as a greedy rebalance destination",
+		DefaultValue: 0.90,
+		Filters:      []Filter{Namespace},
+	},
+	ShardDistributorLoadBalancingGreedySevereImbalanceRatio: {
+		KeyName:      "shardDistributor.loadBalancingGreedy.severeImbalanceRatio",
+		Description:  "ShardDistributorLoadBalancingGreedySevereImbalanceRatio allows relaxing destination selection when maxLoad/meanLoad reaches this value",
+		DefaultValue: 1.3,
+		Filters:      []Filter{Namespace},
+	},
+	ShardDistributorLoadBalancingGreedyMovePenaltyCoefficient: {
+		KeyName:      "shardDistributor.loadBalancingGreedy.movePenaltyCoefficient",
+		Description:  "ShardDistributorLoadBalancingGreedyMovePenaltyCoefficient is the penalty coefficient for the variable move cost in greedy cost-aware scoring (cost = shardLoad * totalLoad * coefficient)",
+		DefaultValue: 0.0,
+		Filters:      []Filter{Namespace},
+	},
 }
 
 var StringKeys = map[StringKey]DynamicString{
@@ -5398,6 +5510,18 @@ var StringKeys = map[StringKey]DynamicString{
 		KeyName:      "shardDistributor.loadBalancingMode",
 		Description:  "ShardDistributorLoadBalancingMode is the load balancing mode for the shard distributor. Depending on the mode, the shard distributor will use different ways to distribute the shards",
 		DefaultValue: "naive",
+	},
+	ShardDistributorLoadBalancingGreedyHeterogeneityMode: {
+		KeyName:      "shardDistributor.loadBalancingGreedy.heterogeneityMode",
+		Description:  "ShardDistributorLoadBalancingGreedyHeterogeneityMode selects the executor-capacity signal used by greedy load balancing",
+		DefaultValue: "off",
+		Filters:      []Filter{Namespace},
+	},
+	ShardDistributorLoadBalancingGreedyMoveScoringMode: {
+		KeyName:      "shardDistributor.loadBalancingGreedy.moveScoringMode",
+		Description:  "ShardDistributorLoadBalancingGreedyMoveScoringMode selects how greedy load balancing scores candidate shard moves",
+		DefaultValue: "benefit",
+		Filters:      []Filter{Namespace},
 	},
 	HistoryTaskDeadLetterQueueMode: {
 		KeyName:      "history.historyTaskDeadLetterQueueMode",
@@ -5914,6 +6038,18 @@ var DurationKeys = map[DurationKey]DynamicDuration{
 		Filters:      []Filter{ShardID},
 		Description:  "HistoryTaskDLQProcessorInterval is the interval for background processing of the History Task DLQ",
 		DefaultValue: time.Minute * 30,
+	},
+	ShardDistributorLoadBalancingGreedyPerShardCooldown: {
+		KeyName:      "shardDistributor.loadBalancingGreedy.perShardCooldown",
+		Filters:      []Filter{Namespace},
+		Description:  "ShardDistributorLoadBalancingGreedyPerShardCooldown is the minimum time between moving the same shard in greedy load balancing mode",
+		DefaultValue: time.Minute,
+	},
+	ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau: {
+		KeyName:      "shardDistributor.loadBalancingGreedy.cpuSecondsSmoothingTau",
+		Filters:      []Filter{Namespace},
+		Description:  "ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau is the EWMA time constant for smoothing CPU-seconds based capacity observations. 0 disables smoothing.",
+		DefaultValue: 5 * time.Minute,
 	},
 }
 

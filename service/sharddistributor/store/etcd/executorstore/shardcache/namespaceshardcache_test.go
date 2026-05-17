@@ -19,6 +19,7 @@ import (
 	"github.com/uber/cadence/common/log/testlogger"
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/types"
+	"github.com/uber/cadence/service/sharddistributor/capacity"
 	"github.com/uber/cadence/service/sharddistributor/store"
 	"github.com/uber/cadence/service/sharddistributor/store/etcd/etcdclient"
 	"github.com/uber/cadence/service/sharddistributor/store/etcd/etcdkeys"
@@ -328,6 +329,54 @@ func TestNamespaceShardToExecutor_namespaceRefreshLoop_notTriggersRefresh_noUpda
 	// Close stopCh to exit the loop
 	close(tc.stopCh)
 	wg.Wait()
+}
+
+func TestNamespaceShardToExecutor_hasExecutorStateChanged_ignoresVolatileCapacityMetadata(t *testing.T) {
+	tc := setupNamespaceShardToExecutorTestCase(t)
+	defer tc.ctrl.Finish()
+
+	for _, metadataKey := range []string{capacity.ProcessCPUSecondsMetadataKey, capacity.SampleUnixNanosMetadataKey} {
+		key := etcdkeys.BuildMetadataKey(tc.prefix, tc.namespace, tc.executorID, metadataKey)
+		changed := tc.e.hasExecutorStateChanged(clientv3.WatchResponse{
+			Events: []*clientv3.Event{
+				{
+					Type: clientv3.EventTypePut,
+					Kv: &mvccpb.KeyValue{
+						Key:   []byte(key),
+						Value: []byte("2"),
+					},
+					PrevKv: &mvccpb.KeyValue{
+						Key:   []byte(key),
+						Value: []byte("1"),
+					},
+				},
+			},
+		})
+		assert.False(t, changed, "volatile metadata key %s should not trigger owner-cache refresh", metadataKey)
+	}
+}
+
+func TestNamespaceShardToExecutor_hasExecutorStateChanged_triggersForRoutingMetadata(t *testing.T) {
+	tc := setupNamespaceShardToExecutorTestCase(t)
+	defer tc.ctrl.Finish()
+
+	key := etcdkeys.BuildMetadataKey(tc.prefix, tc.namespace, tc.executorID, "grpc_address")
+	changed := tc.e.hasExecutorStateChanged(clientv3.WatchResponse{
+		Events: []*clientv3.Event{
+			{
+				Type: clientv3.EventTypePut,
+				Kv: &mvccpb.KeyValue{
+					Key:   []byte(key),
+					Value: []byte("new"),
+				},
+				PrevKv: &mvccpb.KeyValue{
+					Key:   []byte(key),
+					Value: []byte("old"),
+				},
+			},
+		},
+	})
+	assert.True(t, changed)
 }
 
 func TestNamespaceShardToExecutor_namespaceRefreshLoop_triggersRefresh(t *testing.T) {

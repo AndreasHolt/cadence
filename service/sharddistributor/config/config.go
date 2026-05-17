@@ -39,11 +39,24 @@ type (
 		MigrationMode     dynamicproperties.StringPropertyFnWithNamespaceFilters
 		MaxEtcdTxnOps     dynamicproperties.IntPropertyFn
 
-		LoadBalancingNaive LoadBalancingNaiveConfig
+		LoadBalancingNaive  LoadBalancingNaiveConfig
+		LoadBalancingGreedy LoadBalancingGreedyConfig
 	}
 
 	LoadBalancingNaiveConfig struct {
 		MaxDeviation dynamicproperties.Float64PropertyFnWithNamespaceFilters
+	}
+
+	LoadBalancingGreedyConfig struct {
+		PerShardCooldown       dynamicproperties.DurationPropertyFnWithNamespaceFilters
+		MoveBudgetProportion   dynamicproperties.Float64PropertyFnWithNamespaceFilters
+		HysteresisUpperBand    dynamicproperties.Float64PropertyFnWithNamespaceFilters
+		HysteresisLowerBand    dynamicproperties.Float64PropertyFnWithNamespaceFilters
+		SevereImbalanceRatio   dynamicproperties.Float64PropertyFnWithNamespaceFilters
+		HeterogeneityMode      dynamicproperties.StringPropertyFnWithNamespaceFilters
+		MoveScoringMode         dynamicproperties.StringPropertyFnWithNamespaceFilters
+		MovePenaltyCoefficient  dynamicproperties.Float64PropertyFnWithNamespaceFilters // penalty coefficient for cost-aware scoring
+		CPUSecondsSmoothingTau dynamicproperties.DurationPropertyFnWithNamespaceFilters
 	}
 
 	StaticConfig struct {
@@ -133,6 +146,17 @@ func NewConfig(dc *dynamicconfig.Collection) *Config {
 		LoadBalancingNaive: LoadBalancingNaiveConfig{
 			MaxDeviation: dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingNaiveMaxDeviation),
 		},
+		LoadBalancingGreedy: LoadBalancingGreedyConfig{
+			PerShardCooldown:       dc.GetDurationPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyPerShardCooldown),
+			MoveBudgetProportion:   dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyMoveBudgetProportion),
+			HysteresisUpperBand:    dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyHysteresisUpperBand),
+			HysteresisLowerBand:    dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyHysteresisLowerBand),
+			SevereImbalanceRatio:   dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedySevereImbalanceRatio),
+			HeterogeneityMode:      dc.GetStringPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyHeterogeneityMode),
+			MoveScoringMode:        dc.GetStringPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyMoveScoringMode),
+			MovePenaltyCoefficient: dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyMovePenaltyCoefficient),
+			CPUSecondsSmoothingTau: dc.GetDurationPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau),
+		},
 	}
 }
 
@@ -150,6 +174,17 @@ const (
 	LoadBalancingModeINVALID = "invalid"
 	LoadBalancingModeNAIVE   = "naive"
 	LoadBalancingModeGREEDY  = "greedy"
+)
+
+const (
+	GreedyHeterogeneityModeOff        = "off"
+	GreedyHeterogeneityModeLatency    = "latency"
+	GreedyHeterogeneityModeCPUSeconds = "cpu_seconds"
+)
+
+const (
+	GreedyMoveScoringModeBenefit   = "benefit"
+	GreedyMoveScoringModeCostAware = "cost_aware"
 )
 
 // LoadBalancingMode maps string migration mode values to types.LoadBalancingMode
