@@ -9,6 +9,27 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 
+RUN_LABELS = {
+    "off": "Greedy baseline",
+    "greedy": "Greedy baseline",
+    "baseline": "Greedy baseline",
+    "latency": "Latency-aware greedy",
+    "greedy-latency": "Latency-aware greedy",
+    "cpu-seconds": "CPU-time-aware greedy",
+    "cpu_seconds": "CPU-time-aware greedy",
+    "cpuseconds": "CPU-time-aware greedy",
+    "greedy-cpu-seconds": "CPU-time-aware greedy",
+}
+
+
+def clean_label(value):
+    key = value.strip().lower().replace("_", "-")
+    if key in RUN_LABELS:
+        return RUN_LABELS[key]
+    cleaned = value.replace("_", " ").replace("-", " ").strip()
+    return " ".join(word.capitalize() if word.islower() else word for word in cleaned.split())
+
+
 def parse_run_arg(value):
     if "=" not in value:
         raise argparse.ArgumentTypeError("run must be LABEL=PATH")
@@ -16,7 +37,7 @@ def parse_run_arg(value):
     label = label.strip()
     if not label:
         raise argparse.ArgumentTypeError("run label must not be empty")
-    return label, Path(path)
+    return clean_label(label), Path(path)
 
 
 def read_summary_json(path):
@@ -142,8 +163,16 @@ def infer_churn_kind(path, explicit):
     return "counter"
 
 
-def default_churn_csv_path(prometheus_dir, label):
-    return prometheus_dir / label / "csv" / "sd_load_based_moves_total.csv"
+def candidate_churn_csv_paths(prometheus_dir, label):
+    candidates = [label]
+    candidates.extend(alias for alias, clean in RUN_LABELS.items() if clean == label)
+    candidates.extend(safe_filename(candidate) for candidate in list(candidates))
+    seen = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        yield prometheus_dir / candidate / "csv" / "sd_load_based_moves_total.csv"
 
 
 def resolve_churn_run_args(run_args, explicit_churn_args, prometheus_dir, no_auto_churn):
@@ -152,9 +181,10 @@ def resolve_churn_run_args(run_args, explicit_churn_args, prometheus_dir, no_aut
 
     churn_args = []
     for label, _ in run_args:
-        candidate = default_churn_csv_path(prometheus_dir, label)
-        if candidate.exists():
-            churn_args.append((label, candidate))
+        for candidate in candidate_churn_csv_paths(prometheus_dir, label):
+            if candidate.exists():
+                churn_args.append((label, candidate))
+                break
 
     if churn_args:
         found = ", ".join(f"{label}={path}" for label, path in churn_args)
@@ -162,36 +192,40 @@ def resolve_churn_run_args(run_args, explicit_churn_args, prometheus_dir, no_aut
     return churn_args
 
 
+def x_series(points):
+    return [point / 60.0 for point in series(points, "at_seconds")]
+
+
 def plot_completed_rps(ax, runs, show_started, mark_errors, title):
     for label, points in runs:
         ax.plot(
-            series(points, "at_seconds"),
+            x_series(points),
             series(points, "window_completed_rps"),
             linewidth=1.8,
-            label=f"{label} completed/sec",
+            label=label,
             zorder=2,
         )
         if mark_errors:
             error_at = first_error_time(points)
             if error_at is not None:
-                ax.axvline(error_at, color="tab:red", linestyle=":", linewidth=1.2, alpha=0.7)
+                ax.axvline(error_at / 60.0, color="tab:red", linestyle=":", linewidth=1.2, alpha=0.7)
 
     if show_started and runs:
         _, first_points = runs[0]
         ax.plot(
-            series(first_points, "at_seconds"),
+            x_series(first_points),
             series(first_points, "window_started_rps"),
             color="black",
             linestyle=(0, (6, 4)),
             linewidth=1.7,
             alpha=0.9,
-            label="started/sec",
+            label="Offered starts",
             zorder=4,
         )
 
-    ax.set_title(title or "Cluster Completed Throughput Over Time")
-    ax.set_xlabel("Time since start (s)")
-    ax.set_ylabel("Completed workflows/sec")
+    ax.set_title(title or "Completed workflow throughput")
+    ax.set_xlabel("Time since start (min)")
+    ax.set_ylabel("Completed workflows/s")
     ax.grid(True, alpha=0.25)
     ax.legend()
 
@@ -199,26 +233,29 @@ def plot_completed_rps(ax, runs, show_started, mark_errors, title):
 def apply_time_axis(ax, x_min, x_max):
     if x_min is not None or x_max is not None:
         left, right = ax.get_xlim()
-        left = x_min if x_min is not None else left
-        right = x_max if x_max is not None else right
+        left = x_min / 60.0 if x_min is not None else left
+        right = x_max / 60.0 if x_max is not None else right
         ax.set_xlim(left, right)
-        tick_start = math.ceil(left / 250) * 250
-        tick_end = math.floor(right / 250) * 250
-        ax.set_xticks(list(range(int(tick_start), int(tick_end) + 1, 250)))
+    left, right = ax.get_xlim()
+    span = max(1.0, right - left)
+    step = 5 if span <= 40 else 10
+    tick_start = math.ceil(left / step) * step
+    tick_end = math.floor(right / step) * step
+    ax.set_xticks([tick for tick in range(int(tick_start), int(tick_end) + 1, step)])
 
 
 def plot_completed_cumulative(ax, runs, title):
     for label, points in runs:
         total = completed_total(points)
         ax.plot(
-            series(points, "at_seconds"),
+            x_series(points),
             series(points, "completed"),
             linewidth=1.8,
             label=f"{label} total={total:,}",
         )
 
-    ax.set_title(title or "Cluster Cumulative Completed Workflows")
-    ax.set_xlabel("Time since start (s)")
+    ax.set_title(title or "Cumulative completed workflows")
+    ax.set_xlabel("Time since start (min)")
     ax.set_ylabel("Completed workflows")
     ax.grid(True, alpha=0.25)
     ax.legend()
@@ -227,7 +264,7 @@ def plot_completed_cumulative(ax, runs, title):
 def plot_p95_latency(ax, runs, mark_errors, title):
     for label, points in runs:
         ax.plot(
-            series(points, "at_seconds"),
+            x_series(points),
             series(points, "window_latency_p95_ms"),
             linewidth=1.8,
             label=label,
@@ -235,10 +272,10 @@ def plot_p95_latency(ax, runs, mark_errors, title):
         if mark_errors:
             error_at = first_error_time(points)
             if error_at is not None:
-                ax.axvline(error_at, color="tab:red", linestyle=":", linewidth=1.2, alpha=0.7)
+                ax.axvline(error_at / 60.0, color="tab:red", linestyle=":", linewidth=1.2, alpha=0.7)
 
-    ax.set_title(title or "Workflow Completion p95 Latency Over Time")
-    ax.set_xlabel("Time since start (s)")
+    ax.set_title(title or "Workflow completion latency (p95)")
+    ax.set_xlabel("Time since start (min)")
     ax.set_ylabel("p95 latency (ms)")
     ax.grid(True, alpha=0.25)
     ax.legend()
@@ -248,15 +285,15 @@ def plot_churn_rate(ax, churn_runs, title):
     for label, points, kind in churn_runs:
         rate_points = points if kind == "rate" else rate_from_counter_points(points)
         ax.plot(
-            [point["seconds"] for point in rate_points],
+            [point["seconds"] / 60.0 for point in rate_points],
             [point["value"] for point in rate_points],
             linewidth=1.8,
             label=label,
         )
 
-    ax.set_title(title or "Shard Move Churn Over Time")
-    ax.set_xlabel("Time since first Prometheus sample (s)")
-    ax.set_ylabel("Shard moves/sec")
+    ax.set_title(title or "Shard movement rate")
+    ax.set_xlabel("Time since start (min)")
+    ax.set_ylabel("Shard moves/s")
     ax.grid(True, alpha=0.25)
     ax.legend()
 
@@ -267,14 +304,14 @@ def plot_churn_total(ax, churn_runs, title):
         total = cumulative[-1]["value"] if cumulative else 0.0
         total_label = f"{label} total~{total:,.0f}" if kind == "rate" else f"{label} total={total:,.0f}"
         ax.plot(
-            [point["seconds"] for point in cumulative],
+            [point["seconds"] / 60.0 for point in cumulative],
             [point["value"] for point in cumulative],
             linewidth=1.8,
             label=total_label,
         )
 
-    ax.set_title(title or "Cumulative Shard Moves")
-    ax.set_xlabel("Time since first Prometheus sample (s)")
+    ax.set_title(title or "Cumulative shard moves")
+    ax.set_xlabel("Time since start (min)")
     ax.set_ylabel("Shard moves")
     ax.grid(True, alpha=0.25)
     ax.legend()
@@ -366,7 +403,7 @@ def main():
     parser.add_argument(
         "--no-started-line",
         action="store_true",
-        help="Do not draw the first run's started/sec line on the throughput plot.",
+        help="Do not draw the first run's offered-starts line on the throughput plot.",
     )
     parser.add_argument(
         "--mark-errors",

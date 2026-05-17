@@ -14,6 +14,36 @@ MATCHING_LIMITS = {
     "cadence-matching-c-0": 3.0,
 }
 
+POD_LABELS = {
+    "cadence-matching-a-0": "Matching A",
+    "cadence-matching-b-0": "Matching B",
+    "cadence-matching-c-0": "Matching C",
+}
+
+RUN_LABELS = {
+    "off": "Greedy baseline",
+    "greedy": "Greedy baseline",
+    "baseline": "Greedy baseline",
+    "latency": "Latency-aware greedy",
+    "greedy-latency": "Latency-aware greedy",
+    "cpu_seconds": "CPU-time-aware greedy",
+    "cpu-seconds": "CPU-time-aware greedy",
+    "cpuseconds": "CPU-time-aware greedy",
+    "greedy-cpu-seconds": "CPU-time-aware greedy",
+}
+
+
+def clean_label(value):
+    key = value.strip().lower().replace("_", "-")
+    if key in RUN_LABELS:
+        return RUN_LABELS[key]
+    cleaned = value.replace("_", " ").replace("-", " ").strip()
+    return " ".join(word.capitalize() if word.islower() else word for word in cleaned.split())
+
+
+def pod_label(pod):
+    return POD_LABELS.get(pod, pod.replace("cadence-", "").replace("-0", "").replace("-", " ").title())
+
 
 def parse_run_arg(value):
     if "=" not in value:
@@ -22,7 +52,7 @@ def parse_run_arg(value):
     label = label.strip()
     if not label:
         raise argparse.ArgumentTypeError("run label must not be empty")
-    return label, Path(path)
+    return clean_label(label), Path(path)
 
 
 def parse_timestamp(value):
@@ -74,13 +104,17 @@ def group_by_pod(rows):
     return dict(sorted(grouped.items()))
 
 
+def x_values(rows):
+    return [row["seconds"] / 60.0 for row in rows]
+
+
 def plot_cpu(ax, runs, show_limits):
     multi_run = len(runs) > 1
     for label, rows in runs:
         for pod, pod_rows in group_by_pod(rows).items():
-            legend = f"{label} {pod}" if multi_run else pod
+            legend = f"{label} — {pod_label(pod)}" if multi_run else pod_label(pod)
             ax.plot(
-                [row["seconds"] for row in pod_rows],
+                x_values(pod_rows),
                 [row["cpu_cores"] for row in pod_rows],
                 linewidth=1.7,
                 label=legend,
@@ -88,28 +122,30 @@ def plot_cpu(ax, runs, show_limits):
     if show_limits:
         for pod, limit in MATCHING_LIMITS.items():
             ax.axhline(limit, color="black", linestyle=":", linewidth=0.9, alpha=0.35)
-            ax.text(0, limit, f" {pod} limit", va="bottom", fontsize=8, alpha=0.65)
-    ax.set_title("Matching Executor CPU Utilization Over Time")
-    ax.set_xlabel("Time since first sample (s)")
+            ax.text(0, limit, f" {pod_label(pod)} limit", va="bottom", fontsize=8, alpha=0.65)
+    ax.set_title("Matching CPU utilization")
+    ax.set_xlabel("Time since start (min)")
     ax.set_ylabel("CPU cores")
     ax.grid(True, alpha=0.25)
     ax.legend()
 
 
-def plot_throttling(ax, runs):
+def plot_throttling(ax, runs, metric):
     multi_run = len(runs) > 1
+    value_key = "throttled_cores" if metric == "cores" else "throttled_events"
+    ylabel = "Throttled CPU time (cores)" if metric == "cores" else "CPU throttling events per sample"
     for label, rows in runs:
         for pod, pod_rows in group_by_pod(rows).items():
-            legend = f"{label} {pod}" if multi_run else pod
+            legend = f"{label} — {pod_label(pod)}" if multi_run else pod_label(pod)
             ax.plot(
-                [row["seconds"] for row in pod_rows],
-                [row["throttled_events"] for row in pod_rows],
+                x_values(pod_rows),
+                [row[value_key] for row in pod_rows],
                 linewidth=1.7,
                 label=legend,
             )
-    ax.set_title("Matching Executor CPU Throttling Events Over Time")
-    ax.set_xlabel("Time since first sample (s)")
-    ax.set_ylabel("Throttled events per sample")
+    ax.set_title("Matching CPU throttling")
+    ax.set_xlabel("Time since start (min)")
+    ax.set_ylabel(ylabel)
     ax.grid(True, alpha=0.25)
     ax.legend()
 
@@ -117,12 +153,15 @@ def plot_throttling(ax, runs):
 def apply_time_axis(ax, x_min, x_max):
     if x_min is not None or x_max is not None:
         left, right = ax.get_xlim()
-        left = x_min if x_min is not None else left
-        right = x_max if x_max is not None else right
+        left = x_min / 60.0 if x_min is not None else left
+        right = x_max / 60.0 if x_max is not None else right
         ax.set_xlim(left, right)
-        tick_start = math.ceil(left / 250) * 250
-        tick_end = math.floor(right / 250) * 250
-        ax.set_xticks(list(range(int(tick_start), int(tick_end) + 1, 250)))
+    left, right = ax.get_xlim()
+    span = max(1.0, right - left)
+    step = 5 if span <= 40 else 10
+    tick_start = math.ceil(left / step) * step
+    tick_end = math.floor(right / step) * step
+    ax.set_xticks([tick for tick in range(int(tick_start), int(tick_end) + 1, step)])
 
 
 def apply_cpu_axis(ax, y_max):
@@ -203,6 +242,12 @@ def main():
         default=5.0,
         help="Maximum y-axis value for CPU utilization plots. Use 0 to auto-scale.",
     )
+    parser.add_argument(
+        "--throttling-metric",
+        choices=["cores", "events"],
+        default="cores",
+        help="Plot throttled CPU time as cores or throttling event counts.",
+    )
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -246,15 +291,15 @@ def main():
 
             fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
             plot_cpu(ax, pod_runs, show_limits=False)
-            ax.set_title(f"{pod} CPU Utilization Over Time")
+            ax.set_title(f"{pod_label(pod)} CPU utilization")
             apply_time_axis(ax, args.x_min, args.x_max)
             apply_cpu_axis(ax, args.cpu_y_max)
             fig.savefig(cpu_path, dpi=180)
             plt.close(fig)
 
             fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
-            plot_throttling(ax, pod_runs)
-            ax.set_title(f"{pod} CPU Throttling Events Over Time")
+            plot_throttling(ax, pod_runs, args.throttling_metric)
+            ax.set_title(f"{pod_label(pod)} CPU throttling")
             apply_time_axis(ax, args.x_min, args.x_max)
             fig.savefig(throttling_path, dpi=180)
             plt.close(fig)
@@ -274,7 +319,7 @@ def main():
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
-    plot_throttling(ax, runs)
+    plot_throttling(ax, runs, args.throttling_metric)
     apply_time_axis(ax, args.x_min, args.x_max)
     fig.savefig(throttling_path, dpi=180)
     plt.close(fig)

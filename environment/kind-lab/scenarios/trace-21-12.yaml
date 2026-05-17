@@ -14,7 +14,7 @@ trace:
   qps_scale: 1.0
   qps_scale_ramp:
     start: 0.005
-    end: 0.06
+    end: 0.054
   time_scale: 1
   top_n: 2500
   start_row: 0
