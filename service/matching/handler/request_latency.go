@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const requestLatencyEWMATau = 60 * time.Second
+const requestLatencyEWMATau = 3 * time.Minute
 
 type requestLatencyTracker struct {
 	mu            sync.Mutex

@@ -188,7 +188,13 @@ func selectTraceColumns(rows [][]float64, topN int) []traceColumn {
 		return columns[i].maxQPS > columns[j].maxQPS
 	})
 
-	selected := columns
+	selected := columns[:0]
+	for _, column := range columns {
+		if column.maxQPS <= 0 {
+			continue
+		}
+		selected = append(selected, column)
+	}
 	if topN > 0 && topN < len(selected) {
 		selected = selected[:topN]
 	}
