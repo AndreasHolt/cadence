@@ -53,37 +53,36 @@ def main():
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        print("matplotlib not found. Installing...")
-        import subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "matplotlib", "-q"])
-        import matplotlib.pyplot as plt
+        print("matplotlib not found.")
+
+    plt.rc("font", size=15)
+    plt.rc("axes", labelsize=15)
+    plt.rc("xtick", labelsize=15)
+    plt.rc("ytick", labelsize=15)
+    plt.rc("legend", fontsize=15)
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5), sharex=True)
-    fig.suptitle("Grid Search: move_penalty_coefficient sweep", fontsize=14, fontweight="bold")
 
     ax1, ax2, ax3 = axes
 
-    ax1.plot(ca_fixed, ca_moves, marker="o", linestyle="-", label="cost_aware")
-    ax1.plot(b_fixed, b_moves, marker="x", linestyle="--", label="benefit")
-    ax1.set_xlabel("move_penalty_coefficient")
-    ax1.set_ylabel("total_moves")
-    ax1.set_title("Total Moves")
+    ax1.plot(ca_fixed, ca_moves, marker="o", linestyle="-", color="tab:orange", label="Cost")
+    ax1.plot(b_fixed, b_moves, marker="x", linestyle="--", color="tab:blue", label="Benefit")
+    ax1.set_xlabel("Penalty Coefficient")
+    ax1.set_ylabel("Total Moves")
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
-    ax2.plot(ca_fixed, ca_load, marker="o", linestyle="-", color="tab:orange", label="cost_aware")
-    ax2.plot(b_fixed, b_load, marker="x", linestyle="--", color="tab:blue", label="benefit")
-    ax2.set_xlabel("move_penalty_coefficient")
-    ax2.set_ylabel("total_load_moved")
-    ax2.set_title("Total Load Moved")
+    ax2.plot(ca_fixed, ca_load, marker="o", linestyle="-", color="tab:orange", label="Cost")
+    ax2.plot(b_fixed, b_load, marker="x", linestyle="--", color="tab:blue", label="Benefit")
+    ax2.set_xlabel("Penalty Coefficient")
+    ax2.set_ylabel("Total Moved Load")
     ax2.legend()
     ax2.grid(True, alpha=0.3)
 
-    ax3.plot(ca_fixed, ca_mm, marker="o", linestyle="-", color="tab:green", label="cost_aware")
-    ax3.plot(b_fixed, b_mm, marker="x", linestyle="--", color="tab:blue", label="benefit")
-    ax3.set_xlabel("move_penalty_coefficient")
-    ax3.set_ylabel("avg_mm_reported")
-    ax3.set_title("Avg Max/Mean (Reported)")
+    ax3.plot(ca_fixed, ca_mm, marker="o", linestyle="-", color="tab:orange", label="Cost")
+    ax3.plot(b_fixed, b_mm, marker="x", linestyle="--", color="tab:blue", label="Benefit")
+    ax3.set_xlabel("Penalty Coefficient")
+    ax3.set_ylabel("Average Max/Mean")
     ax3.legend()
     ax3.grid(True, alpha=0.3)
 
