@@ -128,6 +128,7 @@ func (f *transferQueueFactory) createQueuev2(
 		logger,
 		shard.GetClusterMetadata().GetCurrentClusterName(),
 		shard.GetConfig(),
+		shard.GetService().GetHistoryTaskDLQManager(),
 	)
 
 	executorWrapper := task.NewExecutorWrapper(

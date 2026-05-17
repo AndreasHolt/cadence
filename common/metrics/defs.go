@@ -325,6 +325,8 @@ const (
 	PersistenceGetActiveClusterSelectionPolicyScope
 	// PersistenceDeleteActiveClusterSelectionPolicyScope tracks DeleteActiveClusterSelectionPolicy calls made by service to persistence layer
 	PersistenceDeleteActiveClusterSelectionPolicyScope
+	// PersistenceFetchWorkflowTimerTasksForCleanupScope tracks FetchWorkflowTimerTasksForCleanup calls
+	PersistenceFetchWorkflowTimerTasksForCleanupScope
 
 	// ResolverHostNotFoundScope is a simple low level error indicating a lookup failed in the membership resolver
 	ResolverHostNotFoundScope
@@ -1659,6 +1661,7 @@ var ScopeDefs = map[ServiceIdx]map[ScopeIdx]scopeDefinition{
 		PersistencePerHostScope:                                  {operation: "persistence_operations"},
 		PersistenceGetActiveClusterSelectionPolicyScope:          {operation: "GetActiveClusterSelectionPolicy"},
 		PersistenceDeleteActiveClusterSelectionPolicyScope:       {operation: "DeleteActiveClusterSelectionPolicy"},
+		PersistenceFetchWorkflowTimerTasksForCleanupScope:        {operation: "FetchWorkflowTimerTasksForCleanup"},
 		ResolverHostNotFoundScope:                                {operation: "ResolverHostNotFound"},
 
 		ClusterMetadataArchivalConfigScope: {operation: "ArchivalConfig"},
@@ -2851,6 +2854,7 @@ const (
 	WorkflowCleanupArchiveCount
 	WorkflowCleanupNopCount
 	WorkflowCleanupDeleteHistoryInlineCount
+	WorkflowCleanupTimerTasksSentForDeletionCount
 	WorkflowSuccessCount
 	WorkflowCancelCount
 	WorkflowFailedCount
@@ -3266,8 +3270,6 @@ const (
 	ShardDistributorAssignmentSmoothedLoadCV
 	// ShardDistributorAssignmentSmoothedLoadMissingRatio measures the fraction of assigned shards with no smoothed load
 	ShardDistributorAssignmentSmoothedLoadMissingRatio
-	// ShardDistributorAssignmentSmoothedLoadStaleRatio measures the fraction of assigned shards with stale smoothed load
-	ShardDistributorAssignmentSmoothedLoadStaleRatio
 	// ShardDistributorIsLeader reports whether this instance is currently the leader (1) or not (0) for a namespace
 	ShardDistributorIsLeader
 
@@ -3858,6 +3860,7 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		WorkflowCleanupArchiveCount:                                   {metricName: "workflow_cleanup_archive", metricType: Counter},
 		WorkflowCleanupNopCount:                                       {metricName: "workflow_cleanup_nop", metricType: Counter},
 		WorkflowCleanupDeleteHistoryInlineCount:                       {metricName: "workflow_cleanup_delete_history_inline", metricType: Counter},
+		WorkflowCleanupTimerTasksSentForDeletionCount:                 {metricName: "workflow_cleanup_timer_tasks_sent_for_deletion", metricType: Counter},
 		WorkflowSuccessCount:                                          {metricName: "workflow_success", metricType: Counter},
 		WorkflowCancelCount:                                           {metricName: "workflow_cancel", metricType: Counter},
 		WorkflowFailedCount:                                           {metricName: "workflow_failed", metricType: Counter},
@@ -4224,10 +4227,6 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		ShardDistributorAssignmentSmoothedLoadCV:          {metricName: "shard_distributor_assignment_smoothed_load_cv", metricType: Gauge},
 		ShardDistributorAssignmentSmoothedLoadMissingRatio: {
 			metricName: "shard_distributor_assignment_smoothed_load_missing_ratio",
-			metricType: Gauge,
-		},
-		ShardDistributorAssignmentSmoothedLoadStaleRatio: {
-			metricName: "shard_distributor_assignment_smoothed_load_stale_ratio",
 			metricType: Gauge,
 		},
 		ShardDistributorIsLeader: {metricName: "shard_distributor_is_leader", metricType: Gauge},

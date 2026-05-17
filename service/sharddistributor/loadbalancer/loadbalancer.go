@@ -68,7 +68,7 @@ func PlanRebalance(
 			}
 			cpuObservationState = runtimeState[0].GreedyCPUObservations
 		}
-		return greedy.PlanRebalance(cfg.LoadBalancingGreedy, namespace, state, currentAssignments, now, shardStatsStaleAfter, metricsScope, cpuObservationState)
+		return greedy.PlanRebalance(cfg.LoadBalancingGreedy, namespace, state, currentAssignments, now, shardStatsStaleAfter, logger, metricsScope, cpuObservationState)
 	default:
 		return nil, fmt.Errorf("unsupported load balancing mode: %s", mode)
 	}

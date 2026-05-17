@@ -48,15 +48,16 @@ type (
 	}
 
 	LoadBalancingGreedyConfig struct {
-		PerShardCooldown       dynamicproperties.DurationPropertyFnWithNamespaceFilters
-		MoveBudgetProportion   dynamicproperties.Float64PropertyFnWithNamespaceFilters
-		HysteresisUpperBand    dynamicproperties.Float64PropertyFnWithNamespaceFilters
-		HysteresisLowerBand    dynamicproperties.Float64PropertyFnWithNamespaceFilters
-		SevereImbalanceRatio   dynamicproperties.Float64PropertyFnWithNamespaceFilters
-		HeterogeneityMode      dynamicproperties.StringPropertyFnWithNamespaceFilters
-		MoveScoringMode         dynamicproperties.StringPropertyFnWithNamespaceFilters
-		MovePenaltyCoefficient  dynamicproperties.Float64PropertyFnWithNamespaceFilters // penalty coefficient for cost-aware scoring
-		CPUSecondsSmoothingTau dynamicproperties.DurationPropertyFnWithNamespaceFilters
+		PerShardCooldown          dynamicproperties.DurationPropertyFnWithNamespaceFilters
+		LoadSmoothingTimeConstant dynamicproperties.DurationPropertyFnWithNamespaceFilters
+		MoveBudgetProportion      dynamicproperties.Float64PropertyFnWithNamespaceFilters
+		HysteresisUpperBand       dynamicproperties.Float64PropertyFnWithNamespaceFilters
+		HysteresisLowerBand       dynamicproperties.Float64PropertyFnWithNamespaceFilters
+		SevereImbalanceRatio      dynamicproperties.Float64PropertyFnWithNamespaceFilters
+		HeterogeneityMode         dynamicproperties.StringPropertyFnWithNamespaceFilters
+		MoveScoringMode           dynamicproperties.StringPropertyFnWithNamespaceFilters
+		MovePenaltyCoefficient    dynamicproperties.Float64PropertyFnWithNamespaceFilters // penalty coefficient for cost-aware scoring
+		CPUSecondsSmoothingTau    dynamicproperties.DurationPropertyFnWithNamespaceFilters
 	}
 
 	StaticConfig struct {
@@ -147,15 +148,16 @@ func NewConfig(dc *dynamicconfig.Collection) *Config {
 			MaxDeviation: dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingNaiveMaxDeviation),
 		},
 		LoadBalancingGreedy: LoadBalancingGreedyConfig{
-			PerShardCooldown:       dc.GetDurationPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyPerShardCooldown),
-			MoveBudgetProportion:   dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyMoveBudgetProportion),
-			HysteresisUpperBand:    dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyHysteresisUpperBand),
-			HysteresisLowerBand:    dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyHysteresisLowerBand),
-			SevereImbalanceRatio:   dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedySevereImbalanceRatio),
-			HeterogeneityMode:      dc.GetStringPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyHeterogeneityMode),
-			MoveScoringMode:        dc.GetStringPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyMoveScoringMode),
-			MovePenaltyCoefficient: dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyMovePenaltyCoefficient),
-			CPUSecondsSmoothingTau: dc.GetDurationPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau),
+			PerShardCooldown:          dc.GetDurationPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyPerShardCooldown),
+			LoadSmoothingTimeConstant: dc.GetDurationPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyLoadSmoothingTimeConstant),
+			MoveBudgetProportion:      dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyMoveBudgetProportion),
+			HysteresisUpperBand:       dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyHysteresisUpperBand),
+			HysteresisLowerBand:       dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyHysteresisLowerBand),
+			SevereImbalanceRatio:      dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedySevereImbalanceRatio),
+			HeterogeneityMode:         dc.GetStringPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyHeterogeneityMode),
+			MoveScoringMode:           dc.GetStringPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyMoveScoringMode),
+			MovePenaltyCoefficient:    dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyMovePenaltyCoefficient),
+			CPUSecondsSmoothingTau:    dc.GetDurationPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau),
 		},
 	}
 }

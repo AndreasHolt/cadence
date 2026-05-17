@@ -146,6 +146,43 @@ func TestAdminFailoverStart(t *testing.T) {
 			},
 		},
 		{
+			desc:          "cron without drill wait time",
+			wantErr:       true,
+			sourceCluster: "cluster1",
+			targetCluster: "cluster2",
+			failoverCron:  "0 0 * * *",
+			mockFn: func(t *testing.T, m *frontend.MockClient) {
+				// no frontend calls: error before any RPC
+			},
+		},
+		{
+			desc:          "drill pause EntityNotExistsError, failover continues",
+			sourceCluster: "cluster1",
+			targetCluster: "cluster2",
+			mockFn: func(t *testing.T, m *frontend.MockClient) {
+				m.EXPECT().SignalWorkflowExecution(gomock.Any(), gomock.Any()).Return(&types.EntityNotExistsError{}).Times(1)
+				m.EXPECT().StartWorkflowExecution(gomock.Any(), gomock.Any()).Return(&types.StartWorkflowExecutionResponse{}, nil).Times(1)
+			},
+		},
+		{
+			desc:          "drill pause AlreadyCompleted, failover continues",
+			sourceCluster: "cluster1",
+			targetCluster: "cluster2",
+			mockFn: func(t *testing.T, m *frontend.MockClient) {
+				m.EXPECT().SignalWorkflowExecution(gomock.Any(), gomock.Any()).Return(&types.WorkflowExecutionAlreadyCompletedError{}).Times(1)
+				m.EXPECT().StartWorkflowExecution(gomock.Any(), gomock.Any()).Return(&types.StartWorkflowExecutionResponse{}, nil).Times(1)
+			},
+		},
+		{
+			desc:          "drill pause fails with unexpected error",
+			wantErr:       true,
+			sourceCluster: "cluster1",
+			targetCluster: "cluster2",
+			mockFn: func(t *testing.T, m *frontend.MockClient) {
+				m.EXPECT().SignalWorkflowExecution(gomock.Any(), gomock.Any()).Return(fmt.Errorf("unexpected signal error")).Times(1)
+			},
+		},
+		{
 			desc:                    "success with cron",
 			sourceCluster:           "cluster1",
 			targetCluster:           "cluster2",
@@ -467,6 +504,13 @@ func TestAdminFailoverAbort(t *testing.T) {
 						}
 						return nil
 					}).Times(1)
+			},
+		},
+		{
+			desc:    "terminate fails",
+			wantErr: true,
+			mockFn: func(t *testing.T, m *frontend.MockClient) {
+				m.EXPECT().TerminateWorkflowExecution(gomock.Any(), gomock.Any()).Return(fmt.Errorf("terminate failed")).Times(1)
 			},
 		},
 	}

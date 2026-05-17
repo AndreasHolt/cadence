@@ -6,8 +6,10 @@ import (
 	"time"
 )
 
-func CalculateSmoothedLoad(prev, current float64, lastUpdate, now time.Time) (float64, error) {
-	return CalculateSmoothedLoadWithTau(prev, current, lastUpdate, now, time.Minute)
+const DefaultLoadSmoothingTimeConstant = time.Minute
+
+func CalculateSmoothedLoad(prev, current float64, lastUpdate, now time.Time, smoothingTimeConstant time.Duration) (float64, error) {
+	return CalculateSmoothedLoadWithTau(prev, current, lastUpdate, now, smoothingTimeConstant)
 }
 
 func CalculateSmoothedLoadWithTau(prev, current float64, lastUpdate, now time.Time, tau time.Duration) (float64, error) {
