@@ -46,8 +46,9 @@ type traceEvent struct {
 }
 
 type traceColumn struct {
-	index  int
-	maxQPS float64
+	index         int
+	taskListIndex int
+	maxQPS        float64
 }
 
 func (c traceConfig) enabled() bool {
@@ -201,6 +202,9 @@ func selectTraceColumns(rows [][]float64, topN int) []traceColumn {
 	sort.Slice(selected, func(i, j int) bool {
 		return selected[i].index < selected[j].index
 	})
+	for i := range selected {
+		selected[i].taskListIndex = i
+	}
 	return selected
 }
 
@@ -213,7 +217,7 @@ func makeTraceTaskLists(columns []traceColumn, cfg traceConfig) []taskListConfig
 			pollers = 1
 		}
 		taskLists = append(taskLists, taskListConfig{
-			Name:        traceTaskListName(cfg.TaskListPrefix, column.index),
+			Name:        traceTaskListName(cfg.TaskListPrefix, column.taskListIndex),
 			Weight:      1,
 			Pollers:     pollers,
 			ProcessTime: cfg.ProcessTime,
@@ -230,14 +234,14 @@ func makeTraceEvents(rows [][]float64, columns []traceColumn, cfg traceConfig, r
 		rowStart := time.Duration(rowIndex) * rowInterval
 		scale := traceQPSScaleAt(cfg, rowStart, rampDuration)
 		for _, column := range columns {
-			taskList := traceTaskListName(cfg.TaskListPrefix, column.index)
+			taskList := traceTaskListName(cfg.TaskListPrefix, column.taskListIndex)
 			eventCount := int(math.Round(row[column.index] * scale * rowInterval.Seconds()))
 			if eventCount <= 0 {
 				continue
 			}
 			spacing := rowInterval / time.Duration(eventCount)
 			for eventIndex := range eventCount {
-				workflowID := fmt.Sprintf("trace-%s-row-%06d-tl-%04d-seq-%06d", runID, rowIndex, column.index, eventIndex)
+				workflowID := fmt.Sprintf("trace-%s-row-%06d-tl-%04d-seq-%06d", runID, rowIndex, column.taskListIndex, eventIndex)
 				events = append(events, traceEvent{
 					at:         rowStart + time.Duration(eventIndex)*spacing,
 					taskList:   taskList,

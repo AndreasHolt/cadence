@@ -145,6 +145,41 @@ func TestBuildTraceWorkloadDefaultsRampDurationToSelectedRows(t *testing.T) {
 	}
 }
 
+func TestBuildTraceWorkloadRemapsSelectedColumnsToSequentialTaskLists(t *testing.T) {
+	tracePath := filepath.Join(t.TempDir(), "trace.csv")
+	if err := os.WriteFile(tracePath, []byte(
+		"2025-12-21 00:00:00,0,10,0,20\n",
+	), 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	cfg := traceConfig{
+		Path:              tracePath,
+		Interval:          10 * time.Second,
+		QPSScale:          0.1,
+		TimeScale:         1,
+		TopN:              4,
+		PollerCapacityQPS: 50,
+	}
+
+	workload, err := buildTraceWorkload(cfg, "test-run")
+	if err != nil {
+		t.Fatalf("build trace workload: %v", err)
+	}
+
+	if len(workload.taskLists) != 2 {
+		t.Fatalf("tasklists = %d, want 2", len(workload.taskLists))
+	}
+	if workload.taskLists[0].Name != "0" || workload.taskLists[1].Name != "1" {
+		t.Fatalf("tasklists = %+v", workload.taskLists)
+	}
+	for _, event := range workload.events {
+		if event.taskList != "0" && event.taskList != "1" {
+			t.Fatalf("event uses non-remapped tasklist: %+v", event)
+		}
+	}
+}
+
 func TestSelectTraceRows(t *testing.T) {
 	rows := [][]float64{{1}, {2}, {3}, {4}}
 	selected := selectTraceRows(rows, 1, 2)
