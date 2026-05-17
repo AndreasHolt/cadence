@@ -235,7 +235,7 @@ func computeLatencyAdjustedWeights(
 			latencyMs := capacity.LatencyEWmaMsFromMetadata(state.Executors[executorID].Metadata)
 			if latencyMs > 0 {
 				relativeLatency := clamp(latencyMs/meanLatencyMs, minRelativeLatency, maxRelativeLatency)
-				weight = weight / math.Sqrt(relativeLatency)
+				weight = weight / relativeLatency
 			}
 		}
 		weights[executorID] = weight
@@ -282,7 +282,7 @@ func computeCPUSecondsAdjustedWeights(
 			cost = averageCPUCost
 		}
 		relativeCost := clamp(cost/averageCPUCost, minRelativeCPUCost, maxRelativeCPUCost)
-		weights[executorID] = weights[executorID] / math.Sqrt(relativeCost)
+		weights[executorID] = weights[executorID] / relativeCost
 	}
 
 	return weights
@@ -505,7 +505,7 @@ func findShardToMove(
 			load = report.ShardLoad
 		}
 
-		benefit := computeBenefitOfMove(sourceLoad, sourceTargetLoad, destLoad, destinationTargetLoad, load)
+		benefit := computeCapacityNormalizedBenefitOfMove(sourceLoad, sourceTargetLoad, destLoad, destinationTargetLoad, load)
 		if benefit <= 0 {
 			continue
 		}
@@ -572,7 +572,7 @@ func computeMoveCost(totalLoad, shardLoad, penaltyCoefficient float64) float64 {
 	if totalLoad <= 0 || shardLoad <= 0 {
 		return 0
 	}
-	return shardLoad * totalLoad * penaltyCoefficient
+	return (shardLoad / totalLoad) * penaltyCoefficient
 }
 
 func moveShard(currentAssignments map[string][]string, sourceExecutor string, destExecutor string, shardID string, idx int) error {

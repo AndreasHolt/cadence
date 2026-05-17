@@ -76,8 +76,8 @@ func TestComputeExecutorCapacityWeightsLatencyMode(t *testing.T) {
 	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeLatency, currentAssignments, namespaceState, nil, nil)
 
 	require.Greater(t, weights["fast"], weights["slow"])
-	require.InDelta(t, 5.656854, weights["fast"], 0.0001)
-	require.InDelta(t, 3.162278, weights["slow"], 0.0001)
+	require.InDelta(t, 8.0, weights["fast"], 0.0001)
+	require.InDelta(t, 2.5, weights["slow"], 0.0001)
 }
 
 func TestComputeExecutorCapacityWeightsOffModeIgnoresMetadata(t *testing.T) {
@@ -146,8 +146,8 @@ func TestComputeExecutorCapacityWeightsCPUSecondsMode(t *testing.T) {
 
 	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
 
-	require.InDelta(t, 4.898979486, weights["fast"], 1e-9)
-	require.InDelta(t, 3.464101615, weights["slow"], 1e-9)
+	require.InDelta(t, 6.0, weights["fast"], 1e-9)
+	require.InDelta(t, 3.0, weights["slow"], 1e-9)
 }
 
 func TestComputeExecutorCapacityWeightsCPUSecondsModeClampsRelativeCost(t *testing.T) {
@@ -209,9 +209,9 @@ func TestComputeExecutorCapacityWeightsCPUSecondsModeClampsRelativeCost(t *testi
 
 	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
 
-	require.InDelta(t, 5.656854249, weights["fast-1"], 1e-9)
-	require.InDelta(t, 5.656854249, weights["fast-2"], 1e-9)
-	require.InDelta(t, 2.828427125, weights["slow"], 1e-9)
+	require.InDelta(t, 8.0, weights["fast-1"], 1e-9)
+	require.InDelta(t, 8.0, weights["fast-2"], 1e-9)
+	require.InDelta(t, 2.0, weights["slow"], 1e-9)
 }
 
 func TestComputeExecutorCapacityWeightsCPUSecondsModeKeepsBaseWeightForMissingCost(t *testing.T) {
