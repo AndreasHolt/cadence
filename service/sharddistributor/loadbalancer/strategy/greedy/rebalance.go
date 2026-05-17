@@ -282,7 +282,7 @@ func computeCPUSecondsAdjustedWeights(
 			cost = averageCPUCost
 		}
 		relativeCost := clamp(cost/averageCPUCost, minRelativeCPUCost, maxRelativeCPUCost)
-		weights[executorID] = weights[executorID] / relativeCost
+		weights[executorID] = weights[executorID] / math.Sqrt(relativeCost)
 	}
 
 	return weights
