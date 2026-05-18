@@ -153,6 +153,11 @@ def main():
     parser.add_argument("--x-max", type=float, default=None, help="Maximum x-axis value in seconds.")
     parser.add_argument("--cpu-y-max", type=float, default=5.0)
     parser.add_argument("--split-by-pod", action="store_true")
+    parser.add_argument(
+        "--show-cpu-limits",
+        action="store_true",
+        help="Draw per-executor CPU-limit reference lines on utilization plots.",
+    )
     parser.add_argument("--no-started-line", action="store_true")
     parser.add_argument("--mark-errors", action="store_true")
     parser.add_argument("--skip-utilization", action="store_true")
@@ -183,6 +188,8 @@ def main():
             cmd.extend(["--x-max", str(args.x_max)])
         if args.split_by_pod:
             cmd.append("--split-by-pod")
+        if args.show_cpu_limits:
+            cmd.append("--show-cpu-limits")
         for label, csv_path, _, _ in resolved:
             cmd.extend(["--run", f"{label}={csv_path}"])
         subprocess.run(cmd, check=True)

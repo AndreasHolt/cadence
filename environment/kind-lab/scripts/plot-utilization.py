@@ -212,9 +212,9 @@ def main():
         help="Plot all sampled pods instead of only cadence-matching-* pods.",
     )
     parser.add_argument(
-        "--no-cpu-limits",
+        "--show-cpu-limits",
         action="store_true",
-        help="Do not draw matching executor CPU-limit reference lines.",
+        help="Draw per-matching-executor CPU-limit reference lines. Useful for unequal CPU-limit experiments.",
     )
     parser.add_argument(
         "--pod",
@@ -315,7 +315,7 @@ def main():
     throttling_path = args.output_dir / f"{args.prefix}-matching-throttling.png"
 
     fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
-    plot_cpu(ax, runs, show_limits=not args.no_cpu_limits and not args.all_pods)
+    plot_cpu(ax, runs, show_limits=args.show_cpu_limits and not args.all_pods)
     apply_time_axis(ax, args.x_min, args.x_max)
     apply_cpu_axis(ax, args.cpu_y_max)
     fig.savefig(cpu_path, dpi=180)
