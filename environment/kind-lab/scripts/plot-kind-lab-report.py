@@ -3,6 +3,7 @@ import argparse
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -127,6 +128,31 @@ def resolve_churn_csv(label, csv_path, log_path, prometheus_dir):
     return None
 
 
+def parse_run_id_timestamp(value):
+    # matching-lab run ids use Go layout 20060102T150405.000000000 in UTC.
+    try:
+        date_part, frac_part = value.split(".", 1)
+    except ValueError:
+        date_part, frac_part = value, ""
+    parsed = datetime.strptime(date_part, "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+    if frac_part:
+        micros = int((frac_part[:6]).ljust(6, "0"))
+        parsed = parsed.replace(microsecond=micros)
+    return parsed
+
+
+def infer_run_start_from_log(path):
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            match = re.search(r"^run id:\s+(\S+)", line.strip())
+            if match:
+                try:
+                    return parse_run_id_timestamp(match.group(1))
+                except ValueError:
+                    return None
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=(
@@ -169,7 +195,8 @@ def main():
         csv_path = resolve_file(path, ".csv", args.results_dir)
         log_path = resolve_file(path, ".log", args.results_dir)
         churn_path = resolve_churn_csv(label, csv_path, log_path, args.prometheus_dir)
-        resolved.append((label, csv_path, log_path, churn_path))
+        run_start = infer_run_start_from_log(log_path)
+        resolved.append((label, csv_path, log_path, churn_path, run_start))
 
     if not args.skip_utilization:
         cmd = [
@@ -184,14 +211,18 @@ def main():
         ]
         if args.x_min is not None:
             cmd.extend(["--x-min", str(args.x_min)])
+        elif any(run_start is not None for _, _, _, _, run_start in resolved):
+            cmd.extend(["--x-min", "0"])
         if args.x_max is not None:
             cmd.extend(["--x-max", str(args.x_max)])
         if args.split_by_pod:
             cmd.append("--split-by-pod")
         if args.show_cpu_limits:
             cmd.append("--show-cpu-limits")
-        for label, csv_path, _, _ in resolved:
+        for label, csv_path, _, _, run_start in resolved:
             cmd.extend(["--run", f"{label}={csv_path}"])
+            if run_start is not None:
+                cmd.extend(["--run-start", f"{label}={run_start.isoformat()}"])
         subprocess.run(cmd, check=True)
 
     if not args.skip_matching:
@@ -212,7 +243,7 @@ def main():
             cmd.append("--no-started-line")
         if args.mark_errors:
             cmd.append("--mark-errors")
-        for label, _, log_path, churn_path in resolved:
+        for label, _, log_path, churn_path, _ in resolved:
             cmd.extend(["--run", f"{label}={log_path}"])
             if churn_path is not None:
                 cmd.extend(["--churn-run", f"{label}={churn_path}"])

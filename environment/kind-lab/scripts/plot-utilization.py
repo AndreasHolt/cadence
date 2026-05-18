@@ -62,7 +62,17 @@ def parse_timestamp(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
 
 
-def read_utilization(path, matching_only):
+def parse_run_start_arg(value):
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("run start must be LABEL=TIME")
+    label, timestamp = value.split("=", 1)
+    label = label.strip()
+    if not label:
+        raise argparse.ArgumentTypeError("run start label must not be empty")
+    return clean_label(label), parse_timestamp(timestamp.strip())
+
+
+def read_utilization(path, matching_only, start_time=None):
     rows = []
     skipped_negative = 0
     with path.open("r", encoding="utf-8") as handle:
@@ -92,7 +102,7 @@ def read_utilization(path, matching_only):
     if skipped_negative:
         print(f"warning: skipped {skipped_negative} negative utilization rows from {path}")
 
-    start = min(row["timestamp"] for row in rows)
+    start = start_time or min(row["timestamp"] for row in rows)
     for row in rows:
         row["seconds"] = (row["timestamp"] - start).total_seconds()
     return rows
@@ -200,6 +210,13 @@ def main():
         help="Run to plot as LABEL=PATH. Can be provided multiple times.",
     )
     parser.add_argument(
+        "--run-start",
+        action="append",
+        type=parse_run_start_arg,
+        default=[],
+        help="Wall-clock run start as LABEL=ISO_TIMESTAMP. Used to align utilization CSVs with matching-lab logs.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("environment/kind-lab/results/plots"),
@@ -262,8 +279,9 @@ def main():
 
     import matplotlib.pyplot as plt
 
+    run_starts = dict(args.run_start)
     runs = [
-        (label, read_utilization(path, matching_only=not args.all_pods))
+        (label, read_utilization(path, matching_only=not args.all_pods, start_time=run_starts.get(label)))
         for label, path in args.run
     ]
 
