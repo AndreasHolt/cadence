@@ -15,11 +15,11 @@ RUN_LABELS = {
     "off": "Greedy baseline",
     "greedy": "Greedy baseline",
     "baseline": "Greedy baseline",
-    "latency": "Latency-aware greedy",
-    "cpu": "CPU-time-aware greedy",
-    "cpu-seconds": "CPU-time-aware greedy",
-    "cpu_seconds": "CPU-time-aware greedy",
-    "cpuseconds": "CPU-time-aware greedy",
+    "latency": "Latency aware greedy",
+    "cpu": "CPU utilization aware greedy",
+    "cpu-seconds": "CPU utilization aware greedy",
+    "cpu_seconds": "CPU utilization aware greedy",
+    "cpuseconds": "CPU utilization aware greedy",
 }
 
 
@@ -105,7 +105,7 @@ def prometheus_candidates(label, csv_path, log_path):
         csv_path.stem,
         log_path.stem,
     ]
-    if "CPU-time" in label:
+    if "CPU utilization" in label or "CPU-time" in label:
         names.extend(["cpu-seconds", "cpu_seconds", "cpuseconds"])
     elif "Latency" in label:
         names.extend(["latency", "greedy-latency"])
@@ -180,11 +180,34 @@ def main():
     parser.add_argument("--cpu-y-max", type=float, default=5.0)
     parser.add_argument("--split-by-pod", action="store_true")
     parser.add_argument(
+        "--split-utilization-by-run",
+        action="store_true",
+        help=(
+            "Generate utilization figures as one panel per run. This is usually "
+            "more readable than the combined nine-line CPU plot."
+        ),
+    )
+    parser.add_argument(
         "--show-cpu-limits",
         action="store_true",
         help="Draw per-executor CPU-limit reference lines on utilization plots.",
     )
     parser.add_argument("--no-started-line", action="store_true")
+    parser.add_argument(
+        "--throughput-smooth-samples",
+        type=int,
+        default=1,
+        help=(
+            "Rolling mean window, in matching-lab summary samples, for throughput. "
+            "With the default 10s summary interval, 6 means a 60s rolling mean."
+        ),
+    )
+    parser.add_argument(
+        "--latency-y-max-seconds",
+        type=float,
+        default=None,
+        help="Maximum y-axis value for p95 latency plots in seconds. Use 0 to auto-scale.",
+    )
     parser.add_argument("--mark-errors", action="store_true")
     parser.add_argument("--skip-utilization", action="store_true")
     parser.add_argument("--skip-matching", action="store_true")
@@ -217,6 +240,8 @@ def main():
             cmd.extend(["--x-max", str(args.x_max)])
         if args.split_by_pod:
             cmd.append("--split-by-pod")
+        if args.split_utilization_by_run:
+            cmd.append("--split-by-run")
         if args.show_cpu_limits:
             cmd.append("--show-cpu-limits")
         for label, csv_path, _, _, run_start in resolved:
@@ -241,6 +266,10 @@ def main():
             cmd.extend(["--x-max", str(args.x_max)])
         if args.no_started_line:
             cmd.append("--no-started-line")
+        if args.throughput_smooth_samples > 1:
+            cmd.extend(["--throughput-smooth-samples", str(args.throughput_smooth_samples)])
+        if args.latency_y_max_seconds is not None:
+            cmd.extend(["--latency-y-max-seconds", str(args.latency_y_max_seconds)])
         if args.mark_errors:
             cmd.append("--mark-errors")
         for label, _, log_path, churn_path, _ in resolved:

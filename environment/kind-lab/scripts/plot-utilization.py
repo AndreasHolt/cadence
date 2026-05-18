@@ -15,24 +15,26 @@ MATCHING_LIMITS = {
 }
 
 POD_LABELS = {
-    "cadence-matching-a-0": "Matching A",
-    "cadence-matching-b-0": "Matching B",
-    "cadence-matching-c-0": "Matching C",
+    "cadence-matching-a-0": "Matching 1 (10 million)",
+    "cadence-matching-b-0": "Matching 2 (15 million)",
+    "cadence-matching-c-0": "Matching 3 (20 million)",
 }
 
 RUN_LABELS = {
     "off": "Greedy baseline",
     "greedy": "Greedy baseline",
     "baseline": "Greedy baseline",
-    "latency": "Latency-aware greedy",
-    "greedy-latency": "Latency-aware greedy",
-    "cpu_seconds": "CPU-time-aware greedy",
-    "cpu-seconds": "CPU-time-aware greedy",
-    "cpuseconds": "CPU-time-aware greedy",
-    "greedy-cpu-seconds": "CPU-time-aware greedy",
+    "latency": "Latency aware greedy",
+    "greedy-latency": "Latency aware greedy",
+    "cpu_seconds": "CPU utilization aware greedy",
+    "cpu-seconds": "CPU utilization aware greedy",
+    "cpuseconds": "CPU utilization aware greedy",
+    "greedy-cpu-seconds": "CPU utilization aware greedy",
     "greedy baseline": "Greedy baseline",
-    "latency-aware greedy": "Latency-aware greedy",
-    "cpu-time-aware greedy": "CPU-time-aware greedy",
+    "latency-aware greedy": "Latency aware greedy",
+    "latency aware greedy": "Latency aware greedy",
+    "cpu-time-aware greedy": "CPU utilization aware greedy",
+    "cpu utilization aware greedy": "CPU utilization aware greedy",
 }
 
 
@@ -163,6 +165,70 @@ def plot_throttling(ax, runs, metric):
     ax.legend()
 
 
+def plot_cpu_by_run(plt, runs, show_limits, x_min, x_max, y_max):
+    fig, axes = plt.subplots(
+        len(runs),
+        1,
+        figsize=(10, max(3.0, 2.7 * len(runs))),
+        sharex=True,
+        sharey=True,
+    )
+    if len(runs) == 1:
+        axes = [axes]
+
+    for ax, (label, rows) in zip(axes, runs):
+        plot_cpu(ax, [(label, rows)], show_limits=show_limits)
+        ax.set_title(label)
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        legend = ax.get_legend()
+        if legend is not None:
+            legend.remove()
+        apply_time_axis(ax, x_min, x_max)
+        apply_cpu_axis(ax, y_max)
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(handles, labels, loc="upper center", ncols=min(3, len(labels)), bbox_to_anchor=(0.5, 0.98))
+    fig.supylabel("CPU cores")
+    axes[-1].set_xlabel("Time since start (min)")
+    fig.suptitle("Matching CPU utilization", fontsize=14, y=0.995)
+    fig.subplots_adjust(top=0.88, hspace=0.28)
+    return fig
+
+
+def plot_throttling_by_run(plt, runs, metric, x_min, x_max):
+    fig, axes = plt.subplots(
+        len(runs),
+        1,
+        figsize=(10, max(3.0, 2.7 * len(runs))),
+        sharex=True,
+        sharey=True,
+    )
+    if len(runs) == 1:
+        axes = [axes]
+
+    for ax, (label, rows) in zip(axes, runs):
+        plot_throttling(ax, [(label, rows)], metric)
+        ax.set_title(label)
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        legend = ax.get_legend()
+        if legend is not None:
+            legend.remove()
+        apply_time_axis(ax, x_min, x_max)
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    ylabel = "Throttled CPU time (cores)" if metric == "cores" else "CPU throttling events per sample"
+    if handles:
+        fig.legend(handles, labels, loc="upper center", ncols=min(3, len(labels)), bbox_to_anchor=(0.5, 0.98))
+    fig.supylabel(ylabel)
+    axes[-1].set_xlabel("Time since start (min)")
+    fig.suptitle("Matching CPU throttling", fontsize=14, y=0.995)
+    fig.subplots_adjust(top=0.88, hspace=0.28)
+    return fig
+
+
 def apply_time_axis(ax, x_min, x_max):
     if x_min is not None or x_max is not None:
         left, right = ax.get_xlim()
@@ -243,6 +309,14 @@ def main():
         "--split-by-pod",
         action="store_true",
         help="Write one CPU/throttling plot pair per pod.",
+    )
+    parser.add_argument(
+        "--split-by-run",
+        action="store_true",
+        help=(
+            "Write paper-friendly CPU/throttling figures with one panel per run. "
+            "Each panel contains only the matching executors for that run."
+        ),
     )
     parser.add_argument(
         "--x-min",
@@ -327,6 +401,35 @@ def main():
 
             print(f"wrote {cpu_path}")
             print(f"wrote {throttling_path}")
+        return
+
+    if args.split_by_run:
+        cpu_path = args.output_dir / f"{args.prefix}-matching-cpu-by-run.png"
+        throttling_path = args.output_dir / f"{args.prefix}-matching-throttling-by-run.png"
+
+        fig = plot_cpu_by_run(
+            plt,
+            runs,
+            show_limits=args.show_cpu_limits and not args.all_pods,
+            x_min=args.x_min,
+            x_max=args.x_max,
+            y_max=args.cpu_y_max,
+        )
+        fig.savefig(cpu_path, dpi=180)
+        plt.close(fig)
+
+        fig = plot_throttling_by_run(
+            plt,
+            runs,
+            args.throttling_metric,
+            x_min=args.x_min,
+            x_max=args.x_max,
+        )
+        fig.savefig(throttling_path, dpi=180)
+        plt.close(fig)
+
+        print(f"wrote {cpu_path}")
+        print(f"wrote {throttling_path}")
         return
 
     cpu_path = args.output_dir / f"{args.prefix}-matching-cpu.png"

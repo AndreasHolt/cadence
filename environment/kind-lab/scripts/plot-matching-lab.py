@@ -13,15 +13,17 @@ RUN_LABELS = {
     "off": "Greedy baseline",
     "greedy": "Greedy baseline",
     "baseline": "Greedy baseline",
-    "latency": "Latency-aware greedy",
-    "greedy-latency": "Latency-aware greedy",
-    "cpu-seconds": "CPU-time-aware greedy",
-    "cpu_seconds": "CPU-time-aware greedy",
-    "cpuseconds": "CPU-time-aware greedy",
-    "greedy-cpu-seconds": "CPU-time-aware greedy",
+    "latency": "Latency aware greedy",
+    "greedy-latency": "Latency aware greedy",
+    "cpu-seconds": "CPU utilization aware greedy",
+    "cpu_seconds": "CPU utilization aware greedy",
+    "cpuseconds": "CPU utilization aware greedy",
+    "greedy-cpu-seconds": "CPU utilization aware greedy",
     "greedy baseline": "Greedy baseline",
-    "latency-aware greedy": "Latency-aware greedy",
-    "cpu-time-aware greedy": "CPU-time-aware greedy",
+    "latency-aware greedy": "Latency aware greedy",
+    "latency aware greedy": "Latency aware greedy",
+    "cpu-time-aware greedy": "CPU utilization aware greedy",
+    "cpu utilization aware greedy": "CPU utilization aware greedy",
 }
 
 
@@ -199,11 +201,27 @@ def x_series(points):
     return [point / 60.0 for point in series(points, "at_seconds")]
 
 
-def plot_completed_rps(ax, runs, show_started, mark_errors, title):
+def rolling_average(values, window):
+    if window <= 1:
+        return values
+    averaged = []
+    running_sum = 0.0
+    queue = []
+    for value in values:
+        queue.append(value)
+        running_sum += value
+        if len(queue) > window:
+            running_sum -= queue.pop(0)
+        averaged.append(running_sum / len(queue))
+    return averaged
+
+
+def plot_completed_rps(ax, runs, show_started, mark_errors, title, smooth_window):
     for label, points in runs:
+        values = series(points, "window_completed_rps")
         ax.plot(
             x_series(points),
-            series(points, "window_completed_rps"),
+            rolling_average(values, smooth_window),
             linewidth=1.8,
             label=label,
             zorder=2,
@@ -215,9 +233,10 @@ def plot_completed_rps(ax, runs, show_started, mark_errors, title):
 
     if show_started and runs:
         _, first_points = runs[0]
+        values = series(first_points, "window_started_rps")
         ax.plot(
             x_series(first_points),
-            series(first_points, "window_started_rps"),
+            rolling_average(values, smooth_window),
             color="black",
             linestyle=(0, (6, 4)),
             linewidth=1.7,
@@ -226,7 +245,8 @@ def plot_completed_rps(ax, runs, show_started, mark_errors, title):
             zorder=4,
         )
 
-    ax.set_title(title or "Completed workflow throughput")
+    title_suffix = "" if smooth_window <= 1 else f" ({smooth_window * 10}s rolling mean)"
+    ax.set_title(title or f"Completed workflow throughput{title_suffix}")
     ax.set_xlabel("Time since start (min)")
     ax.set_ylabel("Completed workflows/s")
     ax.grid(True, alpha=0.25)
@@ -264,11 +284,11 @@ def plot_completed_cumulative(ax, runs, title):
     ax.legend()
 
 
-def plot_p95_latency(ax, runs, mark_errors, title):
+def plot_p95_latency(ax, runs, mark_errors, title, y_max_seconds):
     for label, points in runs:
         ax.plot(
             x_series(points),
-            series(points, "window_latency_p95_ms"),
+            [value / 1000.0 for value in series(points, "window_latency_p95_ms")],
             linewidth=1.8,
             label=label,
         )
@@ -279,7 +299,9 @@ def plot_p95_latency(ax, runs, mark_errors, title):
 
     ax.set_title(title or "Workflow completion latency (p95)")
     ax.set_xlabel("Time since start (min)")
-    ax.set_ylabel("p95 latency (ms)")
+    ax.set_ylabel("p95 latency (s)")
+    if y_max_seconds is not None and y_max_seconds > 0:
+        ax.set_ylim(0, y_max_seconds)
     ax.grid(True, alpha=0.25)
     ax.legend()
 
@@ -409,6 +431,15 @@ def main():
         help="Do not draw the first run's offered-starts line on the throughput plot.",
     )
     parser.add_argument(
+        "--throughput-smooth-samples",
+        type=int,
+        default=1,
+        help=(
+            "Rolling mean window, in summary samples, for throughput plots. "
+            "With the default 10s summary interval, 6 means a 60s rolling mean."
+        ),
+    )
+    parser.add_argument(
         "--mark-errors",
         action="store_true",
         help="Draw a vertical line when a run first reports start, poll, or completion errors.",
@@ -422,6 +453,12 @@ def main():
         "--latency-title",
         default="",
         help="Override the p95 latency plot title.",
+    )
+    parser.add_argument(
+        "--latency-y-max-seconds",
+        type=float,
+        default=None,
+        help="Maximum y-axis value for p95 latency plots in seconds. Use 0 to auto-scale.",
     )
     parser.add_argument(
         "--x-min",
@@ -489,6 +526,7 @@ def main():
         not args.no_started_line,
         args.mark_errors,
         args.throughput_title,
+        max(1, args.throughput_smooth_samples),
     )
     apply_time_axis(ax, args.x_min, args.x_max)
     fig.savefig(throughput_path, dpi=180)
@@ -502,7 +540,10 @@ def main():
     write_completed_totals(completed_totals_csv_path, runs)
 
     fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
-    plot_p95_latency(ax, runs, args.mark_errors, args.latency_title)
+    latency_y_max = args.latency_y_max_seconds
+    if latency_y_max is not None and latency_y_max <= 0:
+        latency_y_max = None
+    plot_p95_latency(ax, runs, args.mark_errors, args.latency_title, latency_y_max)
     apply_time_axis(ax, args.x_min, args.x_max)
     fig.savefig(latency_path, dpi=180)
     plt.close(fig)
