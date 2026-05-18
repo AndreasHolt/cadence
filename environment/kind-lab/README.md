@@ -1,3 +1,18 @@
+
+How to run the experiment
+Step 1: Build everything
+git submodule update --init --recursive
+make bins
+Step 2: Build and load the Docker image
+./environment/kind-lab/scripts/build-image.sh
+Step 3: Run the experiment
+./environment/kind-lab/scripts/run-experiment.sh \
+  --iterations 3 \
+  --modes cost_aware,benefit \
+  --scenario trace-21-12 \
+  --output-dir environment/kind-lab/results/experiment
+
+
 # Kind Lab for P10 Heterogeneous Matching Experiments
 
 This is a local evaluation setup for the P10 master's thesis work on heterogeneous node support and shard load balancing.

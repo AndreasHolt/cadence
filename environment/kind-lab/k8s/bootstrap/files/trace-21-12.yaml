@@ -9,16 +9,13 @@ retention_days: 1
 poll_timeout: 15s
 summary_interval: 10s
 trace:
-  path: /etc/cadence/kind-lab/traces/1hour_2500_fixed.csv
+  path: /etc/cadence/kind-lab/traces/21-12_00-06_fixed.csv
   interval: 10s
-  qps_scale: 1.0
-  qps_scale_ramp:
-    start: 0.005
-    end: 0.054
+  qps_scale: 0.02
   time_scale: 1
   top_n: 2500
   start_row: 0
-  rows: 360
+  rows: 30
   poller_capacity_qps: 50
   start_workers: 512
   process_time: 0s

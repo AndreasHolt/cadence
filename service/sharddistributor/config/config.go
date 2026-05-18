@@ -54,8 +54,8 @@ type (
 		HysteresisLowerBand    dynamicproperties.Float64PropertyFnWithNamespaceFilters
 		SevereImbalanceRatio   dynamicproperties.Float64PropertyFnWithNamespaceFilters
 		HeterogeneityMode      dynamicproperties.StringPropertyFnWithNamespaceFilters
-		MoveScoringMode         dynamicproperties.StringPropertyFnWithNamespaceFilters
-		MovePenaltyCoefficient  dynamicproperties.Float64PropertyFnWithNamespaceFilters // penalty coefficient for cost-aware scoring
+		MoveScoringMode        dynamicproperties.StringPropertyFnWithNamespaceFilters
+		MovePenaltyCoefficient dynamicproperties.Float64PropertyFnWithNamespaceFilters // penalty coefficient for cost-aware scoring
 		CPUSecondsSmoothingTau dynamicproperties.DurationPropertyFnWithNamespaceFilters
 	}
 

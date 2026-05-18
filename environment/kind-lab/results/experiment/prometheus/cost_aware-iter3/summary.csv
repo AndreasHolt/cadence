@@ -1,0 +1,1 @@
+query,kind,metric,labels,samples,first_timestamp,last_timestamp,first_value,last_value,min,max,mean,stddev,cv,temporal_max_over_mean,p50,p95,p99,raw_delta,counter_delta,avg_counter_rate_per_sec,max_counter_rate_per_sec

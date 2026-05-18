@@ -41,6 +41,11 @@ DEFAULT_QUERIES = [
         "gauge",
     ),
     QuerySpec(
+        "sd_moved_shard_load_total",
+        "shard_distributor_shard_assign_moved_shard_load_total",
+        "counter",
+    ),
+    QuerySpec(
         "sd_assignment_load_max_over_mean",
         "shard_distributor_assignment_load_max_over_mean",
         "gauge",

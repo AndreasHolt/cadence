@@ -11,6 +11,7 @@ MATCHING_BASE_BURN_ITERATIONS="${MATCHING_BASE_BURN_ITERATIONS:-15000000}"
 MATCHING_FAST_BURN_ITERATIONS="${MATCHING_FAST_BURN_ITERATIONS:-10000000}"
 MATCHING_SLOW_BURN_ITERATIONS="${MATCHING_SLOW_BURN_ITERATIONS:-20000000}"
 GREEDY_CPU_SECONDS_SMOOTHING_TAU="${GREEDY_CPU_SECONDS_SMOOTHING_TAU:-5m}"
+GREEDY_MOVE_PENALTY_COEFFICIENT="${GREEDY_MOVE_PENALTY_COEFFICIENT:-0.2}"
 
 case "$MODE" in
   homogeneous|heterogeneous)
@@ -56,6 +57,14 @@ case "$MATCHING_HETEROGENEITY_PROFILE" in
     MATCHING_B_BURN="$MATCHING_BASE_BURN_ITERATIONS"
     MATCHING_C_BURN="$MATCHING_SLOW_BURN_ITERATIONS"
     ;;
+  homogeneous_zero_burn)
+    MATCHING_A_CPU="1"
+    MATCHING_B_CPU="1"
+    MATCHING_C_CPU="1"
+    MATCHING_A_BURN="0"
+    MATCHING_B_BURN="0"
+    MATCHING_C_BURN="0"
+    ;;
   mixed)
     MATCHING_A_CPU="1"
     MATCHING_B_CPU="2"
@@ -88,7 +97,7 @@ kubectl apply -k "$ROOT/environment/kind-lab/k8s/bootstrap"
 tmp_config_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_config_dir"' EXIT
 cp "$ROOT"/environment/kind-lab/k8s/bootstrap/files/* "$tmp_config_dir"/
-awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GREEDY_MOVE_SCORING_MODE" -v cpu_smoothing_tau="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" '
+awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GREEDY_MOVE_SCORING_MODE" -v cpu_smoothing_tau="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" -v move_penalty_coefficient="$GREEDY_MOVE_PENALTY_COEFFICIENT" '
   $0 == "shardDistributor.loadBalancingGreedy.heterogeneityMode:" {
     in_heterogeneity_key = 1
     print
@@ -101,6 +110,11 @@ awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GR
   }
   $0 == "shardDistributor.loadBalancingGreedy.cpuSecondsSmoothingTau:" {
     in_cpu_smoothing_tau_key = 1
+    print
+    next
+  }
+  $0 == "shardDistributor.loadBalancingGreedy.movePenaltyCoefficient:" {
+    in_move_penalty_key = 1
     print
     next
   }
@@ -119,6 +133,11 @@ awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GR
     in_cpu_smoothing_tau_key = 0
     next
   }
+  in_move_penalty_key && $1 == "-" && $2 == "value:" {
+    print "  - value: " move_penalty_coefficient
+    in_move_penalty_key = 0
+    next
+  }
   { print }
 ' "$tmp_config_dir/kind-lab-dynamic.yaml" > "$tmp_config_dir/kind-lab-dynamic.yaml.tmp"
 mv "$tmp_config_dir/kind-lab-dynamic.yaml.tmp" "$tmp_config_dir/kind-lab-dynamic.yaml"
@@ -134,6 +153,7 @@ echo "matching heterogeneity profile: $MATCHING_HETEROGENEITY_PROFILE"
 echo "  cadence-matching-a: cpu=$MATCHING_A_CPU burn_iterations=$MATCHING_A_BURN"
 echo "  cadence-matching-b: cpu=$MATCHING_B_CPU burn_iterations=$MATCHING_B_BURN"
 echo "  cadence-matching-c: cpu=$MATCHING_C_CPU burn_iterations=$MATCHING_C_BURN"
+echo "greedy move penalty coefficient: $GREEDY_MOVE_PENALTY_COEFFICIENT"
 echo "greedy cpu seconds smoothing tau: $GREEDY_CPU_SECONDS_SMOOTHING_TAU"
 
 kubectl rollout status statefulset/cassandra -n "$NAMESPACE" --timeout=5m

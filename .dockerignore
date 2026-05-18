@@ -6,4 +6,5 @@ cadence-canary
 cadence-bench
 cadence-sql-tool
 cadence-cassandra-tool
+cadence-matching-lab
 vendor/

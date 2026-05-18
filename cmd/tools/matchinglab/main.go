@@ -6,17 +6,22 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"net"
+	"net/http"
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pborman/uuid"
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
 	apiv1 "github.com/uber/cadence-idl/go/proto/api/v1"
 	"go.uber.org/yarpc"
 	"go.uber.org/yarpc/transport/grpc"
@@ -51,6 +56,8 @@ type config struct {
 	Generator            generatorConfig  `yaml:"generator"`
 	Trace                traceConfig      `yaml:"trace"`
 	TaskLists            []taskListConfig `yaml:"task_lists"`
+	LogFile              string           `yaml:"log_file"`
+	MetricsEndpoints     []string         `yaml:"metrics_endpoints"`
 }
 
 type generatorConfig struct {
@@ -75,9 +82,13 @@ type stats struct {
 	pollErr     atomic.Int64
 	completeErr atomic.Int64
 
-	mu             sync.Mutex
-	workflowStarts map[string]time.Time
-	latencies      []time.Duration
+	mu                     sync.Mutex
+	workflowStarts         map[string]time.Time
+	latencies              []time.Duration
+	allLatencies           []time.Duration
+	startWorkflowLatencies []time.Duration
+	pollLatencies          []time.Duration
+	respondLatencies       []time.Duration
 }
 
 type summarySnapshot struct {
@@ -143,9 +154,35 @@ func newStats() *stats {
 	}
 }
 
+func (s *stats) recordStartWorkflowLatency(latency time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if latency >= 0 {
+		s.startWorkflowLatencies = append(s.startWorkflowLatencies, latency)
+	}
+}
+
+func (s *stats) recordPollLatency(latency time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if latency >= 0 {
+		s.pollLatencies = append(s.pollLatencies, latency)
+	}
+}
+
+func (s *stats) recordRespondLatency(latency time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if latency >= 0 {
+		s.respondLatencies = append(s.respondLatencies, latency)
+	}
+}
+
 func main() {
 	var configPath string
+	var metricsEndpoints string
 	flag.StringVar(&configPath, "config", "", "path to the matching lab scenario yaml")
+	flag.StringVar(&metricsEndpoints, "metrics-endpoints", "", "comma-separated HTTP metrics endpoints to scrape at end of run")
 	flag.Parse()
 
 	if configPath == "" {
@@ -159,12 +196,47 @@ func main() {
 		os.Exit(1)
 	}
 
+	if metricsEndpoints != "" {
+		cfg.MetricsEndpoints = strings.Split(metricsEndpoints, ",")
+		for i := range cfg.MetricsEndpoints {
+			cfg.MetricsEndpoints[i] = strings.TrimSpace(cfg.MetricsEndpoints[i])
+		}
+	}
+
 	if err := cfg.validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "invalid config: %v\n", err)
 		os.Exit(1)
 	}
 	if cfg.RunID == "" {
 		cfg.RunID = time.Now().UTC().Format("20060102T150405.000000000")
+	}
+
+	// Set up log-file tee so all stdout is persisted to disk while still visible.
+	if cfg.LogFile != "" {
+		logFile, err := os.Create(cfg.LogFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "create log file: %v\n", err)
+			os.Exit(1)
+		}
+		defer logFile.Close()
+		// Redirect stdout through a pipe so we can tee to both terminal and file.
+		r, w, err := os.Pipe()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "create stdout pipe: %v\n", err)
+			os.Exit(1)
+		}
+		originalStdout := os.Stdout
+		os.Stdout = w
+		go func() {
+			defer r.Close()
+			multi := io.MultiWriter(originalStdout, logFile)
+			io.Copy(multi, r)
+		}()
+		defer func() {
+			w.Close()
+			// Give the tee goroutine a moment to flush.
+			time.Sleep(100 * time.Millisecond)
+		}()
 	}
 
 	workload, err := buildWorkload(cfg)
@@ -248,6 +320,46 @@ func main() {
 		st.emptyPolls.Load(),
 		st.pollErr.Load(),
 		st.completeErr.Load(),
+	)
+	st.printOverallSummary()
+
+	if len(cfg.MetricsEndpoints) > 0 {
+		printMetricsSummary(cfg.MetricsEndpoints)
+	}
+}
+
+func (s *stats) printOverallSummary() {
+	s.mu.Lock()
+	all := append([]time.Duration(nil), s.allLatencies...)
+	sw := append([]time.Duration(nil), s.startWorkflowLatencies...)
+	poll := append([]time.Duration(nil), s.pollLatencies...)
+	resp := append([]time.Duration(nil), s.respondLatencies...)
+	s.mu.Unlock()
+
+	fmt.Printf("overall_workflow_latency: %s\n", formatLatencySummary(all))
+	fmt.Printf("startworkflow_rpc_latency: %s\n", formatLatencySummary(sw))
+	fmt.Printf("poll_rpc_latency: %s\n", formatLatencySummary(poll))
+	fmt.Printf("respond_rpc_latency: %s\n", formatLatencySummary(resp))
+}
+
+func formatLatencySummary(latencies []time.Duration) string {
+	if len(latencies) == 0 {
+		return "samples=0"
+	}
+	sort.Slice(latencies, func(i, j int) bool {
+		return latencies[i] < latencies[j]
+	})
+	var total int64
+	for _, d := range latencies {
+		total += int64(d)
+	}
+	avg := time.Duration(total / int64(len(latencies)))
+	return fmt.Sprintf("samples=%d avg_ms=%.3f p50_ms=%.3f p95_ms=%.3f p99_ms=%.3f",
+		len(latencies),
+		durationMillis(avg),
+		percentileDurationMillis(latencies, 0.50),
+		percentileDurationMillis(latencies, 0.95),
+		percentileDurationMillis(latencies, 0.99),
 	)
 }
 
@@ -666,6 +778,7 @@ func runGenerator(
 
 			st.started.Add(1)
 			st.recordWorkflowStart(workflowID, startedAt)
+			st.recordStartWorkflowLatency(time.Since(startedAt))
 		}
 	}
 }
@@ -703,6 +816,7 @@ func runTraceGenerator(
 				}
 				st.started.Add(1)
 				st.recordWorkflowStart(event.workflowID, startedAt)
+				st.recordStartWorkflowLatency(time.Since(startedAt))
 			}
 		}()
 	}
@@ -777,6 +891,7 @@ func runPoller(
 		}
 
 		reqCtx, cancel := context.WithTimeout(ctx, pollTimeout)
+		pollStart := time.Now()
 		resp, err := frontend.PollForDecisionTask(reqCtx, &types.PollForDecisionTaskRequest{
 			Domain: domainName,
 			TaskList: &types.TaskList{
@@ -806,6 +921,7 @@ func runPoller(
 		}
 
 		st.polled.Add(1)
+		st.recordPollLatency(time.Since(pollStart))
 		if taskList.ProcessTime > 0 {
 			select {
 			case <-ctx.Done():
@@ -815,6 +931,7 @@ func runPoller(
 		}
 
 		reqCtx, cancel = context.WithTimeout(ctx, 5*time.Second)
+		respondStart := time.Now()
 		_, err = frontend.RespondDecisionTaskCompleted(reqCtx, &types.RespondDecisionTaskCompletedRequest{
 			TaskToken: resp.TaskToken,
 			Identity:  identity,
@@ -842,6 +959,7 @@ func runPoller(
 		}
 
 		st.completed.Add(1)
+		st.recordRespondLatency(time.Since(respondStart))
 		if resp.WorkflowExecution != nil {
 			st.recordWorkflowCompletion(resp.WorkflowExecution.GetWorkflowID(), time.Now())
 		}
@@ -868,6 +986,7 @@ func (s *stats) recordWorkflowCompletion(workflowID string, completedAt time.Tim
 	latency := completedAt.Sub(startedAt)
 	if latency >= 0 {
 		s.latencies = append(s.latencies, latency)
+		s.allLatencies = append(s.allLatencies, latency)
 	}
 }
 
@@ -1047,4 +1166,61 @@ func chooseTaskList(rng *rand.Rand, taskLists []weightedTaskList) weightedTaskLi
 	}
 
 	return taskLists[len(taskLists)-1]
+}
+
+func printMetricsSummary(endpoints []string) {
+	totalMoves := float64(0)
+	totalLoadMoved := float64(0)
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	for _, endpoint := range endpoints {
+		if endpoint == "" {
+			continue
+		}
+		moves, load, err := scrapeMetrics(client, endpoint)
+		if err != nil {
+			fmt.Printf("metrics_scrape_error: endpoint=%s err=%v\n", endpoint, err)
+			continue
+		}
+		totalMoves += moves
+		totalLoadMoved += load
+	}
+
+	fmt.Printf("total_moves: %.0f\n", totalMoves)
+	fmt.Printf("total_load_moved: %.0f\n", totalLoadMoved)
+}
+
+func scrapeMetrics(client *http.Client, endpoint string) (moves float64, load float64, err error) {
+	resp, err := client.Get(endpoint)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, 0, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	var parser expfmt.TextParser
+	metricFamilies, err := parser.TextToMetricFamilies(resp.Body)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	moves = extractCounterValue(metricFamilies, "shard_distributor_shard_assign_load_based_moves")
+	load = extractCounterValue(metricFamilies, "shard_distributor_shard_assign_moved_shard_load_total")
+	return moves, load, nil
+}
+
+func extractCounterValue(metricFamilies map[string]*dto.MetricFamily, name string) float64 {
+	mf, ok := metricFamilies[name]
+	if !ok || mf == nil {
+		return 0
+	}
+	total := 0.0
+	for _, m := range mf.GetMetric() {
+		if c := m.GetCounter(); c != nil {
+			total += c.GetValue()
+		}
+	}
+	return total
 }

@@ -1,0 +1,392 @@
+{
+  "end": "2026-05-18T19:27:05.000880+00:00",
+  "errors": [
+    {
+      "error": "Remote end closed connection without response",
+      "expr": "shard_distributor_shard_assign_load_based_moves",
+      "query": "sd_load_based_moves_total"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "rate(shard_distributor_shard_assign_load_based_moves[1m])",
+      "query": "sd_load_based_moves_rate_1m"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_shard_assign_moved_shard_load",
+      "query": "sd_moved_shard_load"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_shard_assign_moved_shard_load_total",
+      "query": "sd_moved_shard_load_total"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_assignment_load_max_over_mean",
+      "query": "sd_assignment_load_max_over_mean"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_assignment_load_cv",
+      "query": "sd_assignment_load_cv"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_assignment_smoothed_load_max_over_mean",
+      "query": "sd_assignment_smoothed_load_max_over_mean"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_assignment_smoothed_load_cv",
+      "query": "sd_assignment_smoothed_load_cv"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_assignment_smoothed_load_missing_ratio",
+      "query": "sd_assignment_smoothed_load_missing_ratio"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_assignment_smoothed_load_stale_ratio",
+      "query": "sd_assignment_smoothed_load_stale_ratio"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_total_executors",
+      "query": "sd_total_executors"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_active_shards",
+      "query": "sd_active_shards"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_oldest_executor_heartbeat_lag",
+      "query": "sd_oldest_executor_heartbeat_lag"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_executor_owned_shards",
+      "query": "sd_executor_owned_shards"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_executor_heartbeat_skipped",
+      "query": "sd_executor_heartbeat_skipped_total"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_executor_shards_started",
+      "query": "sd_executor_shards_started_total"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_executor_shards_stopped",
+      "query": "sd_executor_shards_stopped_total"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_executor_processor_creation_failures",
+      "query": "sd_executor_processor_creation_failures_total"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_executor_processor_start_timeout",
+      "query": "sd_executor_processor_start_timeout_total"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_executor_processor_stop_timeout",
+      "query": "sd_executor_processor_stop_timeout_total"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_executor_client_requests",
+      "query": "sd_executor_client_requests_total"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_executor_client_failures",
+      "query": "sd_executor_client_failures_total"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_store_requests_per_namespace",
+      "query": "sd_store_requests_total"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_store_failures_per_namespace",
+      "query": "sd_store_failures_total"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_watch_events_received",
+      "query": "sd_watch_events_received_total"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "shard_distributor_is_leader",
+      "query": "sd_is_leader"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "gomaxprocs{cadence_service=\"cadence_matching\"}",
+      "query": "matching_gomaxprocs"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "rate(cadence_requests{cadence_service=\"cadence_matching\",operation=\"AddTask\"}[1m])",
+      "query": "matching_addtask_request_rate_1m"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "rate(cadence_errors{cadence_service=\"cadence_matching\",operation=\"AddTask\"}[1m])",
+      "query": "matching_addtask_error_rate_1m"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "task_backlog_per_tl",
+      "query": "matching_task_backlog"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "task_lag_per_tl",
+      "query": "matching_task_lag"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "estimated_add_task_qps_per_tl",
+      "query": "matching_estimated_add_task_qps"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "histogram_quantile(0.95, sum by (le, instance, operation) (rate(cadence_latency_ns_bucket{cadence_service=\"cadence_matching\",operation=\"AddTask\"}[1m])))",
+      "query": "matching_addtask_p95_latency_ns_by_instance"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "histogram_quantile(0.95, sum by (le, cadence_service, operation) (rate(cadence_latency_ns_bucket{cadence_service=~\"cadence_matching|cadence_frontend|cadence_history\"}[1m])))",
+      "query": "matching_service_p95_latency_ns_by_operation"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(shard_distributor_latency_ns_bucket[1m])))",
+      "query": "sd_service_p95_latency_ns_by_operation"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(shard_distributor_shard_assignment_distribution_latency_bucket[1m])))",
+      "query": "sd_shard_assignment_distribution_p95_latency"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(shard_distributor_shard_handover_latency_bucket[1m])))",
+      "query": "sd_shard_handover_p95_latency"
+    },
+    {
+      "error": "<urlopen error [Errno 111] Connection refused>",
+      "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(shard_distributor_watch_processing_latency_bucket[1m])))",
+      "query": "sd_watch_processing_p95_latency"
+    }
+  ],
+  "pad_seconds": 30.0,
+  "prometheus_url": "http://localhost:9090",
+  "queries": [
+    {
+      "expr": "shard_distributor_shard_assign_load_based_moves",
+      "kind": "counter",
+      "name": "sd_load_based_moves_total"
+    },
+    {
+      "expr": "rate(shard_distributor_shard_assign_load_based_moves[1m])",
+      "kind": "rate",
+      "name": "sd_load_based_moves_rate_1m"
+    },
+    {
+      "expr": "shard_distributor_shard_assign_moved_shard_load",
+      "kind": "gauge",
+      "name": "sd_moved_shard_load"
+    },
+    {
+      "expr": "shard_distributor_shard_assign_moved_shard_load_total",
+      "kind": "counter",
+      "name": "sd_moved_shard_load_total"
+    },
+    {
+      "expr": "shard_distributor_assignment_load_max_over_mean",
+      "kind": "gauge",
+      "name": "sd_assignment_load_max_over_mean"
+    },
+    {
+      "expr": "shard_distributor_assignment_load_cv",
+      "kind": "gauge",
+      "name": "sd_assignment_load_cv"
+    },
+    {
+      "expr": "shard_distributor_assignment_smoothed_load_max_over_mean",
+      "kind": "gauge",
+      "name": "sd_assignment_smoothed_load_max_over_mean"
+    },
+    {
+      "expr": "shard_distributor_assignment_smoothed_load_cv",
+      "kind": "gauge",
+      "name": "sd_assignment_smoothed_load_cv"
+    },
+    {
+      "expr": "shard_distributor_assignment_smoothed_load_missing_ratio",
+      "kind": "gauge",
+      "name": "sd_assignment_smoothed_load_missing_ratio"
+    },
+    {
+      "expr": "shard_distributor_assignment_smoothed_load_stale_ratio",
+      "kind": "gauge",
+      "name": "sd_assignment_smoothed_load_stale_ratio"
+    },
+    {
+      "expr": "shard_distributor_total_executors",
+      "kind": "gauge",
+      "name": "sd_total_executors"
+    },
+    {
+      "expr": "shard_distributor_active_shards",
+      "kind": "gauge",
+      "name": "sd_active_shards"
+    },
+    {
+      "expr": "shard_distributor_oldest_executor_heartbeat_lag",
+      "kind": "gauge",
+      "name": "sd_oldest_executor_heartbeat_lag"
+    },
+    {
+      "expr": "shard_distributor_executor_owned_shards",
+      "kind": "gauge",
+      "name": "sd_executor_owned_shards"
+    },
+    {
+      "expr": "shard_distributor_executor_heartbeat_skipped",
+      "kind": "counter",
+      "name": "sd_executor_heartbeat_skipped_total"
+    },
+    {
+      "expr": "shard_distributor_executor_shards_started",
+      "kind": "counter",
+      "name": "sd_executor_shards_started_total"
+    },
+    {
+      "expr": "shard_distributor_executor_shards_stopped",
+      "kind": "counter",
+      "name": "sd_executor_shards_stopped_total"
+    },
+    {
+      "expr": "shard_distributor_executor_processor_creation_failures",
+      "kind": "counter",
+      "name": "sd_executor_processor_creation_failures_total"
+    },
+    {
+      "expr": "shard_distributor_executor_processor_start_timeout",
+      "kind": "counter",
+      "name": "sd_executor_processor_start_timeout_total"
+    },
+    {
+      "expr": "shard_distributor_executor_processor_stop_timeout",
+      "kind": "counter",
+      "name": "sd_executor_processor_stop_timeout_total"
+    },
+    {
+      "expr": "shard_distributor_executor_client_requests",
+      "kind": "counter",
+      "name": "sd_executor_client_requests_total"
+    },
+    {
+      "expr": "shard_distributor_executor_client_failures",
+      "kind": "counter",
+      "name": "sd_executor_client_failures_total"
+    },
+    {
+      "expr": "shard_distributor_store_requests_per_namespace",
+      "kind": "counter",
+      "name": "sd_store_requests_total"
+    },
+    {
+      "expr": "shard_distributor_store_failures_per_namespace",
+      "kind": "counter",
+      "name": "sd_store_failures_total"
+    },
+    {
+      "expr": "shard_distributor_watch_events_received",
+      "kind": "counter",
+      "name": "sd_watch_events_received_total"
+    },
+    {
+      "expr": "shard_distributor_is_leader",
+      "kind": "gauge",
+      "name": "sd_is_leader"
+    },
+    {
+      "expr": "gomaxprocs{cadence_service=\"cadence_matching\"}",
+      "kind": "gauge",
+      "name": "matching_gomaxprocs"
+    },
+    {
+      "expr": "rate(cadence_requests{cadence_service=\"cadence_matching\",operation=\"AddTask\"}[1m])",
+      "kind": "rate",
+      "name": "matching_addtask_request_rate_1m"
+    },
+    {
+      "expr": "rate(cadence_errors{cadence_service=\"cadence_matching\",operation=\"AddTask\"}[1m])",
+      "kind": "rate",
+      "name": "matching_addtask_error_rate_1m"
+    },
+    {
+      "expr": "task_backlog_per_tl",
+      "kind": "gauge",
+      "name": "matching_task_backlog"
+    },
+    {
+      "expr": "task_lag_per_tl",
+      "kind": "gauge",
+      "name": "matching_task_lag"
+    },
+    {
+      "expr": "estimated_add_task_qps_per_tl",
+      "kind": "gauge",
+      "name": "matching_estimated_add_task_qps"
+    },
+    {
+      "expr": "histogram_quantile(0.95, sum by (le, instance, operation) (rate(cadence_latency_ns_bucket{cadence_service=\"cadence_matching\",operation=\"AddTask\"}[1m])))",
+      "kind": "histogram_quantile",
+      "name": "matching_addtask_p95_latency_ns_by_instance"
+    },
+    {
+      "expr": "histogram_quantile(0.95, sum by (le, cadence_service, operation) (rate(cadence_latency_ns_bucket{cadence_service=~\"cadence_matching|cadence_frontend|cadence_history\"}[1m])))",
+      "kind": "histogram_quantile",
+      "name": "matching_service_p95_latency_ns_by_operation"
+    },
+    {
+      "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(shard_distributor_latency_ns_bucket[1m])))",
+      "kind": "histogram_quantile",
+      "name": "sd_service_p95_latency_ns_by_operation"
+    },
+    {
+      "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(shard_distributor_shard_assignment_distribution_latency_bucket[1m])))",
+      "kind": "histogram_quantile",
+      "name": "sd_shard_assignment_distribution_p95_latency"
+    },
+    {
+      "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(shard_distributor_shard_handover_latency_bucket[1m])))",
+      "kind": "histogram_quantile",
+      "name": "sd_shard_handover_p95_latency"
+    },
+    {
+      "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(shard_distributor_watch_processing_latency_bucket[1m])))",
+      "kind": "histogram_quantile",
+      "name": "sd_watch_processing_p95_latency"
+    }
+  ],
+  "run": "cost_aware-iter1",
+  "start": "2026-05-18T19:20:55+00:00",
+  "step": "15s"
+}

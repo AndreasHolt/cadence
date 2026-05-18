@@ -19,7 +19,13 @@ spec:
           command:
             - /bin/sh
             - -c
-            - cadence-matching-lab --config "/etc/cadence/kind-lab/${SCENARIO}.yaml"
+            - >
+              LOGFILE="/tmp/matching-lab-${SCENARIO}-$(date +%s).log"
+              && cadence-matching-lab
+              --config "/etc/cadence/kind-lab/${SCENARIO}.yaml"
+              --metrics-endpoints "http://cadence-shard-distributor-0.cadence-shard-distributor-headless:9090/metrics"
+              > "$LOGFILE" 2>&1
+              ; cat "$LOGFILE"
           env:
             - name: SCENARIO
               value: hotspot

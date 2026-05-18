@@ -154,6 +154,7 @@ func PlanRebalance(
 					load = report.ShardLoad
 				}
 				metricsScope.UpdateGauge(metrics.ShardDistributorAssignLoopMovedShardLoad, load)
+				metricsScope.AddCounter(metrics.ShardDistributorAssignLoopMovedShardLoadTotal, int64(load))
 			}
 			updateExecutorLoadsAfterMove(namespaceState, sourceExecutor, destExecutor, loads, shardToMove)
 			moveBudget--
