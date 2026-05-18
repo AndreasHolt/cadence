@@ -19,6 +19,9 @@ RUN_LABELS = {
     "cpu_seconds": "CPU-time-aware greedy",
     "cpuseconds": "CPU-time-aware greedy",
     "greedy-cpu-seconds": "CPU-time-aware greedy",
+    "greedy baseline": "Greedy baseline",
+    "latency-aware greedy": "Latency-aware greedy",
+    "cpu-time-aware greedy": "CPU-time-aware greedy",
 }
 
 
