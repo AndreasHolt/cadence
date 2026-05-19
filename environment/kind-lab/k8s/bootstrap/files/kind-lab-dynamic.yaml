@@ -47,7 +47,7 @@ shardDistributor.loadBalancingGreedy.moveScoringMode:
     constraints:
       namespace: cadence-matching-kind-lab
 shardDistributor.loadBalancingGreedy.cpuSecondsSmoothingTau:
-  - value: 5m
+  - value: 10m
     constraints:
       namespace: cadence-matching-kind-lab
 matching.enableAdaptiveScaler:
