@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 NAMESPACE="cadence-kind-lab"
 GREEDY_HETEROGENEITY_MODE="${GREEDY_HETEROGENEITY_MODE:-off}"
 GREEDY_MOVE_SCORING_MODE="${GREEDY_MOVE_SCORING_MODE:-benefit}"
+GREEDY_MOVE_PENALTY_COEFFICIENT="${GREEDY_MOVE_PENALTY_COEFFICIENT:-0.2}"
 MATCHING_HETEROGENEITY_PROFILE="${MATCHING_HETEROGENEITY_PROFILE:-equal_burn}"
 MATCHING_BASE_BURN_ITERATIONS="${MATCHING_BASE_BURN_ITERATIONS:-15000000}"
 MATCHING_FAST_BURN_ITERATIONS="${MATCHING_FAST_BURN_ITERATIONS:-10000000}"
@@ -88,7 +89,7 @@ kubectl apply -k "$ROOT/environment/kind-lab/k8s/bootstrap"
 tmp_config_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_config_dir"' EXIT
 cp "$ROOT"/environment/kind-lab/k8s/bootstrap/files/* "$tmp_config_dir"/
-awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GREEDY_MOVE_SCORING_MODE" -v cpu_smoothing_tau="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" '
+awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GREEDY_MOVE_SCORING_MODE" -v move_penalty_coefficient="$GREEDY_MOVE_PENALTY_COEFFICIENT" -v cpu_smoothing_tau="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" '
   $0 == "shardDistributor.loadBalancingGreedy.heterogeneityMode:" {
     in_heterogeneity_key = 1
     print
@@ -96,6 +97,11 @@ awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GR
   }
   $0 == "shardDistributor.loadBalancingGreedy.moveScoringMode:" {
     in_move_scoring_key = 1
+    print
+    next
+  }
+  $0 == "shardDistributor.loadBalancingGreedy.movePenaltyCoefficient:" {
+    in_move_penalty_coefficient_key = 1
     print
     next
   }
@@ -114,6 +120,11 @@ awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GR
     in_move_scoring_key = 0
     next
   }
+  in_move_penalty_coefficient_key && $1 == "-" && $2 == "value:" {
+    print "  - value: " move_penalty_coefficient
+    in_move_penalty_coefficient_key = 0
+    next
+  }
   in_cpu_smoothing_tau_key && $1 == "-" && $2 == "value:" {
     print "  - value: " cpu_smoothing_tau
     in_cpu_smoothing_tau_key = 0
@@ -130,6 +141,7 @@ kubectl create configmap cadence-kind-lab-config -n "$NAMESPACE" \
   --dry-run=client -o yaml | kubectl apply -f -
 echo "greedy heterogeneity mode: $GREEDY_HETEROGENEITY_MODE"
 echo "greedy move scoring mode: $GREEDY_MOVE_SCORING_MODE"
+echo "greedy move penalty coefficient: $GREEDY_MOVE_PENALTY_COEFFICIENT"
 echo "matching heterogeneity profile: $MATCHING_HETEROGENEITY_PROFILE"
 echo "  cadence-matching-a: cpu=$MATCHING_A_CPU burn_iterations=$MATCHING_A_BURN"
 echo "  cadence-matching-b: cpu=$MATCHING_B_CPU burn_iterations=$MATCHING_B_BURN"

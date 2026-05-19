@@ -26,6 +26,12 @@ RUN_LABELS = {
     "cpu utilization aware greedy": "CPU utilization aware greedy",
 }
 
+RUN_COLORS = {
+    "Greedy baseline": "tab:blue",
+    "Latency aware greedy": "tab:orange",
+    "CPU utilization aware greedy": "tab:green",
+}
+
 
 def clean_label(value):
     key = value.strip().lower().replace("_", "-")
@@ -284,26 +290,65 @@ def plot_completed_cumulative(ax, runs, title):
     ax.legend()
 
 
+def p95_latency_seconds(points, y_max_seconds):
+    values = [
+        point.get("window_latency_p95_ms", 0.0) / 1000.0
+        if point.get("window_latency_samples", 0) > 0
+        else math.nan
+        for point in points
+    ]
+    if y_max_seconds is None or y_max_seconds <= 0:
+        return values, False
+    return [
+        min(value, y_max_seconds) if not math.isnan(value) else value
+        for value in values
+    ], any(value > y_max_seconds for value in values if not math.isnan(value))
+
+
+def plot_p95_latency_run(ax, label, points, mark_errors, y_max_seconds):
+    values, _clipped = p95_latency_seconds(points, y_max_seconds)
+    ax.plot(
+        x_series(points),
+        values,
+        linewidth=1.7,
+        color=RUN_COLORS.get(label),
+        label=label,
+    )
+    if mark_errors:
+        error_at = first_error_time(points)
+        if error_at is not None:
+            ax.axvline(error_at / 60.0, color="tab:red", linestyle=":", linewidth=1.2, alpha=0.7)
+
+    ax.set_title(label, loc="left", fontsize=10, fontweight="bold")
+    if y_max_seconds is not None and y_max_seconds > 0:
+        ax.axhline(y_max_seconds, color="0.45", linestyle="--", linewidth=0.9, alpha=0.8)
+        ax.set_ylim(0, y_max_seconds * 1.08)
+    ax.grid(True, alpha=0.25)
+
+
 def plot_p95_latency(ax, runs, mark_errors, title, y_max_seconds):
     for label, points in runs:
-        ax.plot(
-            x_series(points),
-            [value / 1000.0 for value in series(points, "window_latency_p95_ms")],
-            linewidth=1.8,
-            label=label,
-        )
-        if mark_errors:
-            error_at = first_error_time(points)
-            if error_at is not None:
-                ax.axvline(error_at / 60.0, color="tab:red", linestyle=":", linewidth=1.2, alpha=0.7)
+        plot_p95_latency_run(ax, label, points, mark_errors, y_max_seconds)
 
     ax.set_title(title or "Workflow completion latency (p95)")
     ax.set_xlabel("Time since start (min)")
     ax.set_ylabel("p95 latency (s)")
-    if y_max_seconds is not None and y_max_seconds > 0:
-        ax.set_ylim(0, y_max_seconds)
-    ax.grid(True, alpha=0.25)
     ax.legend()
+
+
+def plot_p95_latency_by_run(fig, axes, runs, mark_errors, title, y_max_seconds, x_min, x_max):
+    if len(runs) == 1:
+        axes = [axes]
+    fig.suptitle(title or "Workflow completion latency (p95)", fontsize=13)
+    for index, (ax, (label, points)) in enumerate(zip(axes, runs)):
+        plot_p95_latency_run(ax, label, points, mark_errors, y_max_seconds)
+        apply_time_axis(ax, x_min, x_max)
+        if index < len(runs) - 1:
+            ax.tick_params(labelbottom=False)
+        else:
+            ax.set_xlabel("Time since start (min)")
+
+    fig.supylabel("p95 latency (s)")
 
 
 def plot_churn_rate(ax, churn_runs, title):
@@ -539,12 +584,31 @@ def main():
     plt.close(fig)
     write_completed_totals(completed_totals_csv_path, runs)
 
-    fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
     latency_y_max = args.latency_y_max_seconds
     if latency_y_max is not None and latency_y_max <= 0:
         latency_y_max = None
-    plot_p95_latency(ax, runs, args.mark_errors, args.latency_title, latency_y_max)
-    apply_time_axis(ax, args.x_min, args.x_max)
+    if len(runs) > 1:
+        fig, axes = plt.subplots(
+            len(runs),
+            1,
+            figsize=(10, 2.45 * len(runs) + 0.7),
+            sharex=True,
+            constrained_layout=True,
+        )
+        plot_p95_latency_by_run(
+            fig,
+            axes,
+            runs,
+            args.mark_errors,
+            args.latency_title,
+            latency_y_max,
+            args.x_min,
+            args.x_max,
+        )
+    else:
+        fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
+        plot_p95_latency(ax, runs, args.mark_errors, args.latency_title, latency_y_max)
+        apply_time_axis(ax, args.x_min, args.x_max)
     fig.savefig(latency_path, dpi=180)
     plt.close(fig)
 
