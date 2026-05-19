@@ -154,7 +154,8 @@ func PlanRebalance(
 					load = report.ShardLoad
 				}
 				metricsScope.UpdateGauge(metrics.ShardDistributorAssignLoopMovedShardLoad, load)
-				metricsScope.AddCounter(metrics.ShardDistributorAssignLoopMovedShardLoadTotal, int64(load))
+				// Multiply by 1000 to preserve fractional load in integer counter (milli-load).
+				metricsScope.AddCounter(metrics.ShardDistributorAssignLoopMovedShardLoadTotal, int64(load*1000))
 			}
 			updateExecutorLoadsAfterMove(namespaceState, sourceExecutor, destExecutor, loads, shardToMove)
 			moveBudget--

@@ -1187,7 +1187,7 @@ func printMetricsSummary(endpoints []string) {
 	}
 
 	fmt.Printf("total_moves: %.0f\n", totalMoves)
-	fmt.Printf("total_load_moved: %.0f\n", totalLoadMoved)
+	fmt.Printf("total_load_moved: %.3f\n", totalLoadMoved)
 }
 
 func scrapeMetrics(client *http.Client, endpoint string) (moves float64, load float64, err error) {
@@ -1207,7 +1207,7 @@ func scrapeMetrics(client *http.Client, endpoint string) (moves float64, load fl
 	}
 
 	moves = extractCounterValue(metricFamilies, "shard_distributor_shard_assign_load_based_moves")
-	load = extractCounterValue(metricFamilies, "shard_distributor_shard_assign_moved_shard_load_total")
+	load = extractCounterValue(metricFamilies, "shard_distributor_shard_assign_moved_shard_load_total") / 1000
 	return moves, load, nil
 }
 
