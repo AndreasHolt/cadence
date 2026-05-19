@@ -9,11 +9,11 @@ set -euo pipefail
 # Example:
 #   MATCHING_HETEROGENEITY_PROFILE=homogeneous_zero_burn \
 #   GREEDY_HETEROGENEITY_MODE=off \
-#   GREEDY_MOVE_PENALTY_COEFFICIENT=0.2 \
 #     ./environment/kind-lab/scripts/run-experiment.sh \
 #       --iterations 3 \
 #       --modes cost_aware,benefit \
 #       --scenario trace-21-12 \
+#       --penalty-coefficient 1.4 \
 #       --output-dir environment/kind-lab/results/experiment
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -22,6 +22,7 @@ NAMESPACE="cadence-kind-lab"
 ITERATIONS=3
 MODES="cost_aware,benefit"
 SCENARIO="trace-21-12"
+PENALTY_COEFFICIENT=0.2
 OUTPUT_DIR="$ROOT/environment/kind-lab/results/experiment"
 PROMETHEUS_URL="http://localhost:9090"
 
@@ -33,6 +34,7 @@ Options:
   --iterations N          Number of iterations per mode (default: 3)
   --modes LIST            Comma-separated list of modes (default: cost_aware,benefit)
   --scenario NAME         Matching-lab scenario name (default: trace-21-12)
+  --penalty-coefficient N Greedy move penalty coefficient (default: 0.2)
   --output-dir PATH       Directory for logs and prometheus data
   --prometheus-url URL    Prometheus URL (default: http://localhost:9090)
   --help                  Show this message
@@ -51,6 +53,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --scenario)
       SCENARIO="$2"
+      shift 2
+      ;;
+    --penalty-coefficient)
+      PENALTY_COEFFICIENT="$2"
       shift 2
       ;;
     --output-dir)
@@ -129,7 +135,7 @@ for mode in "${MODE_LIST[@]}"; do
     GREEDY_MOVE_SCORING_MODE="$mode_trimmed" \
     MATCHING_HETEROGENEITY_PROFILE=homogeneous_zero_burn \
     GREEDY_HETEROGENEITY_MODE=off \
-    GREEDY_MOVE_PENALTY_COEFFICIENT=0.2 \
+    GREEDY_MOVE_PENALTY_COEFFICIENT="$PENALTY_COEFFICIENT" \
       "$ROOT/environment/kind-lab/scripts/deploy.sh" heterogeneous
 
     # ---- Deploy observability ---------------------------------
