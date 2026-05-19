@@ -31,10 +31,12 @@ def normalize(value):
     return re.sub(r"[^a-z0-9]", "", value.lower())
 
 
-def clean_label(value):
+def clean_label(value, fuzzy=True):
     key = value.strip().lower().replace("_", "-")
     if key in RUN_LABELS:
         return RUN_LABELS[key]
+    if not fuzzy:
+        return value.strip()
     compact = normalize(value)
     if "latency" in compact:
         return RUN_LABELS["latency"]
@@ -51,7 +53,7 @@ def parse_run_arg(value):
         label, path = value.split("=", 1)
         if not label.strip() or not path.strip():
             raise argparse.ArgumentTypeError("run must be LABEL=PATH or PATH")
-        return clean_label(label), Path(path)
+        return clean_label(label, fuzzy=False), Path(path)
     path = Path(value)
     return clean_label(path.stem), path
 

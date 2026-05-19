@@ -48,7 +48,8 @@ def parse_run_arg(value):
     label = label.strip()
     if not label:
         raise argparse.ArgumentTypeError("run label must not be empty")
-    return clean_label(label), Path(path)
+    key = label.strip().lower().replace("_", "-")
+    return RUN_LABELS.get(key, label), Path(path)
 
 
 def read_summary_json(path):
