@@ -156,6 +156,16 @@ DEFAULT_QUERIES = [
         "gauge",
     ),
     QuerySpec(
+        "matching_cpu_usage_cores",
+        'sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="cadence-kind-lab",container="matching"}[1m]))',
+        "rate",
+    ),
+    QuerySpec(
+        "matching_cpu_throttled_cores",
+        'sum by (pod) (rate(container_cpu_cfs_throttled_seconds_total{namespace="cadence-kind-lab",container="matching"}[1m]))',
+        "rate",
+    ),
+    QuerySpec(
         "matching_addtask_request_rate_1m",
         'rate(cadence_requests{cadence_service="cadence_matching",operation="AddTask"}[1m])',
         "rate",
@@ -348,6 +358,13 @@ def quantile(sorted_values, q):
     return sorted_values[lower] * (1 - weight) + sorted_values[upper] * weight
 
 
+def population_stddev(values, mean):
+    if len(values) <= 1:
+        return 0.0
+    variance = statistics.fmean((value - mean) ** 2 for value in values)
+    return math.sqrt(max(0.0, variance))
+
+
 def monotonic_delta(points):
     if len(points) < 2:
         return 0.0
@@ -399,7 +416,7 @@ def summarize_series(query_spec, result):
     values = [value for _, value in points]
     sorted_values = sorted(values)
     mean = statistics.fmean(values)
-    stddev = statistics.pstdev(values) if len(values) > 1 else 0.0
+    stddev = population_stddev(values, mean)
     duration = points[-1][0] - points[0][0]
     raw_delta = values[-1] - values[0]
     counter_delta = monotonic_delta(points)
@@ -445,6 +462,13 @@ def write_series_csv(path, payload):
                     continue
                 timestamp = datetime.fromtimestamp(float(raw_ts), tz=timezone.utc).isoformat()
                 writer.writerow([timestamp, value, name, labels])
+
+
+def has_series_rows(payload):
+    for result in payload.get("data", {}).get("result", []):
+        if result.get("values"):
+            return True
+    return False
 
 
 def write_summary_csv(path, summaries):
@@ -585,6 +609,16 @@ def main():
 
         raw_path = raw_dir / f"{safe_filename(spec.name)}.json"
         csv_path = csv_dir / f"{safe_filename(spec.name)}.csv"
+        if not has_series_rows(payload) and csv_path.exists() and csv_path.stat().st_size > 0:
+            errors.append(
+                {
+                    "query": spec.name,
+                    "expr": spec.expr,
+                    "error": "query returned no series; kept existing export",
+                }
+            )
+            print(f"warning: {spec.name}: query returned no series; kept existing export", file=sys.stderr)
+            continue
         with raw_path.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
             handle.write("\n")

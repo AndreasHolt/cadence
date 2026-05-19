@@ -123,8 +123,22 @@ def prometheus_candidates(label, csv_path, log_path):
 
 
 def resolve_churn_csv(label, csv_path, log_path, prometheus_dir):
+    colocated = csv_path.parent / log_path.stem / "csv" / "sd_load_based_moves_total.csv"
+    if colocated.exists():
+        return colocated
     for name in prometheus_candidates(label, csv_path, log_path):
         candidate = prometheus_dir / name / "csv" / "sd_load_based_moves_total.csv"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def resolve_prometheus_cpu_csv(label, csv_path, log_path, prometheus_dir):
+    colocated = csv_path.parent / log_path.stem / "csv" / "matching_cpu_usage_cores.csv"
+    if colocated.exists():
+        return colocated
+    for name in prometheus_candidates(label, csv_path, log_path):
+        candidate = prometheus_dir / name / "csv" / "matching_cpu_usage_cores.csv"
         if candidate.exists():
             return candidate
     return None
@@ -194,6 +208,11 @@ def main():
         action="store_true",
         help="Draw per-executor CPU-limit reference lines on utilization plots.",
     )
+    parser.add_argument(
+        "--use-prometheus-cpu",
+        action="store_true",
+        help="Use Prometheus matching_cpu_usage_cores exports for Matching CPU plots when available.",
+    )
     parser.add_argument("--no-started-line", action="store_true")
     parser.add_argument(
         "--throughput-smooth-samples",
@@ -224,6 +243,7 @@ def main():
         resolved.append((label, csv_path, log_path, churn_path, run_start))
 
     if not args.skip_utilization:
+        use_prometheus_cpu = args.use_prometheus_cpu
         cmd = [
             sys.executable,
             str(SCRIPT_DIR / "plot-utilization.py"),
@@ -246,8 +266,18 @@ def main():
             cmd.append("--split-by-run")
         if args.show_cpu_limits:
             cmd.append("--show-cpu-limits")
-        for label, csv_path, _, _, run_start in resolved:
-            cmd.extend(["--run", f"{label}={csv_path}"])
+        if use_prometheus_cpu:
+            cmd.append("--prometheus-cpu")
+        for label, csv_path, log_path, _, run_start in resolved:
+            utilization_path = csv_path
+            if use_prometheus_cpu:
+                prometheus_cpu_path = resolve_prometheus_cpu_csv(label, csv_path, log_path, args.prometheus_dir)
+                if prometheus_cpu_path is None:
+                    raise FileNotFoundError(
+                        f"no Prometheus CPU export found for {label}; expected matching_cpu_usage_cores.csv"
+                    )
+                utilization_path = prometheus_cpu_path
+            cmd.extend(["--run", f"{label}={utilization_path}"])
             if run_start is not None:
                 cmd.extend(["--run-start", f"{label}={run_start.isoformat()}"])
         subprocess.run(cmd, check=True)

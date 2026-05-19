@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import csv
+import json
 import math
 import os
 import re
@@ -38,10 +39,12 @@ RUN_LABELS = {
 }
 
 
-def clean_label(value):
+def clean_label(value, preserve_explicit=False):
     key = value.strip().lower().replace("_", "-")
     if key in RUN_LABELS:
         return RUN_LABELS[key]
+    if preserve_explicit:
+        return value.strip()
     cleaned = value.replace("_", " ").replace("-", " ").strip()
     return " ".join(word.capitalize() if word.islower() else word for word in cleaned.split())
 
@@ -57,7 +60,7 @@ def parse_run_arg(value):
     label = label.strip()
     if not label:
         raise argparse.ArgumentTypeError("run label must not be empty")
-    return clean_label(label), Path(path)
+    return clean_label(label, preserve_explicit=True), Path(path)
 
 
 def parse_timestamp(value):
@@ -71,7 +74,24 @@ def parse_run_start_arg(value):
     label = label.strip()
     if not label:
         raise argparse.ArgumentTypeError("run start label must not be empty")
-    return clean_label(label), parse_timestamp(timestamp.strip())
+    return clean_label(label, preserve_explicit=True), parse_timestamp(timestamp.strip())
+
+
+def parse_labels(value):
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+
+
+def pod_from_prometheus_labels(labels):
+    pod = labels.get("pod")
+    if pod:
+        return pod
+    instance = labels.get("instance", "")
+    if instance:
+        return instance.split(".")[0]
+    return "unknown"
 
 
 def read_utilization(path, matching_only, start_time=None):
@@ -103,6 +123,47 @@ def read_utilization(path, matching_only, start_time=None):
         raise ValueError(f"{path} contains no matching utilization rows")
     if skipped_negative:
         print(f"warning: skipped {skipped_negative} negative utilization rows from {path}")
+
+    start = start_time or min(row["timestamp"] for row in rows)
+    for row in rows:
+        row["seconds"] = (row["timestamp"] - start).total_seconds()
+    return rows
+
+
+def read_prometheus_utilization(cpu_path, throttling_path=None, matching_only=True, start_time=None):
+    rows = []
+    with cpu_path.open("r", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            labels = parse_labels(row.get("labels", "{}"))
+            pod = pod_from_prometheus_labels(labels)
+            if matching_only and not pod.startswith("cadence-matching-"):
+                continue
+            rows.append(
+                {
+                    "timestamp": parse_timestamp(row["timestamp"]),
+                    "pod": pod,
+                    "cpu_cores": float(row["value"]),
+                    "throttled_cores": 0.0,
+                    "throttled_events": 0.0,
+                    "memory_mib": 0.0,
+                }
+            )
+
+    if throttling_path is not None and throttling_path.exists():
+        throttled_by_key = {}
+        with throttling_path.open("r", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                labels = parse_labels(row.get("labels", "{}"))
+                pod = pod_from_prometheus_labels(labels)
+                timestamp = parse_timestamp(row["timestamp"])
+                throttled_by_key[(timestamp, pod)] = float(row["value"])
+        for row in rows:
+            row["throttled_cores"] = throttled_by_key.get((row["timestamp"], row["pod"]), 0.0)
+
+    if not rows:
+        raise ValueError(f"{cpu_path} contains no matching Prometheus CPU rows")
 
     start = start_time or min(row["timestamp"] for row in rows)
     for row in rows:
@@ -169,7 +230,7 @@ def plot_cpu_by_run(plt, runs, show_limits, x_min, x_max, y_max):
     fig, axes = plt.subplots(
         len(runs),
         1,
-        figsize=(10, max(3.0, 2.7 * len(runs))),
+        figsize=(10, max(4.2, 2.7 * len(runs))),
         sharex=True,
         sharey=True,
     )
@@ -189,11 +250,11 @@ def plot_cpu_by_run(plt, runs, show_limits, x_min, x_max, y_max):
 
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
-        fig.legend(handles, labels, loc="upper center", ncols=min(3, len(labels)), bbox_to_anchor=(0.5, 0.98))
+        fig.legend(handles, labels, loc="upper center", ncols=min(3, len(labels)), bbox_to_anchor=(0.5, 0.95))
     fig.supylabel("CPU cores")
     axes[-1].set_xlabel("Time since start (min)")
     fig.suptitle("Matching CPU utilization", fontsize=14, y=0.995)
-    fig.subplots_adjust(top=0.88, hspace=0.28)
+    fig.subplots_adjust(top=0.80 if len(runs) == 1 else 0.88, hspace=0.28)
     return fig
 
 
@@ -201,7 +262,7 @@ def plot_throttling_by_run(plt, runs, metric, x_min, x_max):
     fig, axes = plt.subplots(
         len(runs),
         1,
-        figsize=(10, max(3.0, 2.7 * len(runs))),
+        figsize=(10, max(4.2, 2.7 * len(runs))),
         sharex=True,
         sharey=True,
     )
@@ -221,11 +282,11 @@ def plot_throttling_by_run(plt, runs, metric, x_min, x_max):
     handles, labels = axes[0].get_legend_handles_labels()
     ylabel = "Throttled CPU time (cores)" if metric == "cores" else "CPU throttling events per sample"
     if handles:
-        fig.legend(handles, labels, loc="upper center", ncols=min(3, len(labels)), bbox_to_anchor=(0.5, 0.98))
+        fig.legend(handles, labels, loc="upper center", ncols=min(3, len(labels)), bbox_to_anchor=(0.5, 0.95))
     fig.supylabel(ylabel)
     axes[-1].set_xlabel("Time since start (min)")
     fig.suptitle("Matching CPU throttling", fontsize=14, y=0.995)
-    fig.subplots_adjust(top=0.88, hspace=0.28)
+    fig.subplots_adjust(top=0.80 if len(runs) == 1 else 0.88, hspace=0.28)
     return fig
 
 
@@ -281,6 +342,14 @@ def main():
         type=parse_run_start_arg,
         default=[],
         help="Wall-clock run start as LABEL=ISO_TIMESTAMP. Used to align utilization CSVs with matching-lab logs.",
+    )
+    parser.add_argument(
+        "--prometheus-cpu",
+        action="store_true",
+        help=(
+            "Treat --run paths as Prometheus matching_cpu_usage_cores CSVs instead of "
+            "sample-utilization.sh CSVs. A sibling matching_cpu_throttled_cores.csv is used if present."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -354,10 +423,24 @@ def main():
     import matplotlib.pyplot as plt
 
     run_starts = dict(args.run_start)
-    runs = [
-        (label, read_utilization(path, matching_only=not args.all_pods, start_time=run_starts.get(label)))
-        for label, path in args.run
-    ]
+    if args.prometheus_cpu:
+        runs = [
+            (
+                label,
+                read_prometheus_utilization(
+                    path,
+                    throttling_path=path.with_name("matching_cpu_throttled_cores.csv"),
+                    matching_only=not args.all_pods,
+                    start_time=run_starts.get(label),
+                ),
+            )
+            for label, path in args.run
+        ]
+    else:
+        runs = [
+            (label, read_utilization(path, matching_only=not args.all_pods, start_time=run_starts.get(label)))
+            for label, path in args.run
+        ]
 
     if args.pod:
         include_pod_in_label = len(args.pod) > 1
