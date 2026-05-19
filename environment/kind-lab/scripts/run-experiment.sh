@@ -98,20 +98,6 @@ echo "Experiment output directory: $OUTPUT_DIR"
 echo "=== Creating cluster (if needed) ==="
 "$ROOT/environment/kind-lab/scripts/create-cluster.sh"
 
-echo "=== Deploying observability ==="
-"$ROOT/environment/kind-lab/scripts/deploy-observability.sh"
-
-# Port-forward Prometheus so collect-prometheus-run.py can reach it.
-echo "=== Setting up Prometheus port-forward ==="
-kubectl -n "$NAMESPACE" port-forward svc/prometheus 9090:9090 >/dev/null 2>&1 &
-PF_PID=$!
-trap 'kill $PF_PID 2>/dev/null || true' EXIT
-sleep 3
-
-if ! curl -fsS "$PROMETHEUS_URL/api/v1/status/config" >/dev/null 2>&1; then
-  echo "WARNING: Prometheus does not appear to be reachable at $PROMETHEUS_URL" >&2
-fi
-
 # ------------------------------------------------------------------
 # Main experiment loop
 # ------------------------------------------------------------------
@@ -145,6 +131,24 @@ for mode in "${MODE_LIST[@]}"; do
     GREEDY_HETEROGENEITY_MODE=off \
     GREEDY_MOVE_PENALTY_COEFFICIENT=0.2 \
       "$ROOT/environment/kind-lab/scripts/deploy.sh" heterogeneous
+
+    # ---- Deploy observability ---------------------------------
+    echo "  [$(date +%H:%M:%S)] Deploying observability ..."
+    "$ROOT/environment/kind-lab/scripts/deploy-observability.sh"
+
+    # Port-forward Prometheus so collect-prometheus-run.py can reach it.
+    if [[ -n "${PF_PID:-}" ]]; then
+      kill $PF_PID 2>/dev/null || true
+    fi
+    echo "  [$(date +%H:%M:%S)] Setting up Prometheus port-forward ..."
+    kubectl -n "$NAMESPACE" port-forward svc/prometheus 9090:9090 >/dev/null 2>&1 &
+    PF_PID=$!
+    trap 'kill $PF_PID 2>/dev/null || true' EXIT
+    sleep 3
+
+    if ! curl -fsS "$PROMETHEUS_URL/api/v1/status/config" >/dev/null 2>&1; then
+      echo "WARNING: Prometheus does not appear to be reachable at $PROMETHEUS_URL" >&2
+    fi
 
     # ---- Submit matching-lab job -----------------------------
     echo "  [$(date +%H:%M:%S)] Submitting matching-lab job (scenario=$SCENARIO) ..."
