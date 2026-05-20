@@ -371,12 +371,16 @@ func shardStatsVisibilityRatios(
 	totalAssigned := 0
 	missing := 0
 	stale := 0
-	for _, shards := range currentAssignments {
+	for executorID, shards := range currentAssignments {
 		for _, shardID := range shards {
 			totalAssigned++
 			stats, ok := state.ShardStats[shardID]
 			if !ok || stats.LastUpdateTime.IsZero() {
-				missing++
+				// If the assigned executor is actively reporting this shard, we still
+				// have load visibility even when ShardStats is missing.
+				if report := state.Executors[executorID].ReportedShards[shardID]; report == nil {
+					missing++
+				}
 				continue
 			}
 			if shardStatsStaleAfter > 0 && now.Sub(stats.LastUpdateTime) > shardStatsStaleAfter {

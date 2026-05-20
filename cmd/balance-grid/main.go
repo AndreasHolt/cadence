@@ -1,5 +1,9 @@
-// balance-grid runs a parameter sweep over move-penalty-coefficient values
-// through the Cadence shard-distributor greedy load-balance algorithm.
+// balance-grid runs a parameter sweep over hysteresis bands, severe-imbalance
+// ratio, cooldown, move-budget, smoothing tau and load-source (smoothed vs
+// reported) through the Cadence shard-distributor greedy load-balance algorithm.
+//
+// Swaps are disabled and the move-penalty coefficient is fixed at 0 for all
+// runs.
 //
 // Usage:
 //
@@ -9,10 +13,11 @@
 //
 //	grid_results.csv
 //
-//	Columns: move_scoring_mode, move_penalty_coefficient, total_moves, total_load_moved,
-//
-//	avg_mm_smooth, worst_mm_smooth, avg_mm_reported, worst_mm_reported,
-//	avg_cv_smooth, worst_cv_smooth, avg_cv_reported, worst_cv_reported
+//	Columns: upper_band, lower_band, severe_ratio, cooldown_ms, move_budget,
+//	         tau_ms, use_smoothed_load,
+//	         total_moves, total_load_moved,
+//	         avg_mm_smooth, worst_mm_smooth, avg_mm_reported, worst_mm_reported,
+//	         avg_cv_smooth, worst_cv_smooth, avg_cv_reported, worst_cv_reported
 package main
 
 import (
@@ -28,8 +33,6 @@ import (
 	"sync"
 	"time"
 
-	"go.uber.org/zap"
-
 	"github.com/uber/cadence/common/metrics"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/service/sharddistributor/config"
@@ -40,15 +43,59 @@ import (
 )
 
 type combo struct {
-	moveScoringMode        string
-	movePenaltyCoefficient float64
+	upperBand       float64
+	lowerBand       float64
+	severeRatio     float64
+	cooldown        time.Duration
+	moveBudget      float64
+	tau             time.Duration
+	useSmoothedLoad bool
 }
 
 func (c combo) toRow() []string {
 	return []string{
-		c.moveScoringMode,
-		strconv.FormatFloat(c.movePenaltyCoefficient, 'f', 4, 64),
+		strconv.FormatFloat(c.upperBand, 'f', 4, 64),
+		strconv.FormatFloat(c.lowerBand, 'f', 4, 64),
+		strconv.FormatFloat(c.severeRatio, 'f', 4, 64),
+		strconv.FormatInt(c.cooldown.Milliseconds(), 10),
+		strconv.FormatFloat(c.moveBudget, 'f', 4, 64),
+		strconv.FormatInt(c.tau.Milliseconds(), 10),
+		strconv.FormatBool(c.useSmoothedLoad),
 	}
+}
+
+func (c combo) key() string {
+	return strings.Join(c.toRow(), "|")
+}
+
+func loadExistingResults(path string) (map[string]struct{}, error) {
+	seen := make(map[string]struct{})
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return seen, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+
+	cr := csv.NewReader(f)
+	// skip header
+	_, err = cr.Read()
+	if err != nil {
+		return seen, nil
+	}
+
+	for {
+		rec, err := cr.Read()
+		if err != nil {
+			break
+		}
+		if len(rec) >= 7 {
+			seen[strings.Join(rec[:7], "|")] = struct{}{}
+		}
+	}
+	return seen, nil
 }
 
 type result struct {
@@ -89,11 +136,6 @@ func main() {
 		numExecutors      int
 		rebalanceInterval time.Duration
 		loadInterval      time.Duration
-		moveBudget        float64
-		cooldown          time.Duration
-		upperBand         float64
-		lowerBand         float64
-		severeRatio       float64
 	)
 
 	flag.StringVar(&csvPath, "csv", "", "Path to input CSV file (required)")
@@ -101,21 +143,12 @@ func main() {
 	flag.IntVar(&numExecutors, "executors", 4, "Number of simulated executors")
 	flag.DurationVar(&rebalanceInterval, "rebalance-interval", 2*time.Second, "Simulated time between rebalance passes")
 	flag.DurationVar(&loadInterval, "load-interval", 10*time.Second, "Simulated time between CSV row advances")
-	flag.Float64Var(&moveBudget, "move-budget", 0.01, "Fraction of shards that may move per rebalance pass")
-	flag.DurationVar(&cooldown, "cooldown", 30*time.Second, "Per-shard move cooldown")
-	flag.Float64Var(&upperBand, "upper-band", 1.15, "Hysteresis upper-band multiplier")
-	flag.Float64Var(&lowerBand, "lower-band", 0.90, "Hysteresis lower-band multiplier")
-	flag.Float64Var(&severeRatio, "severe-ratio", 1.3, "Severe-imbalance escape-hatch ratio")
 	flag.Parse()
 
 	if csvPath == "" {
 		flag.Usage()
 		os.Exit(1)
 	}
-
-	zapCfg := zap.NewDevelopmentConfig()
-	zapCfg.OutputPaths = []string{"stderr"}
-	zapCfg.ErrorOutputPaths = []string{"stderr"}
 
 	if numExecutors < 1 {
 		fmt.Fprintf(os.Stderr, "-executors must be >= 1\n")
@@ -138,28 +171,60 @@ func main() {
 	fmt.Printf("Loaded %d rows, %d shards from %s\n", len(history), len(shardIDs), csvPath)
 
 	// ── Build combo list ───────────────────────────────────────────────────
-	scoringModes := []string{"benefit", "cost_aware"}
-	fixedCosts := []float64{0.0}
-	i := 0.02
-	for i < 1.0 {
-		fixedCosts = append(fixedCosts, i)
-		i += 0.02
-	}
+	upperBands := []float64{1.03, 1.05, 1.10, 1.15, 1.20, 1.25, 1.30, 1.35, 1.40}
+	lowerBands := []float64{0.70, 0.80, 0.85, 0.90, 0.95, 0.98}
+	severeRatios := []float64{1.3, 1.5, 1.7}
+	cooldowns := []time.Duration{0, 30 * time.Second, 60 * time.Second, 120 * time.Second}
+	moveBudgets := []float64{0.005, 0.01}
+	taus := []time.Duration{0, 30 * time.Second, time.Minute, 5 * time.Minute}
+	useSmoothedLoads := []bool{true, false}
 
 	var combos []combo
-	for _, mode := range scoringModes {
-		for _, fixed := range fixedCosts {
-			combos = append(combos, combo{
-				moveScoringMode:        mode,
-				movePenaltyCoefficient: fixed,
-			})
+	for _, ub := range upperBands {
+		for _, lb := range lowerBands {
+			for _, sr := range severeRatios {
+				for _, cd := range cooldowns {
+					for _, mb := range moveBudgets {
+						for _, tau := range taus {
+							for _, usl := range useSmoothedLoads {
+								combos = append(combos, combo{
+									upperBand:       ub,
+									lowerBand:       lb,
+									severeRatio:     sr,
+									cooldown:        cd,
+									moveBudget:      mb,
+									tau:             tau,
+									useSmoothedLoad: usl,
+								})
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 
-	fmt.Printf("Running %d grid permutations across %d workers\n", len(combos), runtime.NumCPU())
+	existing, err := loadExistingResults(outPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to read existing results: %v\n", err)
+		os.Exit(1)
+	}
 
-	jobs := make(chan combo, len(combos))
-	results := make(chan result, len(combos))
+	var filtered []combo
+	for _, c := range combos {
+		if _, ok := existing[c.key()]; !ok {
+			filtered = append(filtered, c)
+		}
+	}
+	if len(filtered) == 0 {
+		fmt.Printf("All %d combinations already present in %s\n", len(combos), outPath)
+		return
+	}
+	fmt.Printf("Found %d existing results, running %d new permutations across %d workers\n",
+		len(existing), len(filtered), runtime.NumCPU())
+
+	jobs := make(chan combo, len(filtered))
+	results := make(chan result, len(filtered))
 	var wg sync.WaitGroup
 
 	for i := 0; i < runtime.NumCPU(); i++ {
@@ -170,7 +235,6 @@ func main() {
 				res, err := runGridSimulation(
 					cb, history, shardIDs, numExecutors,
 					rebalanceInterval, loadInterval,
-					moveBudget, cooldown, upperBand, lowerBand, severeRatio,
 				)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Simulation failed for combo %v: %v\n", cb, err)
@@ -181,7 +245,7 @@ func main() {
 		}()
 	}
 
-	for _, cb := range combos {
+	for _, cb := range filtered {
 		jobs <- cb
 	}
 	close(jobs)
@@ -192,7 +256,14 @@ func main() {
 		close(results)
 	}()
 
-	outFile, err := os.Create(outPath)
+	info, err := os.Stat(outPath)
+	appendMode := err == nil && info.Size() > 0
+
+	openFlags := os.O_CREATE | os.O_WRONLY
+	if appendMode {
+		openFlags |= os.O_APPEND
+	}
+	outFile, err := os.OpenFile(outPath, openFlags, 0644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create output file: %v\n", err)
 		os.Exit(1)
@@ -201,21 +272,23 @@ func main() {
 
 	w := csv.NewWriter(outFile)
 	header := []string{
-		"move_scoring_mode", "move_penalty_coefficient",
+		"upper_band", "lower_band", "severe_ratio", "cooldown_ms", "move_budget", "tau_ms", "use_smoothed_load",
 		"total_moves", "total_load_moved",
 		"avg_mm_smooth", "worst_mm_smooth",
 		"avg_mm_reported", "worst_mm_reported",
 		"avg_cv_smooth", "worst_cv_smooth",
 		"avg_cv_reported", "worst_cv_reported",
 	}
-	w.Write(header)
+	if !appendMode {
+		w.Write(header)
+	}
 
 	count := 0
 	for res := range results {
 		w.Write(res.toRow())
 		count++
 		if count%10 == 0 {
-			fmt.Printf("Completed %d / %d runs\n", count, len(combos))
+			fmt.Printf("Completed %d / %d new runs\n", count, len(filtered))
 		}
 	}
 	w.Flush()
@@ -231,11 +304,6 @@ func runGridSimulation(
 	numExecutors int,
 	rebalanceInterval time.Duration,
 	loadInterval time.Duration,
-	moveBudget float64,
-	cooldown time.Duration,
-	upperBand float64,
-	lowerBand float64,
-	severeRatio float64,
 ) (result, error) {
 
 	executors := make([]string, numExecutors)
@@ -244,15 +312,15 @@ func runGridSimulation(
 	}
 
 	cfg := config.LoadBalancingGreedyConfig{
-		PerShardCooldown:       func(string) time.Duration { return cooldown },
-		MoveBudgetProportion:   func(string) float64 { return moveBudget },
-		HysteresisUpperBand:    func(string) float64 { return upperBand },
-		HysteresisLowerBand:    func(string) float64 { return lowerBand },
-		SevereImbalanceRatio:   func(string) float64 { return severeRatio },
+		PerShardCooldown:       func(string) time.Duration { return cb.cooldown },
+		MoveBudgetProportion:   func(string) float64 { return cb.moveBudget },
+		HysteresisUpperBand:    func(string) float64 { return cb.upperBand },
+		HysteresisLowerBand:    func(string) float64 { return cb.lowerBand },
+		SevereImbalanceRatio:   func(string) float64 { return cb.severeRatio },
 		HeterogeneityMode:      func(string) string { return config.GreedyHeterogeneityModeOff },
-		MoveScoringMode:        func(string) string { return cb.moveScoringMode },
-		MovePenaltyCoefficient: func(string) float64 { return cb.movePenaltyCoefficient },
-		CPUSecondsSmoothingTau: func(string) time.Duration { return 5 * time.Minute },
+		MoveScoringMode:        func(string) string { return config.GreedyMoveScoringModeBenefit },
+		MovePenaltyCoefficient: func(string) float64 { return 0.0 },
+		CPUSecondsSmoothingTau: func(string) time.Duration { return cb.tau },
 	}
 
 	assignments := make(map[string][]string)
@@ -276,7 +344,9 @@ func runGridSimulation(
 	for i, shard := range shardIDs {
 		e := executors[i%len(executors)]
 		assignments[e] = append(assignments[e], shard)
-		shardStats[shard] = store.ShardStatistics{LastUpdateTime: time.Time{}}
+		if cb.useSmoothedLoad {
+			shardStats[shard] = store.ShardStatistics{LastUpdateTime: time.Time{}}
+		}
 		assignedState[e].AssignedShards[shard] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
 	}
 
@@ -286,11 +356,23 @@ func runGridSimulation(
 		ShardAssignments: assignedState,
 	}
 
-	for shardID, load := range history[0].ShardLoads {
-		stats := ns.ShardStats[shardID]
-		stats.SmoothedLoad = load
-		stats.LastUpdateTime = now
-		ns.ShardStats[shardID] = stats
+	if cb.useSmoothedLoad {
+		for shardID, load := range history[0].ShardLoads {
+			stats := ns.ShardStats[shardID]
+			stats.SmoothedLoad = load
+			stats.LastUpdateTime = now
+			ns.ShardStats[shardID] = stats
+		}
+	} else {
+		for execID, shards := range assignments {
+			for _, shardID := range shards {
+				load := history[0].ShardLoads[shardID]
+				ns.Executors[execID].ReportedShards[shardID] = &types.ShardStatusReport{
+					Status:    types.ShardStatusREADY,
+					ShardLoad: load,
+				}
+			}
+		}
 	}
 
 	currentHistoryIdx := 0
@@ -315,14 +397,31 @@ func runGridSimulation(
 			if row.Timestamp.After(now) {
 				now = row.Timestamp
 			}
-			for shardID, load := range row.ShardLoads {
-				stats := ns.ShardStats[shardID]
-				smoothed, _ := statistics.CalculateSmoothedLoad(
-					stats.SmoothedLoad, load, stats.LastUpdateTime, now,
-				)
-				stats.SmoothedLoad = smoothed
-				stats.LastUpdateTime = now
-				ns.ShardStats[shardID] = stats
+			if cb.useSmoothedLoad {
+				for shardID, load := range row.ShardLoads {
+					stats := ns.ShardStats[shardID]
+					smoothed, _ := statistics.CalculateSmoothedLoad(
+						stats.SmoothedLoad, load, stats.LastUpdateTime, now,
+					)
+					stats.SmoothedLoad = smoothed
+					stats.LastUpdateTime = now
+					ns.ShardStats[shardID] = stats
+				}
+			} else {
+				for execID := range ns.Executors {
+					exec := ns.Executors[execID]
+					exec.ReportedShards = make(map[string]*types.ShardStatusReport)
+					ns.Executors[execID] = exec
+				}
+				for execID, shards := range assignments {
+					for _, shardID := range shards {
+						load := row.ShardLoads[shardID]
+						ns.Executors[execID].ReportedShards[shardID] = &types.ShardStatusReport{
+							Status:    types.ShardStatusREADY,
+							ShardLoad: load,
+						}
+					}
+				}
 			}
 			nextLoadUpdate = nextLoadUpdate.Add(loadInterval)
 		}
@@ -331,12 +430,10 @@ func runGridSimulation(
 		if err != nil {
 			return result{}, err
 		}
-		applyMoves(assignments, ns, moves)
+		applyMoves(assignments, ns, moves, now)
 		totalMoves += len(moves)
 		for _, m := range moves {
-			if s, ok := ns.ShardStats[m.ShardID]; ok {
-				totalLoadMoved += s.SmoothedLoad
-			}
+			totalLoadMoved += shardLoadForMove(ns, m, cb.useSmoothedLoad)
 		}
 
 		loadsSmooth := computeLoads(assignments, ns)
@@ -465,7 +562,7 @@ func loadCSVHistory(f *os.File) ([]loadHistoryRow, []string, error) {
 	return rows, shardIDs, nil
 }
 
-func applyMoves(assignments map[string][]string, ns *store.NamespaceState, moves []plan.Move) {
+func applyMoves(assignments map[string][]string, ns *store.NamespaceState, moves []plan.Move, now time.Time) {
 	for _, m := range moves {
 		src := assignments[m.From]
 		for i, s := range src {
@@ -477,7 +574,32 @@ func applyMoves(assignments map[string][]string, ns *store.NamespaceState, moves
 		assignments[m.To] = append(assignments[m.To], m.ShardID)
 		delete(ns.ShardAssignments[m.From].AssignedShards, m.ShardID)
 		ns.ShardAssignments[m.To].AssignedShards[m.ShardID] = &types.ShardAssignment{Status: types.AssignmentStatusREADY}
+
+		// Update cooldown tracking.
+		if stats, ok := ns.ShardStats[m.ShardID]; ok {
+			stats.LastMoveTime = now
+			ns.ShardStats[m.ShardID] = stats
+		}
+
+		// Move reported-shard entry if present.
+		if report, ok := ns.Executors[m.From].ReportedShards[m.ShardID]; ok {
+			ns.Executors[m.To].ReportedShards[m.ShardID] = report
+			delete(ns.Executors[m.From].ReportedShards, m.ShardID)
+		}
 	}
+}
+
+func shardLoadForMove(ns *store.NamespaceState, m plan.Move, useSmoothedLoad bool) float64 {
+	if useSmoothedLoad {
+		if s, ok := ns.ShardStats[m.ShardID]; ok {
+			return s.SmoothedLoad
+		}
+		return 0
+	}
+	if report, ok := ns.Executors[m.To].ReportedShards[m.ShardID]; ok {
+		return report.ShardLoad
+	}
+	return 0
 }
 
 func computeLoads(assignments map[string][]string, ns *store.NamespaceState) map[string]float64 {
@@ -486,6 +608,8 @@ func computeLoads(assignments map[string][]string, ns *store.NamespaceState) map
 		for _, shardID := range shards {
 			if s, ok := ns.ShardStats[shardID]; ok {
 				loads[executorID] += s.SmoothedLoad
+			} else if report := ns.Executors[executorID].ReportedShards[shardID]; report != nil {
+				loads[executorID] += report.ShardLoad
 			}
 		}
 	}
