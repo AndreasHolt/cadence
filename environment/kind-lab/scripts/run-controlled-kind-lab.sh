@@ -155,9 +155,8 @@ LOG_PATH="$RESULT_DIR/$RUN_NAME.log"
 mkdir -p "$RESULT_DIR"
 
 if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-  echo "tmux session already exists: $SESSION_NAME" >&2
-  echo "attach with: tmux attach -t $SESSION_NAME" >&2
-  exit 1
+  echo "killing existing tmux session: $SESSION_NAME"
+  tmux kill-session -t "$SESSION_NAME"
 fi
 
 if [[ "$BUILD_IMAGE" == "true" ]]; then
