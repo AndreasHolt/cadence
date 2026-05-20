@@ -1,0 +1,514 @@
+================================================================================
+TOP CONFIGURATIONS (best trade-off: few moves + low max/mean reported)
+================================================================================
+
+SCORING METHOD
+Each config is scored by normalizing total_moves and avg_mm_reported
+to [0,1] across the grid, then combining with equal 50/50 weights.
+Lower score = better.
+
+BEST OVERALL CONFIGURATION
+--------------------------------------------------------------------------------
+  avg_cv_reported: 0.073095
+  avg_cv_smooth: 0.073095
+  avg_mm_reported: 1.085968
+  avg_mm_smooth: 1.085968
+  cooldown_ms: 0.0
+  lower_band: 0.95
+  move_budget: 0.005
+  severe_ratio: 1.3
+  tau_ms: 300000.0
+  total_load_moved: 82313.1
+  total_moves: 1339
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.179595
+  worst_cv_smooth: 0.179595
+  worst_mm_reported: 1.279612
+  worst_mm_smooth: 1.279612
+
+TOP 5 CONFIGURATIONS BY COMPOSITE SCORE
+--------------------------------------------------------------------------------
+
+#1
+  avg_cv_reported: 0.073095
+  avg_cv_smooth: 0.073095
+  avg_mm_reported: 1.085968
+  avg_mm_smooth: 1.085968
+  cooldown_ms: 0.0
+  lower_band: 0.95
+  move_budget: 0.005
+  severe_ratio: 1.3
+  tau_ms: 300000.0
+  total_load_moved: 82313.1
+  total_moves: 1339
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.179595
+  worst_cv_smooth: 0.179595
+  worst_mm_reported: 1.279612
+  worst_mm_smooth: 1.279612
+
+#2
+  avg_cv_reported: 0.073095
+  avg_cv_smooth: 0.073095
+  avg_mm_reported: 1.085968
+  avg_mm_smooth: 1.085968
+  cooldown_ms: 120000.0
+  lower_band: 0.95
+  move_budget: 0.005
+  severe_ratio: 1.5
+  tau_ms: 0.0
+  total_load_moved: 82313.1
+  total_moves: 1339
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.179595
+  worst_cv_smooth: 0.179595
+  worst_mm_reported: 1.279612
+  worst_mm_smooth: 1.279612
+
+#3
+  avg_cv_reported: 0.073095
+  avg_cv_smooth: 0.073095
+  avg_mm_reported: 1.085968
+  avg_mm_smooth: 1.085968
+  cooldown_ms: 60000.0
+  lower_band: 0.95
+  move_budget: 0.005
+  severe_ratio: 1.7
+  tau_ms: 0.0
+  total_load_moved: 82313.1
+  total_moves: 1339
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.179595
+  worst_cv_smooth: 0.179595
+  worst_mm_reported: 1.279612
+  worst_mm_smooth: 1.279612
+
+#4
+  avg_cv_reported: 0.073095
+  avg_cv_smooth: 0.073095
+  avg_mm_reported: 1.085968
+  avg_mm_smooth: 1.085968
+  cooldown_ms: 120000.0
+  lower_band: 0.98
+  move_budget: 0.005
+  severe_ratio: 1.3
+  tau_ms: 30000.0
+  total_load_moved: 82313.1
+  total_moves: 1339
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.179595
+  worst_cv_smooth: 0.179595
+  worst_mm_reported: 1.279612
+  worst_mm_smooth: 1.279612
+
+#5
+  avg_cv_reported: 0.073095
+  avg_cv_smooth: 0.073095
+  avg_mm_reported: 1.085968
+  avg_mm_smooth: 1.085968
+  cooldown_ms: 60000.0
+  lower_band: 0.98
+  move_budget: 0.005
+  severe_ratio: 1.5
+  tau_ms: 60000.0
+  total_load_moved: 82313.1
+  total_moves: 1339
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.179595
+  worst_cv_smooth: 0.179595
+  worst_mm_reported: 1.279612
+  worst_mm_smooth: 1.279612
+
+
+TOP CONFIGURATIONS AMONG FEWEST-MOVES (bottom 10% moves, sorted by mm)
+--------------------------------------------------------------------------------
+
+#1
+  avg_cv_reported: 0.169535
+  avg_cv_smooth: 0.121982
+  avg_mm_reported: 1.217424
+  avg_mm_smooth: 1.125801
+  cooldown_ms: 30000.0
+  lower_band: 0.7
+  move_budget: 0.01
+  severe_ratio: 1.5
+  tau_ms: 30000.0
+  total_load_moved: 287.16
+  total_moves: 4
+  upper_band: 1.03
+  use_smoothed_load: True
+  worst_cv_reported: 0.579941
+  worst_cv_smooth: 0.309297
+  worst_mm_reported: 2.003448
+  worst_mm_smooth: 1.485856
+
+#2
+  avg_cv_reported: 0.169535
+  avg_cv_smooth: 0.121982
+  avg_mm_reported: 1.217424
+  avg_mm_smooth: 1.125801
+  cooldown_ms: 30000.0
+  lower_band: 0.7
+  move_budget: 0.01
+  severe_ratio: 1.5
+  tau_ms: 60000.0
+  total_load_moved: 287.16
+  total_moves: 4
+  upper_band: 1.03
+  use_smoothed_load: True
+  worst_cv_reported: 0.579941
+  worst_cv_smooth: 0.309297
+  worst_mm_reported: 2.003448
+  worst_mm_smooth: 1.485856
+
+#3
+  avg_cv_reported: 0.169535
+  avg_cv_smooth: 0.121982
+  avg_mm_reported: 1.217424
+  avg_mm_smooth: 1.125801
+  cooldown_ms: 30000.0
+  lower_band: 0.7
+  move_budget: 0.01
+  severe_ratio: 1.5
+  tau_ms: 300000.0
+  total_load_moved: 287.16
+  total_moves: 4
+  upper_band: 1.03
+  use_smoothed_load: True
+  worst_cv_reported: 0.579941
+  worst_cv_smooth: 0.309297
+  worst_mm_reported: 2.003448
+  worst_mm_smooth: 1.485856
+
+#4
+  avg_cv_reported: 0.169535
+  avg_cv_smooth: 0.121982
+  avg_mm_reported: 1.217424
+  avg_mm_smooth: 1.125801
+  cooldown_ms: 30000.0
+  lower_band: 0.7
+  move_budget: 0.01
+  severe_ratio: 1.5
+  tau_ms: 0.0
+  total_load_moved: 287.16
+  total_moves: 4
+  upper_band: 1.03
+  use_smoothed_load: True
+  worst_cv_reported: 0.579941
+  worst_cv_smooth: 0.309297
+  worst_mm_reported: 2.003448
+  worst_mm_smooth: 1.485856
+
+#5
+  avg_cv_reported: 0.169535
+  avg_cv_smooth: 0.121982
+  avg_mm_reported: 1.217424
+  avg_mm_smooth: 1.125801
+  cooldown_ms: 0.0
+  lower_band: 0.7
+  move_budget: 0.01
+  severe_ratio: 1.5
+  tau_ms: 60000.0
+  total_load_moved: 287.16
+  total_moves: 4
+  upper_band: 1.03
+  use_smoothed_load: True
+  worst_cv_reported: 0.579941
+  worst_cv_smooth: 0.309297
+  worst_mm_reported: 2.003448
+  worst_mm_smooth: 1.485856
+
+#6
+  avg_cv_reported: 0.169535
+  avg_cv_smooth: 0.121982
+  avg_mm_reported: 1.217424
+  avg_mm_smooth: 1.125801
+  cooldown_ms: 0.0
+  lower_band: 0.7
+  move_budget: 0.01
+  severe_ratio: 1.5
+  tau_ms: 30000.0
+  total_load_moved: 287.16
+  total_moves: 4
+  upper_band: 1.03
+  use_smoothed_load: True
+  worst_cv_reported: 0.579941
+  worst_cv_smooth: 0.309297
+  worst_mm_reported: 2.003448
+  worst_mm_smooth: 1.485856
+
+#7
+  avg_cv_reported: 0.169535
+  avg_cv_smooth: 0.121982
+  avg_mm_reported: 1.217424
+  avg_mm_smooth: 1.125801
+  cooldown_ms: 0.0
+  lower_band: 0.7
+  move_budget: 0.01
+  severe_ratio: 1.5
+  tau_ms: 300000.0
+  total_load_moved: 287.16
+  total_moves: 4
+  upper_band: 1.03
+  use_smoothed_load: True
+  worst_cv_reported: 0.579941
+  worst_cv_smooth: 0.309297
+  worst_mm_reported: 2.003448
+  worst_mm_smooth: 1.485856
+
+#8
+  avg_cv_reported: 0.169535
+  avg_cv_smooth: 0.121982
+  avg_mm_reported: 1.217424
+  avg_mm_smooth: 1.125801
+  cooldown_ms: 0.0
+  lower_band: 0.7
+  move_budget: 0.01
+  severe_ratio: 1.5
+  tau_ms: 0.0
+  total_load_moved: 287.16
+  total_moves: 4
+  upper_band: 1.03
+  use_smoothed_load: True
+  worst_cv_reported: 0.579941
+  worst_cv_smooth: 0.309297
+  worst_mm_reported: 2.003448
+  worst_mm_smooth: 1.485856
+
+#9
+  avg_cv_reported: 0.169535
+  avg_cv_smooth: 0.121982
+  avg_mm_reported: 1.217424
+  avg_mm_smooth: 1.125801
+  cooldown_ms: 120000.0
+  lower_band: 0.7
+  move_budget: 0.01
+  severe_ratio: 1.5
+  tau_ms: 30000.0
+  total_load_moved: 287.16
+  total_moves: 4
+  upper_band: 1.03
+  use_smoothed_load: True
+  worst_cv_reported: 0.579941
+  worst_cv_smooth: 0.309297
+  worst_mm_reported: 2.003448
+  worst_mm_smooth: 1.485856
+
+#10
+  avg_cv_reported: 0.169535
+  avg_cv_smooth: 0.121982
+  avg_mm_reported: 1.217424
+  avg_mm_smooth: 1.125801
+  cooldown_ms: 120000.0
+  lower_band: 0.7
+  move_budget: 0.01
+  severe_ratio: 1.5
+  tau_ms: 60000.0
+  total_load_moved: 287.16
+  total_moves: 4
+  upper_band: 1.03
+  use_smoothed_load: True
+  worst_cv_reported: 0.579941
+  worst_cv_smooth: 0.309297
+  worst_mm_reported: 2.003448
+  worst_mm_smooth: 1.485856
+
+
+TOP CONFIGURATIONS AMONG LOWEST MAX/MEAN (bottom 10% mm, sorted by moves)
+--------------------------------------------------------------------------------
+
+#1
+  avg_cv_reported: 0.075041
+  avg_cv_smooth: 0.075041
+  avg_mm_reported: 1.088417
+  avg_mm_smooth: 1.088417
+  cooldown_ms: 60000.0
+  lower_band: 0.95
+  move_budget: 0.005
+  severe_ratio: 1.3
+  tau_ms: 60000.0
+  total_load_moved: 75143.5
+  total_moves: 1314
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.179656
+  worst_cv_smooth: 0.179656
+  worst_mm_reported: 1.279612
+  worst_mm_smooth: 1.279612
+
+#2
+  avg_cv_reported: 0.075041
+  avg_cv_smooth: 0.075041
+  avg_mm_reported: 1.088417
+  avg_mm_smooth: 1.088417
+  cooldown_ms: 0.0
+  lower_band: 0.95
+  move_budget: 0.005
+  severe_ratio: 1.5
+  tau_ms: 0.0
+  total_load_moved: 75143.5
+  total_moves: 1314
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.179656
+  worst_cv_smooth: 0.179656
+  worst_mm_reported: 1.279612
+  worst_mm_smooth: 1.279612
+
+#3
+  avg_cv_reported: 0.075041
+  avg_cv_smooth: 0.075041
+  avg_mm_reported: 1.088417
+  avg_mm_smooth: 1.088417
+  cooldown_ms: 0.0
+  lower_band: 0.95
+  move_budget: 0.005
+  severe_ratio: 1.5
+  tau_ms: 60000.0
+  total_load_moved: 75143.5
+  total_moves: 1314
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.179656
+  worst_cv_smooth: 0.179656
+  worst_mm_reported: 1.279612
+  worst_mm_smooth: 1.279612
+
+#4
+  avg_cv_reported: 0.075041
+  avg_cv_smooth: 0.075041
+  avg_mm_reported: 1.088417
+  avg_mm_smooth: 1.088417
+  cooldown_ms: 120000.0
+  lower_band: 0.98
+  move_budget: 0.005
+  severe_ratio: 1.3
+  tau_ms: 300000.0
+  total_load_moved: 75143.5
+  total_moves: 1314
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.179656
+  worst_cv_smooth: 0.179656
+  worst_mm_reported: 1.279612
+  worst_mm_smooth: 1.279612
+
+#5
+  avg_cv_reported: 0.075041
+  avg_cv_smooth: 0.075041
+  avg_mm_reported: 1.088417
+  avg_mm_smooth: 1.088417
+  cooldown_ms: 60000.0
+  lower_band: 0.98
+  move_budget: 0.005
+  severe_ratio: 1.5
+  tau_ms: 30000.0
+  total_load_moved: 75143.5
+  total_moves: 1314
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.179656
+  worst_cv_smooth: 0.179656
+  worst_mm_reported: 1.279612
+  worst_mm_smooth: 1.279612
+
+#6
+  avg_cv_reported: 0.074196
+  avg_cv_smooth: 0.074196
+  avg_mm_reported: 1.087994
+  avg_mm_smooth: 1.087994
+  cooldown_ms: 0.0
+  lower_band: 0.95
+  move_budget: 0.01
+  severe_ratio: 1.5
+  tau_ms: 30000.0
+  total_load_moved: 80500.3
+  total_moves: 1316
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.180021
+  worst_cv_smooth: 0.180021
+  worst_mm_reported: 1.307244
+  worst_mm_smooth: 1.307244
+
+#7
+  avg_cv_reported: 0.074196
+  avg_cv_smooth: 0.074196
+  avg_mm_reported: 1.087994
+  avg_mm_smooth: 1.087994
+  cooldown_ms: 0.0
+  lower_band: 0.95
+  move_budget: 0.01
+  severe_ratio: 1.3
+  tau_ms: 30000.0
+  total_load_moved: 80500.3
+  total_moves: 1316
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.180021
+  worst_cv_smooth: 0.180021
+  worst_mm_reported: 1.307244
+  worst_mm_smooth: 1.307244
+
+#8
+  avg_cv_reported: 0.074196
+  avg_cv_smooth: 0.074196
+  avg_mm_reported: 1.087994
+  avg_mm_smooth: 1.087994
+  cooldown_ms: 30000.0
+  lower_band: 0.95
+  move_budget: 0.01
+  severe_ratio: 1.3
+  tau_ms: 0.0
+  total_load_moved: 80500.3
+  total_moves: 1316
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.180021
+  worst_cv_smooth: 0.180021
+  worst_mm_reported: 1.307244
+  worst_mm_smooth: 1.307244
+
+#9
+  avg_cv_reported: 0.074196
+  avg_cv_smooth: 0.074196
+  avg_mm_reported: 1.087994
+  avg_mm_smooth: 1.087994
+  cooldown_ms: 60000.0
+  lower_band: 0.95
+  move_budget: 0.01
+  severe_ratio: 1.5
+  tau_ms: 300000.0
+  total_load_moved: 80500.3
+  total_moves: 1316
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.180021
+  worst_cv_smooth: 0.180021
+  worst_mm_reported: 1.307244
+  worst_mm_smooth: 1.307244
+
+#10
+  avg_cv_reported: 0.074196
+  avg_cv_smooth: 0.074196
+  avg_mm_reported: 1.087994
+  avg_mm_smooth: 1.087994
+  cooldown_ms: 30000.0
+  lower_band: 0.95
+  move_budget: 0.01
+  severe_ratio: 1.7
+  tau_ms: 0.0
+  total_load_moved: 80500.3
+  total_moves: 1316
+  upper_band: 1.15
+  use_smoothed_load: False
+  worst_cv_reported: 0.180021
+  worst_cv_smooth: 0.180021
+  worst_mm_reported: 1.307244
+  worst_mm_smooth: 1.307244
