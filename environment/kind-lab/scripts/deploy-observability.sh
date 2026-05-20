@@ -17,7 +17,20 @@ import_deploy_image() {
   docker save "$image" | docker exec -i "$KIND_NODE" ctr -n k8s.io images import -
 }
 
+existing_dashboard="$(mktemp)"
+trap 'rm -f "$existing_dashboard"' EXIT
+if kubectl get configmap kind-lab-grafana-dashboard-experiments -n "$NAMESPACE" >/dev/null 2>&1; then
+  kubectl get configmap kind-lab-grafana-dashboard-experiments -n "$NAMESPACE" \
+    -o jsonpath='{.data.cadence-experiment-overview\.json}' >"$existing_dashboard" || true
+fi
+
 kubectl apply -k "$ROOT/environment/kind-lab/k8s/observability"
+
+if [[ -s "$existing_dashboard" ]]; then
+  kubectl create configmap kind-lab-grafana-dashboard-experiments -n "$NAMESPACE" \
+    --from-file=cadence-experiment-overview.json="$existing_dashboard" \
+    --dry-run=client -o yaml | kubectl apply -f -
+fi
 
 kubectl patch deploy grafana prometheus -n "$NAMESPACE" \
   --type='json' \
@@ -40,7 +53,7 @@ Grafana:
 
 Dashboard (folder: Cadence Kind Lab):
   - Cadence Matching Lab Experiments (/d/cadence-kind-lab-experiments)
-    Run config banner is filled when deploy.sh runs after this script.
+    Run config banner is preserved from the active deployment when present.
 
 Prometheus:
   kubectl -n $NAMESPACE port-forward svc/prometheus 9090:9090
