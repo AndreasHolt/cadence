@@ -11,6 +11,9 @@ GREEDY_HETEROGENEITY_MODE="${GREEDY_HETEROGENEITY_MODE:-latency}"
 GREEDY_MOVE_SCORING_MODE="${GREEDY_MOVE_SCORING_MODE:-benefit}"
 GREEDY_MOVE_PENALTY_COEFFICIENT="${GREEDY_MOVE_PENALTY_COEFFICIENT:-0.2}"
 GREEDY_CPU_SECONDS_SMOOTHING_TAU="${GREEDY_CPU_SECONDS_SMOOTHING_TAU:-10m}"
+MATCHING_ENABLE_ADAPTIVE_SCALER="${MATCHING_ENABLE_ADAPTIVE_SCALER:-false}"
+MATCHING_NUM_TASKLIST_READ_PARTITIONS="${MATCHING_NUM_TASKLIST_READ_PARTITIONS:-1}"
+MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="${MATCHING_NUM_TASKLIST_WRITE_PARTITIONS:-1}"
 SAMPLE_INTERVAL_SECONDS="30"
 DURATION_SECONDS="3600"
 SETTLE_SECONDS="120"
@@ -39,6 +42,9 @@ Options:
   --move-scoring-mode MODE      GREEDY_MOVE_SCORING_MODE: benefit|cost_aware (default: benefit)
   --penalty VALUE               GREEDY_MOVE_PENALTY_COEFFICIENT (default: 0.2)
   --cpu-tau DURATION            GREEDY_CPU_SECONDS_SMOOTHING_TAU (default: 10m)
+  --adaptive-scaler BOOL        MATCHING_ENABLE_ADAPTIVE_SCALER: true|false (default: false)
+  --read-partitions N           MATCHING_NUM_TASKLIST_READ_PARTITIONS (default: 1)
+  --write-partitions N          MATCHING_NUM_TASKLIST_WRITE_PARTITIONS (default: 1)
   --sample-interval SECONDS     Utilization sample interval (default: 30)
   --duration SECONDS            Run/sampling duration (default: 3600)
   --settle-seconds SECONDS      Wait after deploy before starting run (default: 120)
@@ -84,6 +90,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --cpu-tau)
       GREEDY_CPU_SECONDS_SMOOTHING_TAU="$2"
+      shift 2
+      ;;
+    --adaptive-scaler)
+      MATCHING_ENABLE_ADAPTIVE_SCALER="$2"
+      shift 2
+      ;;
+    --read-partitions)
+      MATCHING_NUM_TASKLIST_READ_PARTITIONS="$2"
+      shift 2
+      ;;
+    --write-partitions)
+      MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="$2"
       shift 2
       ;;
     --sample-interval)
@@ -144,6 +162,18 @@ case "$MATCHING_HETEROGENEITY_PROFILE" in
   equal_burn|equal_cores|mixed) ;;
   *) echo "--profile must be one of: equal_burn, equal_cores, mixed" >&2; exit 2 ;;
 esac
+case "$MATCHING_ENABLE_ADAPTIVE_SCALER" in
+  true|false) ;;
+  *) echo "--adaptive-scaler must be true or false" >&2; exit 2 ;;
+esac
+if ! [[ "$MATCHING_NUM_TASKLIST_READ_PARTITIONS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--read-partitions must be a positive integer" >&2
+  exit 2
+fi
+if ! [[ "$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--write-partitions must be a positive integer" >&2
+  exit 2
+fi
 
 if ! command -v tmux >/dev/null 2>&1; then
   echo "tmux is required for this script" >&2
@@ -176,6 +206,9 @@ GREEDY_HETEROGENEITY_MODE="$GREEDY_HETEROGENEITY_MODE" \
 GREEDY_MOVE_SCORING_MODE="$GREEDY_MOVE_SCORING_MODE" \
 GREEDY_MOVE_PENALTY_COEFFICIENT="$GREEDY_MOVE_PENALTY_COEFFICIENT" \
 GREEDY_CPU_SECONDS_SMOOTHING_TAU="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" \
+MATCHING_ENABLE_ADAPTIVE_SCALER="$MATCHING_ENABLE_ADAPTIVE_SCALER" \
+MATCHING_NUM_TASKLIST_READ_PARTITIONS="$MATCHING_NUM_TASKLIST_READ_PARTITIONS" \
+MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" \
   "$ROOT/environment/kind-lab/scripts/deploy.sh" heterogeneous
 
 "$ROOT/environment/kind-lab/scripts/deploy-observability.sh"
@@ -185,6 +218,13 @@ kubectl get configmap kind-lab-run-metadata -n "$NAMESPACE" \
 
 echo "settling for ${SETTLE_SECONDS}s before starting workload..."
 sleep "$SETTLE_SECONDS"
+
+etcd_alarm="$(kubectl exec -n "$NAMESPACE" etcd-0 -- sh -lc 'ETCDCTL_API=3 /opt/bitnami/etcd/bin/etcdctl --endpoints=http://127.0.0.1:2379 alarm list' 2>/dev/null || true)"
+if [[ -n "$etcd_alarm" ]]; then
+  echo "etcd alarm is active before workload; refusing to start:" >&2
+  echo "$etcd_alarm" >&2
+  exit 1
+fi
 
 kubectl delete job matching-lab -n "$NAMESPACE" --ignore-not-found
 kubectl wait --for=delete job/matching-lab -n "$NAMESPACE" --timeout=60s >/dev/null 2>&1 || true
@@ -198,6 +238,8 @@ Heterogeneity mode:    $GREEDY_HETEROGENEITY_MODE
 Move scoring mode:     $GREEDY_MOVE_SCORING_MODE
 Move penalty:          $GREEDY_MOVE_PENALTY_COEFFICIENT
 CPU smoothing tau:     $GREEDY_CPU_SECONDS_SMOOTHING_TAU
+Adaptive scaler:       $MATCHING_ENABLE_ADAPTIVE_SCALER
+Tasklist partitions:   read=$MATCHING_NUM_TASKLIST_READ_PARTITIONS write=$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS
 Utilization CSV:       $CSV_PATH
 Matching log:          $LOG_PATH
 

@@ -14,6 +14,9 @@ MATCHING_BASE_BURN_ITERATIONS="${MATCHING_BASE_BURN_ITERATIONS:-10000000}"
 MATCHING_FAST_BURN_ITERATIONS="${MATCHING_FAST_BURN_ITERATIONS:-5000000}"
 MATCHING_SLOW_BURN_ITERATIONS="${MATCHING_SLOW_BURN_ITERATIONS:-15000000}"
 GREEDY_CPU_SECONDS_SMOOTHING_TAU="${GREEDY_CPU_SECONDS_SMOOTHING_TAU:-10m}"
+MATCHING_ENABLE_ADAPTIVE_SCALER="${MATCHING_ENABLE_ADAPTIVE_SCALER:-false}"
+MATCHING_NUM_TASKLIST_READ_PARTITIONS="${MATCHING_NUM_TASKLIST_READ_PARTITIONS:-1}"
+MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="${MATCHING_NUM_TASKLIST_WRITE_PARTITIONS:-1}"
 
 case "$MODE" in
   homogeneous|heterogeneous)
@@ -41,6 +44,24 @@ case "$GREEDY_MOVE_SCORING_MODE" in
     exit 2
     ;;
 esac
+
+case "$MATCHING_ENABLE_ADAPTIVE_SCALER" in
+  true|false)
+    ;;
+  *)
+    echo "MATCHING_ENABLE_ADAPTIVE_SCALER must be true or false" >&2
+    exit 2
+    ;;
+esac
+
+if ! [[ "$MATCHING_NUM_TASKLIST_READ_PARTITIONS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "MATCHING_NUM_TASKLIST_READ_PARTITIONS must be a positive integer" >&2
+  exit 2
+fi
+if ! [[ "$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "MATCHING_NUM_TASKLIST_WRITE_PARTITIONS must be a positive integer" >&2
+  exit 2
+fi
 
 case "$MATCHING_HETEROGENEITY_PROFILE" in
   equal_burn)
@@ -92,7 +113,7 @@ tmp_config_dir="$(mktemp -d)"
 metadata_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_config_dir" "$metadata_dir"' EXIT
 cp "$ROOT"/environment/kind-lab/k8s/bootstrap/files/* "$tmp_config_dir"/
-awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GREEDY_MOVE_SCORING_MODE" -v move_penalty_coefficient="$GREEDY_MOVE_PENALTY_COEFFICIENT" -v cpu_smoothing_tau="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" '
+awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GREEDY_MOVE_SCORING_MODE" -v move_penalty_coefficient="$GREEDY_MOVE_PENALTY_COEFFICIENT" -v cpu_smoothing_tau="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" -v matching_enable_adaptive_scaler="$MATCHING_ENABLE_ADAPTIVE_SCALER" -v matching_read_partitions="$MATCHING_NUM_TASKLIST_READ_PARTITIONS" -v matching_write_partitions="$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" '
   $0 == "shardDistributor.loadBalancingGreedy.heterogeneityMode:" {
     in_heterogeneity_key = 1
     print
@@ -110,6 +131,21 @@ awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GR
   }
   $0 == "shardDistributor.loadBalancingGreedy.cpuSecondsSmoothingTau:" {
     in_cpu_smoothing_tau_key = 1
+    print
+    next
+  }
+  $0 == "matching.enableAdaptiveScaler:" {
+    in_matching_enable_adaptive_scaler_key = 1
+    print
+    next
+  }
+  $0 == "matching.numTasklistReadPartitions:" {
+    in_matching_read_partitions_key = 1
+    print
+    next
+  }
+  $0 == "matching.numTasklistWritePartitions:" {
+    in_matching_write_partitions_key = 1
     print
     next
   }
@@ -133,6 +169,21 @@ awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GR
     in_cpu_smoothing_tau_key = 0
     next
   }
+  in_matching_enable_adaptive_scaler_key && $1 == "-" && $2 == "value:" {
+    print "  - value: " matching_enable_adaptive_scaler
+    in_matching_enable_adaptive_scaler_key = 0
+    next
+  }
+  in_matching_read_partitions_key && $1 == "-" && $2 == "value:" {
+    print "  - value: " matching_read_partitions
+    in_matching_read_partitions_key = 0
+    next
+  }
+  in_matching_write_partitions_key && $1 == "-" && $2 == "value:" {
+    print "  - value: " matching_write_partitions
+    in_matching_write_partitions_key = 0
+    next
+  }
   { print }
 ' "$tmp_config_dir/kind-lab-dynamic.yaml" > "$tmp_config_dir/kind-lab-dynamic.yaml.tmp"
 mv "$tmp_config_dir/kind-lab-dynamic.yaml.tmp" "$tmp_config_dir/kind-lab-dynamic.yaml"
@@ -144,6 +195,17 @@ kubectl create configmap cadence-kind-lab-config -n "$NAMESPACE" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 DEPLOY_MODE="$MODE" SCENARIO_FILE="$tmp_config_dir/trace-21-12.yaml" \
+RUN_NAME="$RUN_NAME" SCENARIO="$SCENARIO" \
+MATCHING_HETEROGENEITY_PROFILE="$MATCHING_HETEROGENEITY_PROFILE" \
+GREEDY_HETEROGENEITY_MODE="$GREEDY_HETEROGENEITY_MODE" \
+GREEDY_MOVE_SCORING_MODE="$GREEDY_MOVE_SCORING_MODE" \
+GREEDY_MOVE_PENALTY_COEFFICIENT="$GREEDY_MOVE_PENALTY_COEFFICIENT" \
+GREEDY_CPU_SECONDS_SMOOTHING_TAU="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" \
+MATCHING_ENABLE_ADAPTIVE_SCALER="$MATCHING_ENABLE_ADAPTIVE_SCALER" \
+MATCHING_NUM_TASKLIST_READ_PARTITIONS="$MATCHING_NUM_TASKLIST_READ_PARTITIONS" \
+MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" \
+MATCHING_A_CPU="$MATCHING_A_CPU" MATCHING_B_CPU="$MATCHING_B_CPU" MATCHING_C_CPU="$MATCHING_C_CPU" \
+MATCHING_A_BURN="$MATCHING_A_BURN" MATCHING_B_BURN="$MATCHING_B_BURN" MATCHING_C_BURN="$MATCHING_C_BURN" \
   "$ROOT/environment/kind-lab/scripts/render-run-metadata.sh" "$metadata_dir"
 kubectl create configmap kind-lab-run-metadata -n "$NAMESPACE" \
   --from-file=metadata.json="$metadata_dir/run-metadata.json" \
@@ -165,6 +227,8 @@ echo "  cadence-matching-a: cpu=$MATCHING_A_CPU burn_iterations=$MATCHING_A_BURN
 echo "  cadence-matching-b: cpu=$MATCHING_B_CPU burn_iterations=$MATCHING_B_BURN"
 echo "  cadence-matching-c: cpu=$MATCHING_C_CPU burn_iterations=$MATCHING_C_BURN"
 echo "greedy cpu seconds smoothing tau: $GREEDY_CPU_SECONDS_SMOOTHING_TAU"
+echo "matching adaptive scaler: $MATCHING_ENABLE_ADAPTIVE_SCALER"
+echo "matching tasklist partitions: read=$MATCHING_NUM_TASKLIST_READ_PARTITIONS write=$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS"
 echo "run metadata: kubectl get configmap kind-lab-run-metadata -n $NAMESPACE -o jsonpath='{.data.metadata\\.json}'"
 echo "grafana:      Cadence Matching Lab Experiments (banner panel at top)"
 

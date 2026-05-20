@@ -439,7 +439,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 	metricsLoopScope.AddCounter(metrics.ShardDistributorAssignLoopNumRebalancedShards, int64(len(shardsToReassign)))
 
 	// If there are deleted shards or stale executors, the distribution has changed.
-	assignedToEmptyExecutors := assignShardsToEmptyExecutors(currentAssignments)
+	assignedToEmptyExecutors := assignShardsToEmptyExecutors(currentAssignments, namespaceState)
 	updatedAssignments := p.updateAssignments(shardsToReassign, activeExecutors, currentAssignments)
 
 	loadBalanceMoves, err := loadbalancer.PlanRebalance(
@@ -762,7 +762,14 @@ func (*namespaceProcessor) getActiveExecutors(namespaceState *store.NamespaceSta
 }
 
 func executorStableSortKey(namespaceState *store.NamespaceState, executorID string) string {
-	metadata := namespaceState.Executors[executorID].Metadata
+	if namespaceState == nil {
+		return executorID
+	}
+	executor, ok := namespaceState.Executors[executorID]
+	if !ok {
+		return executorID
+	}
+	metadata := executor.Metadata
 	if hostname := metadata["hostname"]; hostname != "" {
 		return hostname
 	}
@@ -772,17 +779,19 @@ func executorStableSortKey(namespaceState *store.NamespaceState, executorID stri
 	return executorID
 }
 
-func assignShardsToEmptyExecutors(currentAssignments map[string][]string) bool {
+func assignShardsToEmptyExecutors(currentAssignments map[string][]string, namespaceState *store.NamespaceState) bool {
 	emptyExecutors := make([]string, 0)
 	executorsWithShards := make([]string, 0)
 	minShardsCurrentlyAssigned := 0
 
-	// Ensure the iteration is deterministic.
+	// Ensure the iteration is deterministic and consistent with normal initial assignment.
 	executors := make([]string, 0, len(currentAssignments))
 	for executorID := range currentAssignments {
 		executors = append(executors, executorID)
 	}
-	slices.Sort(executors)
+	sort.Slice(executors, func(i, j int) bool {
+		return executorStableSortKey(namespaceState, executors[i]) < executorStableSortKey(namespaceState, executors[j])
+	})
 
 	for _, executorID := range executors {
 		if len(currentAssignments[executorID]) == 0 {

@@ -903,7 +903,7 @@ func TestAssignShardsToEmptyExecutors(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			actualDistributionChanged := assignShardsToEmptyExecutors(c.inputAssignments)
+			actualDistributionChanged := assignShardsToEmptyExecutors(c.inputAssignments, nil)
 
 			assert.Equal(t, c.expectedAssignments, c.inputAssignments)
 			assert.Equal(t, c.expectedDistributonChanged, actualDistributionChanged)

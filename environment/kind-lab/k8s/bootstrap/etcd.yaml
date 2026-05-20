@@ -34,6 +34,12 @@ spec:
               value: "yes"
             - name: ETCD_ADVERTISE_CLIENT_URLS
               value: http://etcd:2379
+            - name: ETCD_QUOTA_BACKEND_BYTES
+              value: "8589934592"
+            - name: ETCD_AUTO_COMPACTION_MODE
+              value: periodic
+            - name: ETCD_AUTO_COMPACTION_RETENTION
+              value: 1h
           ports:
             - containerPort: 2379
               name: client
