@@ -196,6 +196,48 @@ Then open `http://localhost:3000`. Grafana is configured with a default
 Prometheus datasource named `Prometheus`, so implementation-specific dashboards
 can be imported directly.
 
+### Run configuration in Grafana
+
+Each `deploy.sh` patches the top **Active run** text panel on
+**Cadence Matching Lab Experiments** (`/d/cadence-kind-lab-experiments`) with:
+
+**Run** · **Heterogeneity** (`off` / `latency` / `cpu_seconds`) · **Scoring**
+(`benefit` / `cost_aware`) · **Profile** (`equal_burn` / `equal_cores` / `mixed`)
+
+One dashboard tab is enough for metrics and config. When you tunnel several VMs
+to `localhost:3001`, `localhost:3002`, etc., the banner on each tells you which
+experiment that tab is.
+
+Optional JSON copy:
+
+```bash
+kubectl get configmap kind-lab-run-metadata -n cadence-kind-lab \
+  -o jsonpath='{.data.metadata\.json}'
+```
+
+### Remote VM + SSH tunnel from your laptop
+
+`run-controlled-kind-lab.sh` always port-forwards Grafana to **port 3000 on the
+experiment host** (override with `GRAFANA_REMOTE_PORT` if needed). That matches
+one kind cluster per VM.
+
+If you run experiments on SDU Cloud (or similar) over SSH, open Grafana from
+your laptop by tunneling a **different local port per VM**:
+
+```bash
+# VM 1 — map laptop 3002 → remote 3000
+ssh -p 2273 -L 3002:localhost:3000 ucloud@ssh.cloud.sdu.dk
+
+# VM 2 — map laptop 3001 → remote 3000
+ssh -p <other> -L 3001:localhost:3000 ucloud@ssh.cloud.sdu.dk
+```
+
+Then open on your laptop (one URL per VM):
+
+`http://localhost:3002/d/cadence-kind-lab-experiments`
+
+The **Active run** panel at the top shows which config that VM is running.
+
 ## Run The Workload
 
 ```bash

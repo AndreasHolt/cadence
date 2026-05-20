@@ -18,6 +18,8 @@ SESSION_NAME=""
 BUILD_IMAGE="false"
 CREATE_CLUSTER="false"
 ATTACH="true"
+# Local port on the experiment host where Grafana port-forward listens (default 3000).
+GRAFANA_REMOTE_PORT="${GRAFANA_REMOTE_PORT:-3000}"
 
 usage() {
   cat <<'EOF'
@@ -168,6 +170,9 @@ fi
 
 "$ROOT/environment/kind-lab/scripts/reset.sh"
 
+"$ROOT/environment/kind-lab/scripts/deploy-observability.sh"
+
+RUN_NAME="$RUN_NAME" SCENARIO="$SCENARIO" \
 MATCHING_HETEROGENEITY_PROFILE="$MATCHING_HETEROGENEITY_PROFILE" \
 GREEDY_HETEROGENEITY_MODE="$GREEDY_HETEROGENEITY_MODE" \
 GREEDY_MOVE_SCORING_MODE="$GREEDY_MOVE_SCORING_MODE" \
@@ -175,7 +180,8 @@ GREEDY_MOVE_PENALTY_COEFFICIENT="$GREEDY_MOVE_PENALTY_COEFFICIENT" \
 GREEDY_CPU_SECONDS_SMOOTHING_TAU="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" \
   "$ROOT/environment/kind-lab/scripts/deploy.sh" heterogeneous
 
-"$ROOT/environment/kind-lab/scripts/deploy-observability.sh"
+kubectl get configmap kind-lab-run-metadata -n "$NAMESPACE" \
+  -o jsonpath='{.data.metadata\.json}' >"$RESULT_DIR/$RUN_NAME-metadata.json" 2>/dev/null || true
 
 echo "settling for ${SETTLE_SECONDS}s before starting workload..."
 sleep "$SETTLE_SECONDS"
@@ -194,13 +200,19 @@ Move penalty:          $GREEDY_MOVE_PENALTY_COEFFICIENT
 CPU smoothing tau:     $GREEDY_CPU_SECONDS_SMOOTHING_TAU
 Utilization CSV:       $CSV_PATH
 Matching log:          $LOG_PATH
+
+Grafana on this host:  http://localhost:${GRAFANA_REMOTE_PORT}/d/cadence-kind-lab-experiments
+From your laptop:      http://localhost:<local>/d/cadence-kind-lab-experiments
+  (active run banner is the top panel — heterogeneity / scoring / profile)
+  Example tunnel:      ssh -p 2273 -L 3002:localhost:${GRAFANA_REMOTE_PORT} ucloud@ssh.cloud.sdu.dk
+                       then open http://localhost:3002/d/cadence-kind-lab-experiments
 EOF
 
 sample_cmd="cd '$ROOT' && ./environment/kind-lab/scripts/sample-utilization.sh '$SAMPLE_INTERVAL_SECONDS' '$DURATION_SECONDS' '$CSV_PATH'; echo; echo 'sample-utilization finished; press enter'; read"
 load_cmd="cd '$ROOT' && ./environment/kind-lab/scripts/run-load.sh '$SCENARIO' | tee '$LOG_PATH'; echo; echo 'run-load finished; press enter'; read"
 watch_cmd="cd '$ROOT' && watch -n 5 'kubectl get pods,jobs -n $NAMESPACE; echo; kubectl top pods -n $NAMESPACE 2>/dev/null || true'"
 
-grafana_cmd="kubectl -n '$NAMESPACE' port-forward svc/grafana 3000:3000; echo; echo 'grafana port-forward exited; press enter'; read"
+grafana_cmd="kubectl -n '$NAMESPACE' port-forward svc/grafana ${GRAFANA_REMOTE_PORT}:3000; echo; echo 'grafana port-forward exited; press enter'; read"
 prometheus_cmd="kubectl -n '$NAMESPACE' port-forward svc/prometheus 9090:9090; echo; echo 'prometheus port-forward exited; press enter'; read"
 
 tmux new-session -d -s "$SESSION_NAME" -n run "$sample_cmd"

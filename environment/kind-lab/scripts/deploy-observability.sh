@@ -38,6 +38,10 @@ Grafana:
   kubectl -n $NAMESPACE port-forward svc/grafana 3000:3000
   http://localhost:3000
 
+Dashboard (folder: Cadence Kind Lab):
+  - Cadence Matching Lab Experiments (/d/cadence-kind-lab-experiments)
+    Run config banner is filled when deploy.sh runs after this script.
+
 Prometheus:
   kubectl -n $NAMESPACE port-forward svc/prometheus 9090:9090
   http://localhost:9090

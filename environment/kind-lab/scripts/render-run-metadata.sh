@@ -1,0 +1,56 @@
+#!/bin/bash
+# Renders a short Grafana banner and optional full metadata for results/kubectl.
+set -euo pipefail
+
+OUT_DIR="${1:?output directory required}"
+
+RUN_NAME="${RUN_NAME:-unspecified}"
+SCENARIO="${SCENARIO:-trace-21-12}"
+DEPLOY_MODE="${DEPLOY_MODE:-heterogeneous}"
+MATCHING_HETEROGENEITY_PROFILE="${MATCHING_HETEROGENEITY_PROFILE:-equal_cores}"
+GREEDY_HETEROGENEITY_MODE="${GREEDY_HETEROGENEITY_MODE:-off}"
+GREEDY_MOVE_SCORING_MODE="${GREEDY_MOVE_SCORING_MODE:-benefit}"
+GREEDY_MOVE_PENALTY_COEFFICIENT="${GREEDY_MOVE_PENALTY_COEFFICIENT:-0.2}"
+GREEDY_CPU_SECONDS_SMOOTHING_TAU="${GREEDY_CPU_SECONDS_SMOOTHING_TAU:-10m}"
+MATCHING_A_CPU="${MATCHING_A_CPU:-?}"
+MATCHING_B_CPU="${MATCHING_B_CPU:-?}"
+MATCHING_C_CPU="${MATCHING_C_CPU:-?}"
+MATCHING_A_BURN="${MATCHING_A_BURN:-?}"
+MATCHING_B_BURN="${MATCHING_B_BURN:-?}"
+MATCHING_C_BURN="${MATCHING_C_BURN:-?}"
+
+DEPLOYED_AT_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+export RUN_NAME SCENARIO DEPLOY_MODE MATCHING_HETEROGENEITY_PROFILE \
+  GREEDY_HETEROGENEITY_MODE GREEDY_MOVE_SCORING_MODE \
+  GREEDY_MOVE_PENALTY_COEFFICIENT GREEDY_CPU_SECONDS_SMOOTHING_TAU \
+  MATCHING_A_CPU MATCHING_B_CPU MATCHING_C_CPU \
+  MATCHING_A_BURN MATCHING_B_BURN MATCHING_C_BURN DEPLOYED_AT_UTC
+mkdir -p "$OUT_DIR"
+
+BANNER_FILE="$OUT_DIR/run-config-banner.md"
+JSON_FILE="$OUT_DIR/run-metadata.json"
+
+cat >"$BANNER_FILE" <<EOF
+**Run:** \`${RUN_NAME}\` · **Heterogeneity:** \`${GREEDY_HETEROGENEITY_MODE}\` · **Scoring:** \`${GREEDY_MOVE_SCORING_MODE}\` · **Profile:** \`${MATCHING_HETEROGENEITY_PROFILE}\`
+EOF
+
+python3 - "$JSON_FILE" <<'PY'
+import json
+import os
+import sys
+
+payload = {
+    "run_name": os.environ["RUN_NAME"],
+    "deployed_at_utc": os.environ["DEPLOYED_AT_UTC"],
+    "scenario": os.environ["SCENARIO"],
+    "heterogeneity_mode": os.environ["GREEDY_HETEROGENEITY_MODE"],
+    "move_scoring_mode": os.environ["GREEDY_MOVE_SCORING_MODE"],
+    "matching_profile": os.environ["MATCHING_HETEROGENEITY_PROFILE"],
+}
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    json.dump(payload, f, indent=2)
+    f.write("\n")
+PY
+
+echo "wrote $BANNER_FILE"
+echo "wrote $JSON_FILE"

@@ -4,6 +4,8 @@ set -euo pipefail
 MODE="${1:-heterogeneous}"
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 NAMESPACE="cadence-kind-lab"
+RUN_NAME="${RUN_NAME:-unspecified}"
+SCENARIO="${SCENARIO:-trace-21-12}"
 GREEDY_HETEROGENEITY_MODE="${GREEDY_HETEROGENEITY_MODE:-off}"
 GREEDY_MOVE_SCORING_MODE="${GREEDY_MOVE_SCORING_MODE:-benefit}"
 GREEDY_MOVE_PENALTY_COEFFICIENT="${GREEDY_MOVE_PENALTY_COEFFICIENT:-0.2}"
@@ -87,7 +89,8 @@ configure_matching_executor() {
 kubectl apply -k "$ROOT/environment/kind-lab/k8s/bootstrap"
 
 tmp_config_dir="$(mktemp -d)"
-trap 'rm -rf "$tmp_config_dir"' EXIT
+metadata_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_config_dir" "$metadata_dir"' EXIT
 cp "$ROOT"/environment/kind-lab/k8s/bootstrap/files/* "$tmp_config_dir"/
 awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GREEDY_MOVE_SCORING_MODE" -v move_penalty_coefficient="$GREEDY_MOVE_PENALTY_COEFFICIENT" -v cpu_smoothing_tau="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" '
   $0 == "shardDistributor.loadBalancingGreedy.heterogeneityMode:" {
@@ -139,6 +142,21 @@ kubectl create configmap cadence-kind-lab-config -n "$NAMESPACE" \
   --from-file=hotspot.yaml="$tmp_config_dir/hotspot.yaml" \
   --from-file=trace-21-12.yaml="$tmp_config_dir/trace-21-12.yaml" \
   --dry-run=client -o yaml | kubectl apply -f -
+
+DEPLOY_MODE="$MODE" SCENARIO_FILE="$tmp_config_dir/trace-21-12.yaml" \
+  "$ROOT/environment/kind-lab/scripts/render-run-metadata.sh" "$metadata_dir"
+kubectl create configmap kind-lab-run-metadata -n "$NAMESPACE" \
+  --from-file=metadata.json="$metadata_dir/run-metadata.json" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+python3 "$ROOT/environment/kind-lab/scripts/patch-experiments-dashboard.py" \
+  "$ROOT/environment/kind-lab/k8s/observability/grafana.yaml" \
+  "$metadata_dir/run-config-banner.md" \
+  "$metadata_dir/cadence-experiment-overview.json"
+kubectl create configmap kind-lab-grafana-dashboard-experiments -n "$NAMESPACE" \
+  --from-file=cadence-experiment-overview.json="$metadata_dir/cadence-experiment-overview.json" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
 echo "greedy heterogeneity mode: $GREEDY_HETEROGENEITY_MODE"
 echo "greedy move scoring mode: $GREEDY_MOVE_SCORING_MODE"
 echo "greedy move penalty coefficient: $GREEDY_MOVE_PENALTY_COEFFICIENT"
@@ -147,6 +165,8 @@ echo "  cadence-matching-a: cpu=$MATCHING_A_CPU burn_iterations=$MATCHING_A_BURN
 echo "  cadence-matching-b: cpu=$MATCHING_B_CPU burn_iterations=$MATCHING_B_BURN"
 echo "  cadence-matching-c: cpu=$MATCHING_C_CPU burn_iterations=$MATCHING_C_BURN"
 echo "greedy cpu seconds smoothing tau: $GREEDY_CPU_SECONDS_SMOOTHING_TAU"
+echo "run metadata: kubectl get configmap kind-lab-run-metadata -n $NAMESPACE -o jsonpath='{.data.metadata\\.json}'"
+echo "grafana:      Cadence Matching Lab Experiments (banner panel at top)"
 
 kubectl rollout status statefulset/cassandra -n "$NAMESPACE" --timeout=5m
 kubectl rollout status statefulset/etcd -n "$NAMESPACE" --timeout=2m
