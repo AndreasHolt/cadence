@@ -31,7 +31,9 @@ BANNER_FILE="$OUT_DIR/run-config-banner.md"
 JSON_FILE="$OUT_DIR/run-metadata.json"
 
 cat >"$BANNER_FILE" <<EOF
-**Run:** \`${RUN_NAME}\` · **Heterogeneity:** \`${GREEDY_HETEROGENEITY_MODE}\` · **Scoring:** \`${GREEDY_MOVE_SCORING_MODE}\` · **Profile:** \`${MATCHING_HETEROGENEITY_PROFILE}\`
+### ${RUN_NAME}
+
+**Heterogeneity:** \`${GREEDY_HETEROGENEITY_MODE}\` · **Scoring:** \`${GREEDY_MOVE_SCORING_MODE}\` · **Profile:** \`${MATCHING_HETEROGENEITY_PROFILE}\`
 EOF
 
 python3 - "$JSON_FILE" <<'PY'

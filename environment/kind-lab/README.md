@@ -201,12 +201,15 @@ can be imported directly.
 Each `deploy.sh` patches the top **Active run** text panel on
 **Cadence Matching Lab Experiments** (`/d/cadence-kind-lab-experiments`) with:
 
-**Run** · **Heterogeneity** (`off` / `latency` / `cpu_seconds`) · **Scoring**
-(`benefit` / `cost_aware`) · **Profile** (`equal_burn` / `equal_cores` / `mixed`)
+The **run name** (`--run …`) appears in three places on that dashboard:
+
+- Browser tab / dashboard title: `Cadence Matching Lab Experiments — <run name>`
+- Top panel title: the run name
+- Panel body: run name as heading, then heterogeneity / scoring / profile
 
 One dashboard tab is enough for metrics and config. When you tunnel several VMs
-to `localhost:3001`, `localhost:3002`, etc., the banner on each tells you which
-experiment that tab is.
+to `localhost:3001`, `localhost:3002`, etc., the title and banner on each tell
+you which experiment that tab is.
 
 Optional JSON copy:
 

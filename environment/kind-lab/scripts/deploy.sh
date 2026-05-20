@@ -149,7 +149,7 @@ kubectl create configmap kind-lab-run-metadata -n "$NAMESPACE" \
   --from-file=metadata.json="$metadata_dir/run-metadata.json" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-python3 "$ROOT/environment/kind-lab/scripts/patch-experiments-dashboard.py" \
+RUN_NAME="$RUN_NAME" python3 "$ROOT/environment/kind-lab/scripts/patch-experiments-dashboard.py" \
   "$ROOT/environment/kind-lab/k8s/observability/grafana.yaml" \
   "$metadata_dir/run-config-banner.md" \
   "$metadata_dir/cadence-experiment-overview.json"
