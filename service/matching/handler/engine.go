@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -235,6 +236,11 @@ func (e *matchingEngineImpl) setupExecutor(shardDistributorExecutorClient execut
 		e.logger.Fatal("Failed to get listen IP", tag.Error(err))
 	}
 
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = hostIP.String()
+	}
+
 	params := executorclient.Params[tasklist.ShardProcessor]{
 		ExecutorClient:        shardDistributorExecutorClient,
 		MetricsScope:          e.metricsScope,
@@ -246,6 +252,7 @@ func (e *matchingEngineImpl) setupExecutor(shardDistributorExecutorClient execut
 			"tchannel": fmt.Sprintf("%d", e.config.RPCConfig.Port),
 			"grpc":     fmt.Sprintf("%d", e.config.RPCConfig.GRPCPort),
 			"hostIP":   hostIP.String(),
+			"hostname": hostname,
 		},
 		DrainObserver: e.drainObserver,
 	}

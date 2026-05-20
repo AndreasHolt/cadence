@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"maps"
 	"math"
-	"math/rand"
 	"slices"
 	"sort"
 	"strconv"
@@ -598,14 +597,37 @@ func (*namespaceProcessor) updateAssignments(shardsToReassign []string, activeEx
 		return false
 	}
 
-	i := rand.Intn(len(activeExecutors))
-	for _, shardID := range shardsToReassign {
+	sort.Slice(shardsToReassign, func(i, j int) bool {
+		return compareShardIDs(shardsToReassign[i], shardsToReassign[j]) < 0
+	})
+	for i, shardID := range shardsToReassign {
 		executorID := activeExecutors[i%len(activeExecutors)]
 		currentAssignments[executorID] = append(currentAssignments[executorID], shardID)
-		i++
 	}
 
 	return true
+}
+
+func compareShardIDs(a, b string) int {
+	ai, aErr := strconv.Atoi(a)
+	bi, bErr := strconv.Atoi(b)
+	if aErr == nil && bErr == nil {
+		switch {
+		case ai < bi:
+			return -1
+		case ai > bi:
+			return 1
+		default:
+			return 0
+		}
+	}
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
 }
 
 func applyMoves(currentAssignments map[string][]string, moves []plan.Move) error {
@@ -733,8 +755,21 @@ func (*namespaceProcessor) getActiveExecutors(namespaceState *store.NamespaceSta
 		}
 	}
 
-	sort.Strings(activeExecutors)
+	sort.Slice(activeExecutors, func(i, j int) bool {
+		return executorStableSortKey(namespaceState, activeExecutors[i]) < executorStableSortKey(namespaceState, activeExecutors[j])
+	})
 	return activeExecutors
+}
+
+func executorStableSortKey(namespaceState *store.NamespaceState, executorID string) string {
+	metadata := namespaceState.Executors[executorID].Metadata
+	if hostname := metadata["hostname"]; hostname != "" {
+		return hostname
+	}
+	if hostIP := metadata["hostIP"]; hostIP != "" {
+		return hostIP
+	}
+	return executorID
 }
 
 func assignShardsToEmptyExecutors(currentAssignments map[string][]string) bool {
