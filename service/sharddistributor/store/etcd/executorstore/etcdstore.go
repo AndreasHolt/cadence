@@ -398,24 +398,25 @@ func (s *executorStoreImpl) AssignShards(ctx context.Context, namespace string, 
 	var comparisons []clientv3.Cmp
 	comparisonMaps := make(map[string]int64)
 
-	// TODO: Should be extracted to a higher level so that statistics updates are prepared
+	// TODO: Should be extracted to a higher level so that statistics updates are prepared.
+	// Shard statistics are advisory for load balancing and must never block publishing
+	// ownership. If ownership is not written, history cannot route tasks to matching.
 	if s.cfg.GetLoadBalancingMode(namespace) == types.LoadBalancingModeGREEDY {
 		statsUpdates, errUpdate := s.prepareShardStatisticsUpdates(ctx, namespace, request.NewState.ShardAssignments)
 		if errUpdate != nil {
-			return fmt.Errorf("prepare shard statistics: %w", errUpdate)
+			s.logger.Error("failed to prepare shard statistics updates; continuing with assignment", tag.Error(errUpdate))
+		} else {
+			defer func() {
+				// Apply the shard statistics updates after the main transaction commits.
+				// Only apply if there was no error in the main transaction.
+				if err != nil {
+					return
+				}
+				if updateErr := s.applyShardStatisticsUpdates(ctx, namespace, statsUpdates); updateErr != nil {
+					s.logger.Error("failed to apply shard statistics updates", tag.Error(updateErr))
+				}
+			}()
 		}
-
-		defer func() {
-			// Apply the shard statistics updates after the main transaction commits.
-			// Only apply if there was no error in the main transaction.
-			if err != nil {
-				return
-			}
-			if updateErr := s.applyShardStatisticsUpdates(ctx, namespace, statsUpdates); updateErr != nil {
-				s.logger.Error("failed to apply shard statistics updates", tag.Error(updateErr))
-				err = updateErr
-			}
-		}()
 	}
 
 	// 1. Prepare operations to delete stale executors and add comparisons to ensure they haven't been modified
