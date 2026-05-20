@@ -170,8 +170,6 @@ fi
 
 "$ROOT/environment/kind-lab/scripts/reset.sh"
 
-"$ROOT/environment/kind-lab/scripts/deploy-observability.sh"
-
 RUN_NAME="$RUN_NAME" SCENARIO="$SCENARIO" \
 MATCHING_HETEROGENEITY_PROFILE="$MATCHING_HETEROGENEITY_PROFILE" \
 GREEDY_HETEROGENEITY_MODE="$GREEDY_HETEROGENEITY_MODE" \
@@ -179,6 +177,8 @@ GREEDY_MOVE_SCORING_MODE="$GREEDY_MOVE_SCORING_MODE" \
 GREEDY_MOVE_PENALTY_COEFFICIENT="$GREEDY_MOVE_PENALTY_COEFFICIENT" \
 GREEDY_CPU_SECONDS_SMOOTHING_TAU="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" \
   "$ROOT/environment/kind-lab/scripts/deploy.sh" heterogeneous
+
+"$ROOT/environment/kind-lab/scripts/deploy-observability.sh"
 
 kubectl get configmap kind-lab-run-metadata -n "$NAMESPACE" \
   -o jsonpath='{.data.metadata\.json}' >"$RESULT_DIR/$RUN_NAME-metadata.json" 2>/dev/null || true
