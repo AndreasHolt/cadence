@@ -204,15 +204,14 @@ grafana_cmd="kubectl -n '$NAMESPACE' port-forward svc/grafana 3000:3000; echo; e
 prometheus_cmd="kubectl -n '$NAMESPACE' port-forward svc/prometheus 9090:9090; echo; echo 'prometheus port-forward exited; press enter'; read"
 
 tmux new-session -d -s "$SESSION_NAME" -n run "$sample_cmd"
-tmux split-window -h -t "$SESSION_NAME:0" "$load_cmd"
-tmux split-window -v -t "$SESSION_NAME:0.1" "$watch_cmd"
-tmux select-layout -t "$SESSION_NAME:0" tiled >/dev/null 2>&1 || true
-tmux select-pane -t "$SESSION_NAME:0.0" >/dev/null 2>&1 || true
+tmux split-window -h -t "$SESSION_NAME:run" "$load_cmd"
+tmux split-window -v -t "$SESSION_NAME:run.1" "$watch_cmd"
+tmux select-layout -t "$SESSION_NAME:run" tiled >/dev/null 2>&1 || true
 
 tmux new-window -t "$SESSION_NAME" -n ports "$grafana_cmd"
 tmux split-window -h -t "$SESSION_NAME:ports" "$prometheus_cmd"
 tmux select-layout -t "$SESSION_NAME:ports" even-horizontal >/dev/null 2>&1 || true
-tmux select-window -t "$SESSION_NAME:run"
+tmux select-window -t "$SESSION_NAME:run" >/dev/null 2>&1 || true
 
 if [[ "$ATTACH" == "true" ]]; then
   tmux attach -t "$SESSION_NAME"
