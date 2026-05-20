@@ -201,11 +201,19 @@ sample_cmd="cd '$ROOT' && ./environment/kind-lab/scripts/sample-utilization.sh '
 load_cmd="cd '$ROOT' && ./environment/kind-lab/scripts/run-load.sh '$SCENARIO' | tee '$LOG_PATH'; echo; echo 'run-load finished; press enter'; read"
 watch_cmd="cd '$ROOT' && watch -n 5 'kubectl get pods,jobs -n $NAMESPACE; echo; kubectl top pods -n $NAMESPACE 2>/dev/null || true'"
 
+grafana_cmd="kubectl -n '$NAMESPACE' port-forward svc/grafana 3000:3000; echo; echo 'grafana port-forward exited; press enter'; read"
+prometheus_cmd="kubectl -n '$NAMESPACE' port-forward svc/prometheus 9090:9090; echo; echo 'prometheus port-forward exited; press enter'; read"
+
 tmux new-session -d -s "$SESSION_NAME" -n run "$sample_cmd"
-tmux split-window -h -t "$SESSION_NAME:run" "$load_cmd"
-tmux split-window -v -t "$SESSION_NAME:run.1" "$watch_cmd"
-tmux select-layout -t "$SESSION_NAME:run" tiled
-tmux select-pane -t "$SESSION_NAME:run.0"
+tmux split-window -h -t "$SESSION_NAME:0" "$load_cmd"
+tmux split-window -v -t "$SESSION_NAME:0.1" "$watch_cmd"
+tmux select-layout -t "$SESSION_NAME:0" tiled >/dev/null 2>&1 || true
+tmux select-pane -t "$SESSION_NAME:0.0" >/dev/null 2>&1 || true
+
+tmux new-window -t "$SESSION_NAME" -n ports "$grafana_cmd"
+tmux split-window -h -t "$SESSION_NAME:ports" "$prometheus_cmd"
+tmux select-layout -t "$SESSION_NAME:ports" even-horizontal >/dev/null 2>&1 || true
+tmux select-window -t "$SESSION_NAME:run"
 
 if [[ "$ATTACH" == "true" ]]; then
   tmux attach -t "$SESSION_NAME"
