@@ -89,6 +89,8 @@ func PlanRebalance(
 	)
 	metricsScope.AddCounter(metrics.ShardDistributorAssignLoopLoadBasedMoves, 1)
 	metricsScope.UpdateGauge(metrics.ShardDistributorAssignLoopMovedShardLoad, hottestShardLoad)
+	// Preserve fractional load in an integer counter.
+	metricsScope.AddCounter(metrics.ShardDistributorAssignLoopMovedShardLoadTotal, int64(hottestShardLoad*1000))
 
 	// Plan moving the hottest shard from the hottest executor to the coldest executor.
 	return []plan.Move{{

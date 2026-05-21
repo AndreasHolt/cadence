@@ -3255,6 +3255,8 @@ const (
 	ShardDistributorAssignLoopDeletedShards
 	// ShardDistributorAssignLoopMovedShardLoad tracks the load of a shard that was moved due to load rebalancing
 	ShardDistributorAssignLoopMovedShardLoad
+	// ShardDistributorAssignLoopMovedShardLoadTotal counts the cumulative load moved by the rebalancer
+	ShardDistributorAssignLoopMovedShardLoadTotal
 
 	// ShardDistributorAssignmentLoadMaxOverMean measures max/mean across executor reported loads
 	ShardDistributorAssignmentLoadMaxOverMean
@@ -4214,9 +4216,10 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		ShardDistributorWatchProcessingLatency: {metricName: "shard_distributor_watch_processing_latency", metricType: Histogram, buckets: Default1ms100s.buckets()},
 		ShardDistributorWatchEventsReceived:    {metricName: "shard_distributor_watch_events_received", metricType: Counter},
 
-		ShardDistributorAssignLoopLoadBasedMoves: {metricName: "shard_distributor_shard_assign_load_based_moves", metricType: Counter},
-		ShardDistributorAssignLoopDeletedShards:  {metricName: "shard_distributor_shard_assign_deleted_shards", metricType: Gauge},
-		ShardDistributorAssignLoopMovedShardLoad: {metricName: "shard_distributor_shard_assign_moved_shard_load", metricType: Gauge},
+		ShardDistributorAssignLoopLoadBasedMoves:      {metricName: "shard_distributor_shard_assign_load_based_moves", metricType: Counter},
+		ShardDistributorAssignLoopDeletedShards:       {metricName: "shard_distributor_shard_assign_deleted_shards", metricType: Gauge},
+		ShardDistributorAssignLoopMovedShardLoad:      {metricName: "shard_distributor_shard_assign_moved_shard_load", metricType: Gauge},
+		ShardDistributorAssignLoopMovedShardLoadTotal: {metricName: "shard_distributor_shard_assign_moved_shard_load_total", metricType: Counter},
 
 		ShardDistributorAssignmentLoadMaxOverMean:         {metricName: "shard_distributor_assignment_load_max_over_mean", metricType: Gauge},
 		ShardDistributorAssignmentLoadCV:                  {metricName: "shard_distributor_assignment_load_cv", metricType: Gauge},
