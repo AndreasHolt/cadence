@@ -9,8 +9,9 @@
 //
 //	grid_results.csv
 //
-//	Columns: move_scoring_mode, move_penalty_coefficient, total_moves, total_load_moved,
+// Columns: move_scoring_mode, move_penalty_coefficient, upper_band, lower_band,
 //
+//	 total_moves, total_load_moved,
 //	avg_mm_smooth, worst_mm_smooth, avg_mm_reported, worst_mm_reported,
 //	avg_cv_smooth, worst_cv_smooth, avg_cv_reported, worst_cv_reported
 package main
@@ -42,12 +43,16 @@ import (
 type combo struct {
 	moveScoringMode        string
 	movePenaltyCoefficient float64
+	upperBand              float64
+	lowerBand              float64
 }
 
 func (c combo) toRow() []string {
 	return []string{
 		c.moveScoringMode,
 		strconv.FormatFloat(c.movePenaltyCoefficient, 'f', 4, 64),
+		strconv.FormatFloat(c.upperBand, 'f', 2, 64),
+		strconv.FormatFloat(c.lowerBand, 'f', 2, 64),
 	}
 }
 
@@ -138,22 +143,36 @@ func main() {
 	fmt.Printf("Loaded %d rows, %d shards from %s\n", len(history), len(shardIDs), csvPath)
 
 	// ── Build combo list ───────────────────────────────────────────────────
-	scoringModes := []string{"benefit", "cost_aware"}
 	fixedCosts := []float64{0.0}
-	i := 0.02
-	for i < 1.0 {
+	i := 0.2
+	for i < 15 {
 		fixedCosts = append(fixedCosts, i)
-		i += 0.02
+		i += 0.2
 	}
 
 	var combos []combo
-	for _, mode := range scoringModes {
-		for _, fixed := range fixedCosts {
-			combos = append(combos, combo{
-				moveScoringMode:        mode,
-				movePenaltyCoefficient: fixed,
-			})
-		}
+	for _, fixed := range fixedCosts {
+		// 1. benefit with default bands
+		combos = append(combos, combo{
+			moveScoringMode:        "benefit",
+			movePenaltyCoefficient: fixed,
+			upperBand:              upperBand,
+			lowerBand:              lowerBand,
+		})
+		// 2. cost_aware with default bands
+		combos = append(combos, combo{
+			moveScoringMode:        "cost_aware",
+			movePenaltyCoefficient: fixed,
+			upperBand:              upperBand,
+			lowerBand:              lowerBand,
+		})
+		// 3. cost_aware with narrow hysteresis bands
+		combos = append(combos, combo{
+			moveScoringMode:        "cost_aware",
+			movePenaltyCoefficient: fixed,
+			upperBand:              1.05,
+			lowerBand:              0.95,
+		})
 	}
 
 	fmt.Printf("Running %d grid permutations across %d workers\n", len(combos), runtime.NumCPU())
@@ -170,7 +189,7 @@ func main() {
 				res, err := runGridSimulation(
 					cb, history, shardIDs, numExecutors,
 					rebalanceInterval, loadInterval,
-					moveBudget, cooldown, upperBand, lowerBand, severeRatio,
+					moveBudget, cooldown, cb.upperBand, cb.lowerBand, severeRatio,
 				)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Simulation failed for combo %v: %v\n", cb, err)
@@ -201,7 +220,7 @@ func main() {
 
 	w := csv.NewWriter(outFile)
 	header := []string{
-		"move_scoring_mode", "move_penalty_coefficient",
+		"move_scoring_mode", "move_penalty_coefficient", "upper_band", "lower_band",
 		"total_moves", "total_load_moved",
 		"avg_mm_smooth", "worst_mm_smooth",
 		"avg_mm_reported", "worst_mm_reported",
