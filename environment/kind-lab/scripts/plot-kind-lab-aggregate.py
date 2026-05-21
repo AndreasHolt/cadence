@@ -52,6 +52,11 @@ POD_COLORS = {
     "cadence-matching-b-0": "#f58518",
     "cadence-matching-c-0": "#e45756",
 }
+IMBALANCE_COLORS = {
+    "reported": "#4c78a8",
+    "smoothed": "#e45756",
+}
+PROMETHEUS_STEP_SECONDS = 15.0
 
 
 @dataclass
@@ -189,7 +194,11 @@ def discover_runs(root: Path, method_dirs: dict[str, Path]) -> list[Run]:
         for method, directory in method_dirs.items():
             search_dirs.extend((method, child) for child in sorted(directory.iterdir()) if child.is_dir())
     else:
-        search_dirs.extend((None, child) for child in sorted(root.rglob("*")) if child.is_dir())
+        search_dirs.extend(
+            (None, child)
+            for child in sorted(root.rglob("*"))
+            if child.is_dir() and "compact" not in child.parts and not child.name.endswith("-compact")
+        )
 
     seen_dirs: set[Path] = set()
     for forced_method, directory in search_dirs:
@@ -332,12 +341,37 @@ def aggregate(series_list: list[dict[float, float]]) -> tuple[list[float], list[
     return xs, lows, meds, highs
 
 
-def apply_common_axes(ax, ylabel: str, x_max: float | None = None):
-    ax.set_xlabel("Time since start (min)")
-    ax.set_ylabel(ylabel)
+def apply_common_axes(ax, ylabel: str | None, x_max: float | None = None):
+    if ylabel:
+        ax.set_ylabel(ylabel)
     ax.grid(True, alpha=0.25)
     if x_max is not None:
         ax.set_xlim(0, x_max / 60.0)
+
+
+def finish_shared_axes(fig, axes, *, xlabel: str, ylabel: str):
+    for ax in axes[:-1]:
+        ax.set_xlabel("")
+        ax.tick_params(labelbottom=False)
+    axes[-1].set_xlabel(xlabel)
+    fig.supylabel(ylabel)
+
+
+def add_shared_legend(fig, axes, *, ncol: int, y: float = 0.965, include_labels: set[str] | None = None):
+    handles, labels = [], []
+    seen = set()
+    for ax in axes:
+        ax_handles, ax_labels = ax.get_legend_handles_labels()
+        for handle, label in zip(ax_handles, ax_labels):
+            if include_labels is not None and label not in include_labels:
+                continue
+            if label in seen:
+                continue
+            seen.add(label)
+            handles.append(handle)
+            labels.append(label)
+    if handles:
+        fig.legend(handles, labels, loc="upper center", ncol=ncol, frameon=False, bbox_to_anchor=(0.5, y))
 
 
 def plot_aggregate_metric(
@@ -367,6 +401,7 @@ def plot_aggregate_metric(
         if len(method_series[method]) > 1:
             ax.fill_between(xs, lows, highs, color=color, alpha=0.16, linewidth=0)
     ax.set_title(title)
+    ax.set_xlabel("Time since start (min)")
     apply_common_axes(ax, ylabel, x_max)
     if y_min is not None or y_max is not None:
         ax.set_ylim(y_min, y_max)
@@ -404,6 +439,7 @@ def plot_completed_cumulative(output: Path, runs_by_method: dict[str, list[Run]]
         if len(completed) > 1:
             ax.fill_between(xs, lows, highs, color=color, alpha=0.16, linewidth=0)
     ax.set_title("Cumulative completed workflows")
+    ax.set_xlabel("Time since start (min)")
     apply_common_axes(ax, "Completed workflows", x_max)
     ax.legend(frameon=False, fontsize=8)
     fig.savefig(output, dpi=180)
@@ -427,10 +463,89 @@ def plot_throughput(output: Path, runs_by_method: dict[str, list[Run]], *, step:
         if xs_s:
             ax.plot(xs_s, meds_s, color=color, linestyle="--", alpha=0.55, linewidth=1.4)
     ax.set_title("Started and completed workflow rate")
+    ax.set_xlabel("Time since start (min)")
     apply_common_axes(ax, "Workflows/s", x_max)
     ax.legend(frameon=False, fontsize=9)
     fig.savefig(output, dpi=180)
     plt.close(fig)
+
+
+def prometheus_csv_path(run: Run, name: str) -> Path | None:
+    stem = run.log_path.stem
+    candidates = [
+        run.directory / stem / "csv" / name,
+        run.directory / "csv" / name,
+    ]
+    for parent in [run.directory.parent, run.directory.parent.parent]:
+        candidates.extend(parent.glob(f"compact/*/{stem}/csv/{name}"))
+        candidates.extend(parent.glob(f"compact/{stem}-compact/{stem}/csv/{name}"))
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def parse_labels(value: str) -> dict:
+    if not value:
+        return {}
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+
+
+def prometheus_series(
+    run: Run,
+    name: str,
+    *,
+    label_filter: Callable[[dict], bool] | None = None,
+    combine: str = "sum",
+) -> dict[float, float]:
+    path = prometheus_csv_path(run, name)
+    if path is None:
+        return {}
+    start = run.start_time
+    per_time: dict[float, list[float]] = defaultdict(list)
+    with path.open("r", encoding="utf-8", errors="replace", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            labels = parse_labels(row.get("labels", "{}"))
+            if label_filter is not None and not label_filter(labels):
+                continue
+            try:
+                timestamp = parse_timestamp(row["timestamp"])
+                value = float(row["value"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if start is None:
+                start = timestamp
+            t = time_key((timestamp - start).total_seconds(), PROMETHEUS_STEP_SECONDS)
+            per_time[t].append(value)
+    out: dict[float, float] = {}
+    for t, values in per_time.items():
+        if combine == "max":
+            out[t] = max(values)
+        elif combine == "mean":
+            out[t] = mean(values)
+        else:
+            out[t] = sum(values)
+    return out
+
+
+def prometheus_pod_series(run: Run, name: str, pod: str) -> dict[float, float]:
+    return prometheus_series(run, name, label_filter=lambda labels: labels.get("pod") == pod, combine="sum")
+
+
+def integrated_core_minutes(series: dict[float, float]) -> float:
+    items = sorted(series.items())
+    if len(items) < 2:
+        return 0.0
+    total_core_seconds = 0.0
+    for (t0, v0), (t1, v1) in zip(items, items[1:]):
+        if t1 <= t0:
+            continue
+        total_core_seconds += ((v0 + v1) / 2.0) * (t1 - t0)
+    return total_core_seconds / 60.0
 
 
 def plot_cpu_by_method(
@@ -444,7 +559,8 @@ def plot_cpu_by_method(
     methods = [m for m in METHOD_ORDER if runs_by_method.get(m)]
     if not methods:
         return
-    fig, axes = plt.subplots(len(methods), 1, figsize=(8.5, 2.8 * len(methods)), sharex=True, constrained_layout=True)
+    fig, axes = plt.subplots(len(methods), 1, figsize=(9.5, 3.4 * len(methods)), sharex=True, sharey=True)
+    fig.subplots_adjust(top=0.87, bottom=0.07, left=0.11, right=0.98, hspace=0.32)
     if len(methods) == 1:
         axes = [axes]
     for ax, method in zip(axes, methods):
@@ -459,9 +575,170 @@ def plot_cpu_by_method(
             if len(series) > 1:
                 ax.fill_between(xs, lows, highs, color=color, alpha=0.12, linewidth=0)
         ax.set_title(method_label(method))
-        apply_common_axes(ax, "CPU cores", x_max)
+        apply_common_axes(ax, None, x_max)
         ax.set_ylim(0, y_max if y_max is not None else 2.2)
-        ax.legend(frameon=False, ncol=3, fontsize=9)
+    fig.suptitle("Matching CPU usage by executor", fontsize=13, y=0.985)
+    finish_shared_axes(fig, axes, xlabel="Time since start (min)", ylabel="CPU cores")
+    add_shared_legend(fig, axes, ncol=3, y=0.965)
+    fig.savefig(output, dpi=180)
+    plt.close(fig)
+
+
+def plot_total_by_method(
+    output: Path,
+    runs_by_method: dict[str, list[Run]],
+    *,
+    x_max: float | None,
+    title: str,
+    ylabel: str,
+    series_builder: Callable[[Run], dict[float, float]],
+    y_max: float | None = None,
+):
+    methods = [m for m in METHOD_ORDER if runs_by_method.get(m)]
+    if not methods:
+        return
+    fig, axes = plt.subplots(len(methods), 1, figsize=(9.5, 3.4 * len(methods)), sharex=True, sharey=True)
+    fig.subplots_adjust(top=0.87, bottom=0.07, left=0.11, right=0.98, hspace=0.32)
+    if len(methods) == 1:
+        axes = [axes]
+    for ax, method in zip(axes, methods):
+        series = [series_builder(r) for r in runs_by_method[method]]
+        series = [s for s in series if s]
+        xs, lows, meds, highs = aggregate(series)
+        if xs:
+            color = METHOD_COLORS.get(method)
+            if len(series) > 1 and any(abs(lo - hi) > 1e-9 for lo, hi in zip(lows, highs)):
+                ax.fill_between(xs, lows, highs, color=color, alpha=0.18, linewidth=0)
+            ax.plot(xs, meds, color=color, linewidth=2.4)
+        else:
+            ax.text(0.5, 0.5, "No compact Prometheus CSVs found", transform=ax.transAxes, ha="center", va="center", alpha=0.65)
+        ax.set_title(method_label(method))
+        apply_common_axes(ax, None, x_max)
+        ax.set_ylim(bottom=0)
+        if y_max is not None:
+            ax.set_ylim(0, y_max)
+    fig.suptitle(title, fontsize=13, y=0.985)
+    finish_shared_axes(fig, axes, xlabel="Time since start (min)", ylabel=ylabel)
+    add_shared_legend(fig, axes, ncol=2, y=0.965)
+    fig.savefig(output, dpi=180)
+    plt.close(fig)
+
+
+def plot_throttling_by_method(output: Path, runs_by_method: dict[str, list[Run]], *, x_max: float | None, y_max: float | None):
+    methods = [m for m in METHOD_ORDER if runs_by_method.get(m)]
+    if not methods:
+        return
+    fig, axes = plt.subplots(len(methods), 1, figsize=(9.5, 3.5 * len(methods)), sharex=True)
+    fig.subplots_adjust(top=0.87, bottom=0.07, left=0.11, right=0.98, hspace=0.32)
+    if len(methods) == 1:
+        axes = [axes]
+    for ax, method in zip(axes, methods):
+        runs = runs_by_method[method]
+        for pod in POD_LABELS:
+            series = [prometheus_pod_series(r, "matching_cpu_throttled_cores.csv", pod) for r in runs]
+            series = [s for s in series if s]
+            xs, lows, meds, highs = aggregate(series)
+            if not xs:
+                continue
+            color = POD_COLORS[pod]
+            ax.plot(xs, meds, label=POD_LABELS[pod], color=color, linewidth=1.9)
+            if len(series) > 1:
+                ax.fill_between(xs, lows, highs, color=color, alpha=0.12, linewidth=0)
+        ax.set_title(method_label(method))
+        apply_common_axes(ax, None, x_max)
+        if y_max is not None:
+            ax.set_ylim(0, y_max)
+        handles, labels = ax.get_legend_handles_labels()
+        if not handles:
+            ax.text(0.5, 0.5, "No compact Prometheus CSVs found", transform=ax.transAxes, ha="center", va="center", alpha=0.65)
+    fig.suptitle("Matching CPU throttling by executor", fontsize=13, y=0.985)
+    finish_shared_axes(fig, axes, xlabel="Time since start (min)", ylabel="Throttled CPU time (cores)")
+    add_shared_legend(fig, axes, ncol=3, y=0.965)
+    fig.savefig(output, dpi=180)
+    plt.close(fig)
+
+
+def plot_throttling_total(output: Path, runs_by_method: dict[str, list[Run]], *, x_max: float | None):
+    plot_aggregate_metric(
+        output,
+        "Total Matching CPU throttling",
+        "Throttled CPU time (cores)",
+        {m: [prometheus_series(r, "matching_cpu_throttled_cores.csv", combine="sum") for r in rs] for m, rs in runs_by_method.items()},
+        x_max=x_max,
+        y_min=0,
+    )
+
+
+def plot_shard_moves_total(output: Path, runs_by_method: dict[str, list[Run]], *, x_max: float | None):
+    plot_aggregate_metric(
+        output,
+        "Cumulative load-based shard moves",
+        "Shard moves",
+        {
+            m: [prometheus_series(r, "sd_load_based_moves_total.csv", combine="max") for r in rs]
+            for m, rs in runs_by_method.items()
+        },
+        x_max=x_max,
+        y_min=0,
+    )
+
+
+def plot_moved_shard_load(output: Path, runs_by_method: dict[str, list[Run]], *, x_max: float | None):
+    plot_aggregate_metric(
+        output,
+        "Moved shard load",
+        "Moved shard load",
+        {
+            m: [prometheus_series(r, "sd_moved_shard_load.csv", combine="max") for r in rs]
+            for m, rs in runs_by_method.items()
+        },
+        x_max=x_max,
+        y_min=0,
+    )
+
+
+def plot_assignment_imbalance(output: Path, runs_by_method: dict[str, list[Run]], *, x_max: float | None, kind: str):
+    methods = [m for m in METHOD_ORDER if runs_by_method.get(m)]
+    if not methods:
+        return
+    if kind == "cv":
+        reported_file = "sd_assignment_load_cv.csv"
+        smoothed_file = "sd_assignment_smoothed_load_cv.csv"
+        ylabel = "Coefficient of variation"
+        title = "Assignment imbalance (CV)"
+    else:
+        reported_file = "sd_assignment_load_max_over_mean.csv"
+        smoothed_file = "sd_assignment_smoothed_load_max_over_mean.csv"
+        ylabel = "Max / mean load"
+        title = "Assignment imbalance (max / mean)"
+    fig, axes = plt.subplots(len(methods), 1, figsize=(9.5, 3.5 * len(methods)), sharex=True, sharey=True)
+    fig.subplots_adjust(top=0.87, bottom=0.07, left=0.11, right=0.98, hspace=0.32)
+    if len(methods) == 1:
+        axes = [axes]
+    for ax, method in zip(axes, methods):
+        runs = runs_by_method[method]
+        for label, filename, color_key in [
+            ("Reported load", reported_file, "reported"),
+            ("Smoothed load", smoothed_file, "smoothed"),
+        ]:
+            series = [prometheus_series(r, filename, combine="max") for r in runs]
+            series = [s for s in series if s]
+            xs, lows, meds, highs = aggregate(series)
+            if not xs:
+                continue
+            color = IMBALANCE_COLORS[color_key]
+            ax.plot(xs, meds, label=label, color=color, linewidth=2.0)
+            if len(series) > 1:
+                ax.fill_between(xs, lows, highs, color=color, alpha=0.13, linewidth=0)
+        ax.set_title(method_label(method))
+        apply_common_axes(ax, None, x_max)
+        ax.set_ylim(bottom=0)
+        handles, labels = ax.get_legend_handles_labels()
+        if not handles:
+            ax.text(0.5, 0.5, "No compact Prometheus CSVs found", transform=ax.transAxes, ha="center", va="center", alpha=0.65)
+    fig.suptitle(title, fontsize=13, y=0.985)
+    finish_shared_axes(fig, axes, xlabel="Time since start (min)", ylabel=ylabel)
+    add_shared_legend(fig, axes, ncol=2, y=0.965)
     fig.savefig(output, dpi=180)
     plt.close(fig)
 
@@ -626,6 +903,7 @@ def main() -> int:
     parser.add_argument("--utilization-step", type=float, default=10, help="Deprecated; utilization plots use CSV timestamps.")
     parser.add_argument("--cpu-pod-y-max", type=float, default=2.2, help="Y-axis maximum for per-pod CPU plots.")
     parser.add_argument("--cpu-total-y-max", type=float, default=None, help="Y-axis maximum for total Matching CPU plot.")
+    parser.add_argument("--throttling-y-max", type=float, default=None, help="Y-axis maximum for per-pod throttling plots.")
     parser.add_argument(
         "--method-dir",
         action="append",
@@ -719,12 +997,37 @@ def main() -> int:
         y_min=0,
         y_max=args.cpu_total_y_max,
     )
+    plot_total_by_method(
+        output_dir / "aggregate-cpu-total-by-method.png",
+        runs_by_method,
+        x_max=args.x_max,
+        title="Total Matching CPU usage",
+        ylabel="CPU cores",
+        series_builder=lambda run: cpu_total_series(run, step=args.utilization_step),
+        y_max=args.cpu_total_y_max,
+    )
     plot_cpu_by_method(
         output_dir / "aggregate-cpu-by-method.png",
         runs_by_method,
         step=args.utilization_step,
         x_max=args.x_max,
         y_max=args.cpu_pod_y_max,
+    )
+    plot_throttling_by_method(
+        output_dir / "aggregate-throttling-by-method.png",
+        runs_by_method,
+        x_max=args.x_max,
+        y_max=args.throttling_y_max,
+    )
+    plot_throttling_total(output_dir / "aggregate-throttling-total.png", runs_by_method, x_max=args.x_max)
+    plot_shard_moves_total(output_dir / "aggregate-shard-moves-total.png", runs_by_method, x_max=args.x_max)
+    plot_moved_shard_load(output_dir / "aggregate-moved-shard-load.png", runs_by_method, x_max=args.x_max)
+    plot_assignment_imbalance(output_dir / "aggregate-assignment-imbalance-cv.png", runs_by_method, x_max=args.x_max, kind="cv")
+    plot_assignment_imbalance(
+        output_dir / "aggregate-assignment-imbalance-max-over-mean.png",
+        runs_by_method,
+        x_max=args.x_max,
+        kind="max_over_mean",
     )
     write_summary_tables(output_dir, runs)
 

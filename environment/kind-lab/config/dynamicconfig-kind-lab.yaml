@@ -47,7 +47,6 @@ shardDistributor.loadBalancingGreedy.moveScoringMode:
     constraints:
       namespace: cadence-matching-kind-lab
 shardDistributor.loadBalancingGreedy.movePenaltyCoefficient:
-  - value: 0.2
+  - value: 0.4
     constraints:
       namespace: cadence-matching-kind-lab
-
