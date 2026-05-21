@@ -171,6 +171,7 @@ shardDistribution:
       prefix: store
   process:
     period: 1s
+    timeout: 3s
     heartbeatTTL: 30s
 
 shard-distributor-matching:
