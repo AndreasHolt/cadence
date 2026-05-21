@@ -17,6 +17,7 @@ MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="${MATCHING_NUM_TASKLIST_WRITE_PARTITIONS
 SAMPLE_INTERVAL_SECONDS="30"
 DURATION_SECONDS="3600"
 SETTLE_SECONDS="120"
+READINESS_TIMEOUT_SECONDS="300"
 SESSION_NAME=""
 BUILD_IMAGE="false"
 CREATE_CLUSTER="false"
@@ -48,6 +49,7 @@ Options:
   --sample-interval SECONDS     Utilization sample interval (default: 30)
   --duration SECONDS            Run/sampling duration (default: 3600)
   --settle-seconds SECONDS      Wait after deploy before starting run (default: 120)
+  --readiness-timeout SECONDS   Wait for shard-distributor assignment readiness (default: 300)
   --session NAME                tmux session name (default: kind-lab-RUN_NAME)
   --build-image                 Build cadence-kind-lab image first
   --create-cluster              Create/load kind cluster first
@@ -116,6 +118,10 @@ while [[ $# -gt 0 ]]; do
       SETTLE_SECONDS="$2"
       shift 2
       ;;
+    --readiness-timeout)
+      READINESS_TIMEOUT_SECONDS="$2"
+      shift 2
+      ;;
     --session)
       SESSION_NAME="$2"
       shift 2
@@ -174,6 +180,10 @@ if ! [[ "$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" =~ ^[1-9][0-9]*$ ]]; then
   echo "--write-partitions must be a positive integer" >&2
   exit 2
 fi
+if ! [[ "$READINESS_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--readiness-timeout must be a positive integer" >&2
+  exit 2
+fi
 
 if ! command -v tmux >/dev/null 2>&1; then
   echo "tmux is required for this script" >&2
@@ -225,6 +235,46 @@ if [[ -n "$etcd_alarm" ]]; then
   echo "$etcd_alarm" >&2
   exit 1
 fi
+
+wait_for_shard_assignments() {
+  local deadline=$((SECONDS + READINESS_TIMEOUT_SECONDS))
+  local assigned_count="0"
+  local executor_status_count="0"
+
+  echo "waiting for shard-distributor assignments before starting workload..."
+  while true; do
+    executor_status_count="$(kubectl exec -n "$NAMESPACE" etcd-0 -- sh -lc '
+      ETCDCTL_API=3 /opt/bitnami/etcd/bin/etcdctl \
+        --endpoints=http://127.0.0.1:2379 \
+        get store/cadence-matching-kind-lab/executors/ --prefix --keys-only \
+        | grep /status | wc -l
+    ' 2>/dev/null | tr -d '[:space:]' || true)"
+    assigned_count="$(kubectl exec -n "$NAMESPACE" etcd-0 -- sh -lc '
+      ETCDCTL_API=3 /opt/bitnami/etcd/bin/etcdctl \
+        --endpoints=http://127.0.0.1:2379 \
+        get store/cadence-matching-kind-lab/executors/ --prefix --keys-only \
+        | grep /assigned_state | wc -l
+    ' 2>/dev/null | tr -d '[:space:]' || true)"
+
+    executor_status_count="${executor_status_count:-0}"
+    assigned_count="${assigned_count:-0}"
+    if [[ "$executor_status_count" -ge 3 && "$assigned_count" -ge 3 ]]; then
+      echo "shard-distributor assignments ready: executors=$executor_status_count assigned_state=$assigned_count"
+      return 0
+    fi
+
+    if (( SECONDS >= deadline )); then
+      echo "timed out waiting for shard-distributor assignments: executors=$executor_status_count assigned_state=$assigned_count" >&2
+      echo "refusing to start workload because runs with missing assigned_state begin with polled=0/completed=0 and are invalid" >&2
+      return 1
+    fi
+
+    echo "  not ready yet: executors=$executor_status_count assigned_state=$assigned_count"
+    sleep 5
+  done
+}
+
+wait_for_shard_assignments
 
 kubectl delete job matching-lab -n "$NAMESPACE" --ignore-not-found
 kubectl wait --for=delete job/matching-lab -n "$NAMESPACE" --timeout=60s >/dev/null 2>&1 || true
