@@ -24,6 +24,38 @@ class QuerySpec:
     kind: str
 
 
+ANALYSIS_QUERY_NAMES = {
+    # Churn / shard movement.
+    "sd_load_based_moves_total",
+    "sd_load_based_moves_rate_1m",
+    "sd_moved_shard_load",
+    "sd_moved_shard_load_total",
+    # Assignment balance.
+    "sd_assignment_load_cv",
+    "sd_assignment_load_max_over_mean",
+    "sd_assignment_smoothed_load_cv",
+    "sd_assignment_smoothed_load_max_over_mean",
+    "sd_assignment_smoothed_load_missing_ratio",
+    "sd_assignment_smoothed_load_stale_ratio",
+    "sd_executor_owned_shards",
+    # Health / validity signals.
+    "sd_executor_heartbeat_skipped_total",
+    "sd_oldest_executor_heartbeat_lag",
+    "sd_store_failures_total",
+    "sd_store_requests_total",
+    "sd_watch_events_received_total",
+    # Matching Prometheus signals that complement matching-lab logs/utilization CSVs.
+    "matching_cpu_usage_cores",
+    "matching_cpu_throttled_cores",
+    "matching_addtask_request_rate_1m",
+    "matching_addtask_error_rate_1m",
+    "matching_addtask_p95_latency_ns_by_instance",
+    "matching_service_p95_latency_ns_by_operation",
+    "matching_task_backlog",
+    "matching_task_lag",
+}
+
+
 DEFAULT_QUERIES = [
     QuerySpec(
         "sd_load_based_moves_total",
@@ -242,6 +274,10 @@ WIDE_QUERIES = [
 ]
 
 
+def analysis_queries():
+    return [spec for spec in DEFAULT_QUERIES if spec.name in ANALYSIS_QUERY_NAMES]
+
+
 def safe_filename(value):
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-")
 
@@ -264,9 +300,25 @@ def parse_time(value):
 def infer_window_from_utilization_csv(path):
     timestamps = []
     with path.open("r", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            timestamps.append(parse_time(row["timestamp"]))
+        first_line = handle.readline()
+        if not first_line:
+            raise ValueError(f"{path} contains no utilization samples")
+
+        handle.seek(0)
+        if first_line.startswith("timestamp,"):
+            reader = csv.DictReader(handle)
+            for row in reader:
+                timestamp = row.get("timestamp")
+                if timestamp:
+                    timestamps.append(parse_time(timestamp))
+        else:
+            # Older/partial sample-utilization captures may be missing the header.
+            # The expected layout is:
+            # timestamp,pod,cpu_cores,throttled_cores,throttled_events,memory_mib,memory_max
+            reader = csv.reader(handle)
+            for row in reader:
+                if row:
+                    timestamps.append(parse_time(row[0]))
 
     if not timestamps:
         raise ValueError(f"{path} contains no utilization samples")
@@ -560,6 +612,16 @@ def main():
         help="Also export broad shard-distributor and matching metric selectors.",
     )
     parser.add_argument(
+        "--all-default-queries",
+        action="store_true",
+        help="Collect every built-in query instead of only the curated analysis/compact set.",
+    )
+    parser.add_argument(
+        "--raw-json",
+        action="store_true",
+        help="Also write raw Prometheus JSON payloads. Disabled by default to keep run folders small.",
+    )
+    parser.add_argument(
         "--query",
         action="append",
         type=parse_extra_query,
@@ -570,7 +632,7 @@ def main():
     args = parser.parse_args()
 
     start, end = resolve_window(args)
-    query_specs = list(DEFAULT_QUERIES)
+    query_specs = list(DEFAULT_QUERIES if args.all_default_queries else analysis_queries())
     if args.wide:
         query_specs.extend(WIDE_QUERIES)
     query_specs.extend(args.query)
@@ -578,7 +640,8 @@ def main():
     run_dir = args.output_dir / safe_filename(args.run)
     raw_dir = run_dir / "raw"
     csv_dir = run_dir / "csv"
-    raw_dir.mkdir(parents=True, exist_ok=True)
+    if args.raw_json:
+        raw_dir.mkdir(parents=True, exist_ok=True)
     csv_dir.mkdir(parents=True, exist_ok=True)
 
     metadata = {
@@ -588,6 +651,8 @@ def main():
         "end": end.isoformat(),
         "step": args.step,
         "pad_seconds": args.pad_seconds,
+        "all_default_queries": args.all_default_queries,
+        "raw_json": args.raw_json,
         "queries": [
             {"name": spec.name, "expr": spec.expr, "kind": spec.kind}
             for spec in query_specs
@@ -612,7 +677,6 @@ def main():
             print(f"warning: {spec.name}: {err}", file=sys.stderr)
             continue
 
-        raw_path = raw_dir / f"{safe_filename(spec.name)}.json"
         csv_path = csv_dir / f"{safe_filename(spec.name)}.csv"
         if not has_series_rows(payload) and csv_path.exists() and csv_path.stat().st_size > 0:
             errors.append(
@@ -624,9 +688,11 @@ def main():
             )
             print(f"warning: {spec.name}: query returned no series; kept existing export", file=sys.stderr)
             continue
-        with raw_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
+        if args.raw_json:
+            raw_path = raw_dir / f"{safe_filename(spec.name)}.json"
+            with raw_path.open("w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
+                handle.write("\n")
         write_series_csv(csv_path, payload)
 
         for result in payload.get("data", {}).get("result", []):

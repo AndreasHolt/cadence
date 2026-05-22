@@ -22,6 +22,7 @@ KEEP_PROMETHEUS_CSVS = [
     "sd_load_based_moves_total.csv",
     "sd_load_based_moves_rate_1m.csv",
     "sd_moved_shard_load.csv",
+    "sd_moved_shard_load_total.csv",
     # Assignment balance.
     "sd_assignment_load_cv.csv",
     "sd_assignment_load_max_over_mean.csv",
