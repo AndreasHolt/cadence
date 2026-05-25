@@ -109,6 +109,26 @@ func TestUpdateExecutorCPUCostObservation_Smoothing(t *testing.T) {
 	require.Less(t, cost, 0.2)
 }
 
+func TestUpdateExecutorCPUDiagnostic_SmoothsBusyCores(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	state := NewCPUObservationState()
+	state.SetSmoothingTau(300 * time.Second)
+
+	_, ok := state.updateExecutorCPUDiagnostic("exec-1", meta(10, now), 10)
+	require.False(t, ok)
+
+	diagnostic, ok := state.updateExecutorCPUDiagnostic("exec-1", meta(25, now.Add(10*time.Second)), 10)
+	require.True(t, ok)
+	require.InDelta(t, 1.5, diagnostic.busyCores, 1e-9)
+	require.InDelta(t, 1.5, diagnostic.smoothedBusyCores, 1e-9)
+
+	diagnostic, ok = state.updateExecutorCPUDiagnostic("exec-1", meta(45, now.Add(20*time.Second)), 10)
+	require.True(t, ok)
+	require.InDelta(t, 2.0, diagnostic.busyCores, 1e-9)
+	require.Greater(t, diagnostic.smoothedBusyCores, 1.5)
+	require.Less(t, diagnostic.smoothedBusyCores, 2.0)
+}
+
 func TestUpdateExecutorCPUCostObservation_MissingSampleResetsSmoothing(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	state := NewCPUObservationState()

@@ -17,8 +17,6 @@ import (
 const (
 	maxMissingShardStatsRatioForRebalance = 0.02
 	maxStaleShardStatsRatioForRebalance   = 0.10
-	minRelativeLatency                    = 0.5
-	maxRelativeLatency                    = 2.0
 	minRelativeCPUCost                    = 0.5
 	maxRelativeCPUCost                    = 2.0
 )
@@ -249,7 +247,7 @@ func computeLatencyAdjustedWeights(
 		if meanLatencyMs > 0 {
 			latencyMs := capacity.LatencyEWmaMsFromMetadata(state.Executors[executorID].Metadata)
 			if latencyMs > 0 {
-				relativeLatency := clamp(latencyMs/meanLatencyMs, minRelativeLatency, maxRelativeLatency)
+				relativeLatency := latencyMs / meanLatencyMs
 				weight = weight / relativeLatency
 			}
 		}
@@ -285,6 +283,7 @@ func emitExecutorSignalDiagnostics(
 		}
 		if diagnostic, ok := cpuDiagnostics[executorID]; ok {
 			executorScope.UpdateGauge(metrics.ShardDistributorExecutorProcessCPUCores, diagnostic.busyCores)
+			executorScope.UpdateGauge(metrics.ShardDistributorExecutorSmoothedProcessCPUCores, diagnostic.smoothedBusyCores)
 			executorScope.UpdateGauge(metrics.ShardDistributorExecutorCPUSecondsCostPerLoad, diagnostic.cost)
 		}
 		if weight, ok := latencyWeights[executorID]; ok && weight > 0 {

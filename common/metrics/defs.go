@@ -3274,6 +3274,8 @@ const (
 	ShardDistributorExecutorLatencyEWMAMs
 	// ShardDistributorExecutorProcessCPUCores reports process CPU cores derived from executor heartbeat metadata
 	ShardDistributorExecutorProcessCPUCores
+	// ShardDistributorExecutorSmoothedProcessCPUCores reports the EWMA-smoothed process CPU cores signal
+	ShardDistributorExecutorSmoothedProcessCPUCores
 	// ShardDistributorExecutorCPUSecondsCostPerLoad reports process CPU cores per unit assigned load
 	ShardDistributorExecutorCPUSecondsCostPerLoad
 	// ShardDistributorExecutorEffectiveWeightLatency reports the passive latency-derived effective weight
@@ -4249,6 +4251,10 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		},
 		ShardDistributorExecutorProcessCPUCores: {
 			metricName: "shard_distributor_executor_process_cpu_cores",
+			metricType: Gauge,
+		},
+		ShardDistributorExecutorSmoothedProcessCPUCores: {
+			metricName: "shard_distributor_executor_smoothed_process_cpu_cores",
 			metricType: Gauge,
 		},
 		ShardDistributorExecutorCPUSecondsCostPerLoad: {

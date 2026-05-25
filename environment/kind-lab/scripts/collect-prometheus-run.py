@@ -41,6 +41,7 @@ ANALYSIS_QUERY_NAMES = {
     # Passive per-executor diagnostic signals.
     "sd_executor_latency_ewma_ms",
     "sd_executor_process_cpu_cores",
+    "sd_executor_smoothed_process_cpu_cores",
     "sd_executor_cpu_seconds_cost_per_load",
     "sd_executor_effective_weight_latency",
     "sd_executor_effective_weight_cpu_seconds",
@@ -141,6 +142,11 @@ DEFAULT_QUERIES = [
     QuerySpec(
         "sd_executor_process_cpu_cores",
         "shard_distributor_executor_process_cpu_cores",
+        "gauge",
+    ),
+    QuerySpec(
+        "sd_executor_smoothed_process_cpu_cores",
+        "shard_distributor_executor_smoothed_process_cpu_cores",
         "gauge",
     ),
     QuerySpec(
