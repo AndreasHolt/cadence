@@ -236,7 +236,7 @@ func computeLatencyAdjustedWeights(
 		if meanLatencyMs > 0 {
 			latencyMs := capacity.LatencyEWmaMsFromMetadata(state.Executors[executorID].Metadata)
 			if latencyMs > 0 {
-				relativeLatency := clamp(latencyMs/meanLatencyMs, minRelativeLatency, maxRelativeLatency)
+				relativeLatency := latencyMs / meanLatencyMs
 				weight = weight / relativeLatency
 			}
 		}
