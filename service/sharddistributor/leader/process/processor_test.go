@@ -724,6 +724,7 @@ func TestRebalanceShards_AppliesGreedyLoadBalancingPlan(t *testing.T) {
 		CPUSecondsSmoothingTau: func(namespace string) time.Duration {
 			return 5 * time.Minute
 		},
+		EnableSwap: true,
 	}
 	processor := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
 

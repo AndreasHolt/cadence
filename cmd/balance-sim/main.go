@@ -64,19 +64,19 @@ func main() {
 
 func run() error {
 	var (
-		csvPath           string
-		numExecutors      int
-		outDir            string
-		rebalanceInterval time.Duration
-		loadInterval      time.Duration
-		moveBudget        float64
-		cooldown          time.Duration
-		upperBand         float64
-		lowerBand         float64
-		severeRatio       float64
-		useOptimal        bool
-		enableSwap        bool
-		moveScoringMode   string
+		csvPath                string
+		numExecutors           int
+		outDir                 string
+		rebalanceInterval      time.Duration
+		loadInterval           time.Duration
+		moveBudget             float64
+		cooldown               time.Duration
+		upperBand              float64
+		lowerBand              float64
+		severeRatio            float64
+		useOptimal             bool
+		enableSwap             bool
+		moveScoringMode        string
 		movePenaltyCoefficient float64
 	)
 
@@ -139,6 +139,7 @@ func run() error {
 		MoveScoringMode:        func(string) string { return moveScoringMode },
 		MovePenaltyCoefficient: func(string) float64 { return movePenaltyCoefficient },
 		CPUSecondsSmoothingTau: func(string) time.Duration { return 5 * time.Minute },
+		EnableSwap:             enableSwap,
 	}
 
 	// ── Initialise namespace state ────────────────────────────────────────────
@@ -236,10 +237,10 @@ func run() error {
 
 	// Running accumulators for summary statistics.
 	var (
-		sumSmoothMM, maxSmoothMM     float64
-		sumRawMM, maxRawMM           float64
-		sumSmoothCV, maxSmoothCV     float64
-		sumRawCV, maxRawCV           float64
+		sumSmoothMM, maxSmoothMM float64
+		sumRawMM, maxRawMM       float64
+		sumSmoothCV, maxSmoothCV float64
+		sumRawCV, maxRawCV       float64
 	)
 
 	// Rough estimate of total ticks for the progress bar.

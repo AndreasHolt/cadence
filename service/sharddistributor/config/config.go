@@ -54,9 +54,10 @@ type (
 		HysteresisLowerBand    dynamicproperties.Float64PropertyFnWithNamespaceFilters
 		SevereImbalanceRatio   dynamicproperties.Float64PropertyFnWithNamespaceFilters
 		HeterogeneityMode      dynamicproperties.StringPropertyFnWithNamespaceFilters
-		MoveScoringMode         dynamicproperties.StringPropertyFnWithNamespaceFilters
-		MovePenaltyCoefficient  dynamicproperties.Float64PropertyFnWithNamespaceFilters // penalty coefficient for cost-aware scoring
+		MoveScoringMode        dynamicproperties.StringPropertyFnWithNamespaceFilters
+		MovePenaltyCoefficient dynamicproperties.Float64PropertyFnWithNamespaceFilters // penalty coefficient for cost-aware scoring
 		CPUSecondsSmoothingTau dynamicproperties.DurationPropertyFnWithNamespaceFilters
+		EnableSwap             bool
 	}
 
 	StaticConfig struct {
@@ -156,6 +157,7 @@ func NewConfig(dc *dynamicconfig.Collection) *Config {
 			MoveScoringMode:        dc.GetStringPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyMoveScoringMode),
 			MovePenaltyCoefficient: dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyMovePenaltyCoefficient),
 			CPUSecondsSmoothingTau: dc.GetDurationPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau),
+			EnableSwap:             false,
 		},
 	}
 }

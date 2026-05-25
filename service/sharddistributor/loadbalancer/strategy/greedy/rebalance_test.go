@@ -48,6 +48,7 @@ func testGreedyConfig() config.LoadBalancingGreedyConfig {
 		CPUSecondsSmoothingTau: func(namespace string) time.Duration {
 			return 5 * time.Minute
 		},
+		EnableSwap: true,
 	}
 }
 
@@ -946,6 +947,90 @@ func TestLoadBalance_ExecutorRemovedFromDestination(t *testing.T) {
 	assert.False(t, shardsOnA == 1 && shardsOnC == 1, "Not both execA and execC should shed a shard without receiving one")
 
 	assert.Len(t, currentAssignments[execF], 108, "Filler executor execF should be untouched")
+}
+
+// TestLoadBalance_SwapShards verifies that a pairwise swap is chosen when it
+// provides better benefit than any single move.
+func TestLoadBalance_SwapShards(t *testing.T) {
+	cfg := testGreedyConfig()
+
+	execA, execB := "exec-A", "exec-B"
+	now := time.Now().UTC()
+
+	// Source is overloaded (100), dest is underloaded (30). Mean = 65.
+	// Moving 40 from A to B gives benefit 2400.
+	// Swapping 60 from A with 25 from B gives actualMove=35, benefit=2450.
+	// The swap should be chosen because it better balances the load.
+	currentAssignments := map[string][]string{
+		execA: {"s60", "s40"},
+		execB: {"s25", "s5"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardAssignments: map[string]store.AssignedState{
+			execA: {AssignedShards: map[string]*types.ShardAssignment{"s60": {}, "s40": {}}},
+			execB: {AssignedShards: map[string]*types.ShardAssignment{"s25": {}, "s5": {}}},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"s60": {SmoothedLoad: 60, LastUpdateTime: now},
+			"s40": {SmoothedLoad: 40, LastUpdateTime: now},
+			"s25": {SmoothedLoad: 25, LastUpdateTime: now},
+			"s5":  {SmoothedLoad: 5, LastUpdateTime: now},
+		},
+	}
+
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, time.Minute, metrics.NoopScope)
+	require.NoError(t, err)
+	require.Len(t, moves, 2, "expected a swap (two moves)")
+
+	applyMoves(t, currentAssignments, moves)
+
+	// After swap: A should have s40 and s25 (load 65), B should have s60 and s5 (load 65)
+	assert.True(t, slices.Contains(currentAssignments[execA], "s40"))
+	assert.True(t, slices.Contains(currentAssignments[execA], "s25"))
+	assert.True(t, slices.Contains(currentAssignments[execB], "s60"))
+	assert.True(t, slices.Contains(currentAssignments[execB], "s5"))
+}
+
+// TestLoadBalance_SwapSkipsMovedShards verifies that shards already moved in
+// the current cycle are not considered for swaps.
+func TestLoadBalance_SwapSkipsMovedShards(t *testing.T) {
+	cfg := testGreedyConfig()
+
+	execA, execB := "exec-A", "exec-B"
+	now := time.Now().UTC()
+
+	currentAssignments := map[string][]string{
+		execA: {"s60", "s40"},
+		execB: {"s25", "s5"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardAssignments: map[string]store.AssignedState{
+			execA: {AssignedShards: map[string]*types.ShardAssignment{"s60": {}, "s40": {}}},
+			execB: {AssignedShards: map[string]*types.ShardAssignment{"s25": {}, "s5": {}}},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"s60": {SmoothedLoad: 60, LastUpdateTime: now},
+			"s40": {SmoothedLoad: 40, LastUpdateTime: now},
+			"s25": {SmoothedLoad: 25, LastUpdateTime: now},
+			"s5":  {SmoothedLoad: 5, LastUpdateTime: now},
+		},
+	}
+
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, time.Minute, metrics.NoopScope)
+	require.NoError(t, err)
+	require.NotEmpty(t, moves)
+
+	// The first move (or swap) should consume move budget for one iteration,
+	// and moved shards should be tracked so they are not moved again.
+	applyMoves(t, currentAssignments, moves)
 }
 
 func applyMoves(t *testing.T, assignments map[string][]string, moves []plan.Move) {

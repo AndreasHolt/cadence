@@ -11,6 +11,7 @@ GREEDY_HETEROGENEITY_MODE="${GREEDY_HETEROGENEITY_MODE:-latency}"
 GREEDY_MOVE_SCORING_MODE="${GREEDY_MOVE_SCORING_MODE:-benefit}"
 GREEDY_MOVE_PENALTY_COEFFICIENT="${GREEDY_MOVE_PENALTY_COEFFICIENT:-0.2}"
 GREEDY_CPU_SECONDS_SMOOTHING_TAU="${GREEDY_CPU_SECONDS_SMOOTHING_TAU:-10m}"
+GREEDY_ENABLE_SWAP="${GREEDY_ENABLE_SWAP:-false}"
 MATCHING_ENABLE_ADAPTIVE_SCALER="${MATCHING_ENABLE_ADAPTIVE_SCALER:-false}"
 MATCHING_NUM_TASKLIST_READ_PARTITIONS="${MATCHING_NUM_TASKLIST_READ_PARTITIONS:-1}"
 MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="${MATCHING_NUM_TASKLIST_WRITE_PARTITIONS:-1}"
@@ -43,6 +44,7 @@ Options:
   --move-scoring-mode MODE      GREEDY_MOVE_SCORING_MODE: benefit|cost_aware (default: benefit)
   --penalty VALUE               GREEDY_MOVE_PENALTY_COEFFICIENT (default: 0.2)
   --cpu-tau DURATION            GREEDY_CPU_SECONDS_SMOOTHING_TAU (default: 10m)
+  --enable-swap BOOL            GREEDY_ENABLE_SWAP: true|false (default: false)
   --adaptive-scaler BOOL        MATCHING_ENABLE_ADAPTIVE_SCALER: true|false (default: false)
   --read-partitions N           MATCHING_NUM_TASKLIST_READ_PARTITIONS (default: 1)
   --write-partitions N          MATCHING_NUM_TASKLIST_WRITE_PARTITIONS (default: 1)
@@ -92,6 +94,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --cpu-tau)
       GREEDY_CPU_SECONDS_SMOOTHING_TAU="$2"
+      shift 2
+      ;;
+    --enable-swap)
+      GREEDY_ENABLE_SWAP="$2"
       shift 2
       ;;
     --adaptive-scaler)
@@ -168,6 +174,11 @@ case "$MATCHING_HETEROGENEITY_PROFILE" in
   equal_burn|equal_cores|mixed) ;;
   *) echo "--profile must be one of: equal_burn, equal_cores, mixed" >&2; exit 2 ;;
 esac
+case "$GREEDY_ENABLE_SWAP" in
+  true|false) ;;
+  *) echo "--enable-swap must be true or false" >&2; exit 2 ;;
+esac
+
 case "$MATCHING_ENABLE_ADAPTIVE_SCALER" in
   true|false) ;;
   *) echo "--adaptive-scaler must be true or false" >&2; exit 2 ;;
@@ -216,6 +227,7 @@ GREEDY_HETEROGENEITY_MODE="$GREEDY_HETEROGENEITY_MODE" \
 GREEDY_MOVE_SCORING_MODE="$GREEDY_MOVE_SCORING_MODE" \
 GREEDY_MOVE_PENALTY_COEFFICIENT="$GREEDY_MOVE_PENALTY_COEFFICIENT" \
 GREEDY_CPU_SECONDS_SMOOTHING_TAU="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" \
+GREEDY_ENABLE_SWAP="$GREEDY_ENABLE_SWAP" \
 MATCHING_ENABLE_ADAPTIVE_SCALER="$MATCHING_ENABLE_ADAPTIVE_SCALER" \
 MATCHING_NUM_TASKLIST_READ_PARTITIONS="$MATCHING_NUM_TASKLIST_READ_PARTITIONS" \
 MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" \
@@ -288,6 +300,7 @@ Heterogeneity mode:    $GREEDY_HETEROGENEITY_MODE
 Move scoring mode:     $GREEDY_MOVE_SCORING_MODE
 Move penalty:          $GREEDY_MOVE_PENALTY_COEFFICIENT
 CPU smoothing tau:     $GREEDY_CPU_SECONDS_SMOOTHING_TAU
+Enable swap:           $GREEDY_ENABLE_SWAP
 Adaptive scaler:       $MATCHING_ENABLE_ADAPTIVE_SCALER
 Tasklist partitions:   read=$MATCHING_NUM_TASKLIST_READ_PARTITIONS write=$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS
 Utilization CSV:       $CSV_PATH
