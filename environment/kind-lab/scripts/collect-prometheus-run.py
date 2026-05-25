@@ -38,6 +38,12 @@ ANALYSIS_QUERY_NAMES = {
     "sd_assignment_smoothed_load_missing_ratio",
     "sd_assignment_smoothed_load_stale_ratio",
     "sd_executor_owned_shards",
+    # Passive per-executor diagnostic signals.
+    "sd_executor_latency_ewma_ms",
+    "sd_executor_process_cpu_cores",
+    "sd_executor_cpu_seconds_cost_per_load",
+    "sd_executor_effective_weight_latency",
+    "sd_executor_effective_weight_cpu_seconds",
     # Health / validity signals.
     "sd_executor_heartbeat_skipped_total",
     "sd_oldest_executor_heartbeat_lag",
@@ -125,6 +131,31 @@ DEFAULT_QUERIES = [
     QuerySpec(
         "sd_executor_owned_shards",
         "shard_distributor_executor_owned_shards",
+        "gauge",
+    ),
+    QuerySpec(
+        "sd_executor_latency_ewma_ms",
+        "shard_distributor_executor_latency_ewma_ms",
+        "gauge",
+    ),
+    QuerySpec(
+        "sd_executor_process_cpu_cores",
+        "shard_distributor_executor_process_cpu_cores",
+        "gauge",
+    ),
+    QuerySpec(
+        "sd_executor_cpu_seconds_cost_per_load",
+        "shard_distributor_executor_cpu_seconds_cost_per_load",
+        "gauge",
+    ),
+    QuerySpec(
+        "sd_executor_effective_weight_latency",
+        "shard_distributor_executor_effective_weight_latency",
+        "gauge",
+    ),
+    QuerySpec(
+        "sd_executor_effective_weight_cpu_seconds",
+        "shard_distributor_executor_effective_weight_cpu_seconds",
         "gauge",
     ),
     QuerySpec(
