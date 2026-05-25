@@ -66,6 +66,7 @@ func PlanRebalance(
 	moveScoringMode := cfg.MoveScoringMode(namespace)
 	movePenaltyCoefficient := cfg.MovePenaltyCoefficient(namespace)
 	perShardCooldown := cfg.PerShardCooldown(namespace)
+	var singleMoves, swapMoves int
 
 	// Plan multiple moves per cycle (within budget), recomputing eligibility after each move.
 	// Stop early once sources/destinations are empty, i.e. imbalance is within hysteresis bands.
@@ -146,6 +147,12 @@ func PlanRebalance(
 				movedShards[m.ShardID] = struct{}{}
 			}
 
+			if len(shardsToMove) == 2 {
+				swapMoves++
+			} else {
+				singleMoves += len(shardsToMove)
+			}
+
 			if metricsScope != nil {
 				for _, m := range shardsToMove {
 					load := 0.0
@@ -172,6 +179,12 @@ func PlanRebalance(
 	}
 	if len(moves) > 0 && metricsScope != nil {
 		metricsScope.AddCounter(metrics.ShardDistributorAssignLoopLoadBasedMoves, int64(len(moves)))
+	}
+	if singleMoves > 0 && metricsScope != nil {
+		metricsScope.AddCounter(metrics.ShardDistributorAssignLoopLoadBasedSingleMoves, int64(singleMoves))
+	}
+	if swapMoves > 0 && metricsScope != nil {
+		metricsScope.AddCounter(metrics.ShardDistributorAssignLoopLoadBasedSwapMoves, int64(swapMoves))
 	}
 	return moves, nil
 }

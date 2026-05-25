@@ -163,6 +163,50 @@ data:
               "legendFormat": "moves/sec",
               "range": true,
               "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+              },
+              "editorMode": "code",
+              "expr": "shard_distributor_shard_assign_load_based_single_moves{namespace=~\"$metric_namespace\"}",
+              "legendFormat": "single moves",
+              "range": true,
+              "refId": "C"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+              },
+              "editorMode": "code",
+              "expr": "rate(shard_distributor_shard_assign_load_based_single_moves{namespace=~\"$metric_namespace\"}[$__rate_interval])",
+              "legendFormat": "single moves/sec",
+              "range": true,
+              "refId": "D"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+              },
+              "editorMode": "code",
+              "expr": "shard_distributor_shard_assign_load_based_swap_moves{namespace=~\"$metric_namespace\"}",
+              "legendFormat": "swap moves",
+              "range": true,
+              "refId": "E"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+              },
+              "editorMode": "code",
+              "expr": "rate(shard_distributor_shard_assign_load_based_swap_moves{namespace=~\"$metric_namespace\"}[$__rate_interval])",
+              "legendFormat": "swap moves/sec",
+              "range": true,
+              "refId": "F"
             }
           ],
           "title": "Load-Based Moves",
