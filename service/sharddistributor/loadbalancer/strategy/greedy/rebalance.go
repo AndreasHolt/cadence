@@ -32,7 +32,7 @@ func PlanRebalance(
 	now time.Time,
 	shardStatsStaleAfter time.Duration,
 	metricsScope metrics.Scope,
-	cpuObservationState ...*CPUObservationState,
+	runtimeState ...*RuntimeState,
 ) ([]plan.Move, error) {
 	now = now.UTC()
 	workingAssignments := cloneAssignments(currentAssignments)
@@ -42,14 +42,22 @@ func PlanRebalance(
 	}
 
 	var cpuState *CPUObservationState
-	if len(cpuObservationState) > 0 {
-		cpuState = cpuObservationState[0]
+	var latencyState *LatencyCapacityState
+	if len(runtimeState) > 0 && runtimeState[0] != nil {
+		if runtimeState[0].CPUObservations == nil {
+			runtimeState[0].CPUObservations = NewCPUObservationState()
+		}
+		if runtimeState[0].LatencyCapacity == nil {
+			runtimeState[0].LatencyCapacity = NewLatencyCapacityState()
+		}
+		cpuState = runtimeState[0].CPUObservations
+		latencyState = runtimeState[0].LatencyCapacity
 	}
 	if cpuState != nil {
 		cpuState.SetSmoothingTau(cfg.CPUSecondsSmoothingTau(namespace))
 		emitExecutorSignalDiagnostics(metricsScope, workingAssignments, namespaceState, loads, cpuState)
 	}
-	targetLoads := computeTargetLoads(loads, computeExecutorCapacityWeights(cfg.HeterogeneityMode(namespace), workingAssignments, namespaceState, loads, cpuState), totalLoad)
+	targetLoads := computeTargetLoads(loads, computeExecutorCapacityWeights(cfg.HeterogeneityMode(namespace), workingAssignments, namespaceState, loads, cpuState, latencyState), totalLoad)
 	totalShards := 0
 	for _, shards := range currentAssignments {
 		totalShards += len(shards)
@@ -211,6 +219,7 @@ func computeExecutorCapacityWeights(
 	state *store.NamespaceState,
 	loads map[string]float64,
 	cpuObservationState *CPUObservationState,
+	latencyCapacityState ...*LatencyCapacityState,
 ) map[string]float64 {
 	weights := make(map[string]float64, len(currentAssignments))
 	for executorID := range currentAssignments {
@@ -218,6 +227,9 @@ func computeExecutorCapacityWeights(
 	}
 	switch heterogeneityMode {
 	case config.GreedyHeterogeneityModeLatency:
+		if len(latencyCapacityState) > 0 && latencyCapacityState[0] != nil {
+			return latencyCapacityState[0].updateWeights(currentAssignments, state)
+		}
 		return computeLatencyAdjustedWeights(currentAssignments, state, weights)
 	case config.GreedyHeterogeneityModeCPUSeconds:
 		return computeCPUSecondsAdjustedWeights(currentAssignments, state, loads, cpuObservationState, weights)

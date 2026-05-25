@@ -80,6 +80,68 @@ func TestComputeExecutorCapacityWeightsLatencyMode(t *testing.T) {
 	require.InDelta(t, 2.5, weights["slow"], 0.0001)
 }
 
+func TestLatencyCapacityStateMovesGraduallyOnSingleObservation(t *testing.T) {
+	currentAssignments := map[string][]string{
+		"fast": makeShardIDs("fast-shard", 50),
+		"slow": makeShardIDs("slow-shard", 50),
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			"fast": {
+				Metadata: map[string]string{
+					capacity.GoMaxProcsMetadataKey:    "2",
+					capacity.LatencyEWmaMsMetadataKey: "10",
+				},
+			},
+			"slow": {
+				Metadata: map[string]string{
+					capacity.GoMaxProcsMetadataKey:    "2",
+					capacity.LatencyEWmaMsMetadataKey: "100",
+				},
+			},
+		},
+	}
+	latencyState := NewLatencyCapacityState()
+
+	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeLatency, currentAssignments, namespaceState, nil, nil, latencyState)
+
+	require.InDelta(t, 2.04, weights["fast"], 0.0001)
+	require.InDelta(t, 1.96, weights["slow"], 0.0001)
+	require.InDelta(t, 4.0, weights["fast"]+weights["slow"], 0.0001)
+}
+
+func TestLatencyCapacityStateLearnsBeyondFixedClampForPersistentGap(t *testing.T) {
+	currentAssignments := map[string][]string{
+		"fast": makeShardIDs("fast-shard", 50),
+		"slow": makeShardIDs("slow-shard", 50),
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			"fast": {
+				Metadata: map[string]string{
+					capacity.GoMaxProcsMetadataKey:    "2",
+					capacity.LatencyEWmaMsMetadataKey: "10",
+				},
+			},
+			"slow": {
+				Metadata: map[string]string{
+					capacity.GoMaxProcsMetadataKey:    "2",
+					capacity.LatencyEWmaMsMetadataKey: "100",
+				},
+			},
+		},
+	}
+	latencyState := NewLatencyCapacityState()
+
+	var weights map[string]float64
+	for i := 0; i < 100; i++ {
+		weights = computeExecutorCapacityWeights(config.GreedyHeterogeneityModeLatency, currentAssignments, namespaceState, nil, nil, latencyState)
+	}
+
+	require.Greater(t, weights["fast"]/weights["slow"], 4.0)
+	require.InDelta(t, 4.0, weights["fast"]+weights["slow"], 0.0001)
+}
+
 func TestComputeExecutorCapacityWeightsOffModeIgnoresMetadata(t *testing.T) {
 	currentAssignments := map[string][]string{
 		"small": {"shard-1"},
@@ -96,6 +158,14 @@ func TestComputeExecutorCapacityWeightsOffModeIgnoresMetadata(t *testing.T) {
 
 	require.Equal(t, 1.0, weights["small"])
 	require.Equal(t, 1.0, weights["large"])
+}
+
+func makeShardIDs(prefix string, count int) []string {
+	shards := make([]string, count)
+	for i := 0; i < count; i++ {
+		shards[i] = fmt.Sprintf("%s-%d", prefix, i)
+	}
+	return shards
 }
 
 func TestComputeExecutorCapacityWeightsCPUSecondsMode(t *testing.T) {

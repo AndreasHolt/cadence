@@ -16,13 +16,13 @@ import (
 
 // RuntimeState carries load-balancer state that must survive across planning cycles.
 type RuntimeState struct {
-	GreedyCPUObservations *greedy.CPUObservationState
+	Greedy *greedy.RuntimeState
 }
 
 // NewRuntimeState creates runtime state for load-balancer planning.
 func NewRuntimeState() RuntimeState {
 	return RuntimeState{
-		GreedyCPUObservations: greedy.NewCPUObservationState(),
+		Greedy: greedy.NewRuntimeState(),
 	}
 }
 
@@ -61,14 +61,14 @@ func PlanRebalance(
 	case types.LoadBalancingModeNAIVE:
 		return naive.PlanRebalance(cfg.LoadBalancingNaive, namespace, state, currentAssignments, logger, metricsScope)
 	case types.LoadBalancingModeGREEDY:
-		var cpuObservationState *greedy.CPUObservationState
+		var greedyRuntimeState *greedy.RuntimeState
 		if len(runtimeState) > 0 && runtimeState[0] != nil {
-			if runtimeState[0].GreedyCPUObservations == nil {
-				runtimeState[0].GreedyCPUObservations = greedy.NewCPUObservationState()
+			if runtimeState[0].Greedy == nil {
+				runtimeState[0].Greedy = greedy.NewRuntimeState()
 			}
-			cpuObservationState = runtimeState[0].GreedyCPUObservations
+			greedyRuntimeState = runtimeState[0].Greedy
 		}
-		return greedy.PlanRebalance(cfg.LoadBalancingGreedy, namespace, state, currentAssignments, now, shardStatsStaleAfter, metricsScope, cpuObservationState)
+		return greedy.PlanRebalance(cfg.LoadBalancingGreedy, namespace, state, currentAssignments, now, shardStatsStaleAfter, metricsScope, greedyRuntimeState)
 	default:
 		return nil, fmt.Errorf("unsupported load balancing mode: %s", mode)
 	}
