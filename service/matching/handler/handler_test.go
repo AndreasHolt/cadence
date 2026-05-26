@@ -111,7 +111,7 @@ func (s *handlerSuite) TearDownTest() {
 }
 
 func (s *handlerSuite) getHandler(config *config.Config) Handler {
-	return NewHandler(s.mockEngine, config, s.mockDomainCache, s.mockResource.MetricsClient, s.mockResource.GetLogger(), s.mockResource.GetThrottledLogger(), nil)
+	return NewHandler(s.mockEngine, config, s.mockDomainCache, s.mockResource.MetricsClient, s.mockResource.GetLogger(), s.mockResource.GetThrottledLogger(), nil, nil)
 }
 
 func (s *handlerSuite) TestNewHandler() {

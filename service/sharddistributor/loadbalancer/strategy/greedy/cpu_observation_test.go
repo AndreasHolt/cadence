@@ -196,3 +196,57 @@ func TestUpdateExecutorCPUCostObservation_DuplicateSamplePreservesSmoothedCost(t
 	require.InDelta(t, smoothedBefore, cost, 1e-9)
 	require.InDelta(t, smoothedBefore, state.smoothedCosts["exec-1"].cost, 1e-9)
 }
+
+func pressureMeta(activeWork string) map[string]string {
+	return map[string]string{
+		capacity.ActiveWorkMetadataKey: activeWork,
+	}
+}
+
+func TestUpdateExecutorPressureCostObservation_Smoothing(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	state := NewCPUObservationState()
+	state.SetSmoothingTau(300 * time.Second)
+
+	cost, ok := state.updateExecutorPressureCostObservation("exec-1", pressureMeta("2"), 10, now)
+	require.True(t, ok)
+	require.InDelta(t, 0.2, cost, 1e-9)
+
+	cost, ok = state.updateExecutorPressureCostObservation("exec-1", pressureMeta("4"), 10, now.Add(10*time.Second))
+	require.True(t, ok)
+	require.Greater(t, cost, 0.2)
+	require.Less(t, cost, 0.4)
+}
+
+func TestUpdateExecutorPressureCostObservation_InvalidPressureResetsSmoothing(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	state := NewCPUObservationState()
+	state.SetSmoothingTau(300 * time.Second)
+
+	_, ok := state.updateExecutorPressureCostObservation("exec-1", pressureMeta("2"), 10, now)
+	require.True(t, ok)
+	require.Contains(t, state.smoothedPressureCosts, "exec-1")
+
+	_, ok = state.updateExecutorPressureCostObservation("exec-1", map[string]string{}, 10, now.Add(10*time.Second))
+	require.False(t, ok)
+	require.NotContains(t, state.smoothedPressureCosts, "exec-1")
+}
+
+func TestUpdateExecutorPressureCostObservations_CleansUpSmoothedForRemovedExecutors(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	state := NewCPUObservationState()
+	state.SetSmoothingTau(300 * time.Second)
+
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			"exec-1": {Metadata: pressureMeta("2")},
+		},
+	}
+
+	state.updateExecutorPressureCostObservations(namespaceState, map[string]float64{"exec-1": 10}, now)
+	require.Contains(t, state.smoothedPressureCosts, "exec-1")
+
+	delete(namespaceState.Executors, "exec-1")
+	state.updateExecutorPressureCostObservations(namespaceState, map[string]float64{"exec-1": 10}, now.Add(10*time.Second))
+	require.NotContains(t, state.smoothedPressureCosts, "exec-1")
+}

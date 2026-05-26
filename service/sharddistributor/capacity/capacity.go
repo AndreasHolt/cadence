@@ -11,6 +11,8 @@ const (
 	GoMaxProcsMetadataKey = "capacity.gomaxprocs"
 	// LatencyEWmaMsMetadataKey stores the executor's smoothed request latency in milliseconds.
 	LatencyEWmaMsMetadataKey = "pressure.latency_ewma_ms"
+	// ActiveWorkMetadataKey stores the executor's current active Matching work count.
+	ActiveWorkMetadataKey = "pressure.active_work"
 	// ProcessCPUSecondsMetadataKey stores cumulative process CPU seconds for the executor.
 	ProcessCPUSecondsMetadataKey = "capacity.process_cpu_seconds"
 	// SampleUnixNanosMetadataKey stores the wall-clock sample time for process CPU seconds.
@@ -88,6 +90,26 @@ func LatencyEWmaMsFromMetadata(metadata map[string]string) float64 {
 	}
 
 	return latencyMs
+}
+
+// ActiveWorkFromMetadata returns the executor's active Matching work count.
+// Missing or invalid metadata falls back to 0, which callers should treat as "no signal".
+func ActiveWorkFromMetadata(metadata map[string]string) float64 {
+	if len(metadata) == 0 {
+		return 0
+	}
+
+	rawActiveWork, ok := metadata[ActiveWorkMetadataKey]
+	if !ok {
+		return 0
+	}
+
+	activeWork, err := strconv.ParseFloat(rawActiveWork, 64)
+	if err != nil || activeWork < 0 || math.IsNaN(activeWork) || math.IsInf(activeWork, 0) {
+		return 0
+	}
+
+	return activeWork
 }
 
 // ProcessCPUSampleFromMetadata parses cumulative process CPU seconds and sample time

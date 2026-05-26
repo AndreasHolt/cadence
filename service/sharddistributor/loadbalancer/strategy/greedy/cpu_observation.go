@@ -19,18 +19,25 @@ type executorCPUCostSmoothed struct {
 	lastUpdate time.Time
 }
 
+type executorPressureCostSmoothed struct {
+	cost       float64
+	lastUpdate time.Time
+}
+
 // CPUObservationState tracks previous executor CPU samples across rebalance cycles.
 type CPUObservationState struct {
-	samples       map[string]executorCPUSample
-	smoothedCosts map[string]executorCPUCostSmoothed
-	smoothingTau  time.Duration
+	samples               map[string]executorCPUSample
+	smoothedCosts         map[string]executorCPUCostSmoothed
+	smoothedPressureCosts map[string]executorPressureCostSmoothed
+	smoothingTau          time.Duration
 }
 
 // NewCPUObservationState creates state for CPU-seconds based greedy balancing.
 func NewCPUObservationState() *CPUObservationState {
 	return &CPUObservationState{
-		samples:       make(map[string]executorCPUSample),
-		smoothedCosts: make(map[string]executorCPUCostSmoothed),
+		samples:               make(map[string]executorCPUSample),
+		smoothedCosts:         make(map[string]executorCPUCostSmoothed),
+		smoothedPressureCosts: make(map[string]executorPressureCostSmoothed),
 	}
 }
 
@@ -73,6 +80,76 @@ func (s *CPUObservationState) updateExecutorCPUCostObservations(state *store.Nam
 	}
 
 	return costs
+}
+
+func (s *CPUObservationState) updateExecutorPressureCostObservations(state *store.NamespaceState, loads map[string]float64, now time.Time) map[string]float64 {
+	if s == nil {
+		return nil
+	}
+	if s.smoothedPressureCosts == nil {
+		s.smoothedPressureCosts = make(map[string]executorPressureCostSmoothed)
+	}
+
+	costs := make(map[string]float64)
+	seenExecutors := make(map[string]struct{}, len(state.Executors))
+	for executorID, executor := range state.Executors {
+		seenExecutors[executorID] = struct{}{}
+		cost, ok := s.updateExecutorPressureCostObservation(executorID, executor.Metadata, loads[executorID], now)
+		if ok {
+			costs[executorID] = cost
+		}
+	}
+
+	for executorID := range s.smoothedPressureCosts {
+		if _, ok := seenExecutors[executorID]; !ok {
+			delete(s.smoothedPressureCosts, executorID)
+		}
+	}
+
+	return costs
+}
+
+func (s *CPUObservationState) updateExecutorPressureCostObservation(executorID string, metadata map[string]string, load float64, now time.Time) (float64, bool) {
+	if s.smoothedPressureCosts == nil {
+		s.smoothedPressureCosts = make(map[string]executorPressureCostSmoothed)
+	}
+
+	activeWork := capacity.ActiveWorkFromMetadata(metadata)
+	if activeWork <= 0 || load <= 0 {
+		delete(s.smoothedPressureCosts, executorID)
+		return 0, false
+	}
+
+	cost := activeWork / load
+	if math.IsNaN(cost) || math.IsInf(cost, 0) {
+		delete(s.smoothedPressureCosts, executorID)
+		return 0, false
+	}
+
+	if s.smoothingTau <= 0 {
+		return cost, true
+	}
+
+	prevSmoothed, hasPrevSmoothed := s.smoothedPressureCosts[executorID]
+	if !hasPrevSmoothed || now.IsZero() {
+		s.smoothedPressureCosts[executorID] = executorPressureCostSmoothed{
+			cost:       cost,
+			lastUpdate: now,
+		}
+		return cost, true
+	}
+
+	newSmoothed, err := statistics.CalculateSmoothedLoadWithTau(prevSmoothed.cost, cost, prevSmoothed.lastUpdate, now, s.smoothingTau)
+	if err != nil {
+		delete(s.smoothedPressureCosts, executorID)
+		return cost, true
+	}
+
+	s.smoothedPressureCosts[executorID] = executorPressureCostSmoothed{
+		cost:       newSmoothed,
+		lastUpdate: now,
+	}
+	return newSmoothed, true
 }
 
 func (s *CPUObservationState) updateExecutorCPUCostObservation(executorID string, metadata map[string]string, load float64) (float64, bool) {
