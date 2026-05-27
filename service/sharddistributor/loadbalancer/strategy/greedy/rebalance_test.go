@@ -73,7 +73,7 @@ func TestComputeExecutorCapacityWeightsLatencyMode(t *testing.T) {
 		},
 	}
 
-	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeLatency, currentAssignments, namespaceState, nil, nil, time.Time{})
+	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeLatency, currentAssignments, namespaceState, nil, nil)
 
 	require.Greater(t, weights["fast"], weights["slow"])
 	require.InDelta(t, 10.0, weights["fast"], 0.0001)
@@ -92,7 +92,7 @@ func TestComputeExecutorCapacityWeightsOffModeIgnoresMetadata(t *testing.T) {
 		},
 	}
 
-	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeOff, currentAssignments, namespaceState, nil, nil, time.Time{})
+	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeOff, currentAssignments, namespaceState, nil, nil)
 
 	require.Equal(t, 1.0, weights["small"])
 	require.Equal(t, 1.0, weights["large"])
@@ -126,7 +126,7 @@ func TestComputeExecutorCapacityWeightsCPUSecondsMode(t *testing.T) {
 		"slow": 10,
 	}
 
-	firstWeights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState, now)
+	firstWeights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
 	require.Equal(t, 4.0, firstWeights["fast"])
 	require.Equal(t, 4.0, firstWeights["slow"])
 
@@ -144,7 +144,7 @@ func TestComputeExecutorCapacityWeightsCPUSecondsMode(t *testing.T) {
 		SampleTime:        later,
 	})}
 
-	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState, now.Add(10*time.Second))
+	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
 
 	require.InDelta(t, 4.898979486, weights["fast"], 1e-9)
 	require.InDelta(t, 3.464101615, weights["slow"], 1e-9)
@@ -185,7 +185,7 @@ func TestComputeExecutorCapacityWeightsCPUSecondsModeClampsRelativeCost(t *testi
 		"fast-2": 10,
 		"slow":   10,
 	}
-	computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState, now)
+	computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
 
 	later := now.Add(10 * time.Second)
 	namespaceState.Executors["fast-1"] = store.HeartbeatState{Metadata: capacity.HeartbeatMetadataWithOptions(nil, capacity.HeartbeatMetadataOptions{
@@ -207,7 +207,7 @@ func TestComputeExecutorCapacityWeightsCPUSecondsModeClampsRelativeCost(t *testi
 		SampleTime:        later,
 	})}
 
-	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState, now.Add(10*time.Second))
+	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
 
 	require.InDelta(t, 5.656854249, weights["fast-1"], 1e-9)
 	require.InDelta(t, 5.656854249, weights["fast-2"], 1e-9)
@@ -236,7 +236,7 @@ func TestComputeExecutorCapacityWeightsCPUSecondsModeKeepsBaseWeightForMissingCo
 		"unknown": 10,
 		"ready":   10,
 	}
-	computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState, now)
+	computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
 
 	namespaceState.Executors["ready"] = store.HeartbeatState{Metadata: capacity.HeartbeatMetadataWithOptions(nil, capacity.HeartbeatMetadataOptions{
 		GoMaxProcs:        8,
@@ -244,14 +244,13 @@ func TestComputeExecutorCapacityWeightsCPUSecondsModeKeepsBaseWeightForMissingCo
 		HasProcessCPU:     true,
 		SampleTime:        now.Add(10 * time.Second),
 	})}
-	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState, now.Add(10*time.Second))
+	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
 
 	require.Equal(t, 4.0, weights["unknown"])
 	require.Equal(t, 8.0, weights["ready"])
 }
 
 func TestComputeExecutorCapacityWeightsPressureMode(t *testing.T) {
-	now := time.Unix(100, 0).UTC()
 	currentAssignments := map[string][]string{
 		"less-pressured": {"shard-1"},
 		"more-pressured": {"shard-2"},
@@ -278,14 +277,13 @@ func TestComputeExecutorCapacityWeightsPressureMode(t *testing.T) {
 		"more-pressured": 10,
 	}
 
-	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModePressure, currentAssignments, namespaceState, loads, pressureState, now)
+	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModePressure, currentAssignments, namespaceState, loads, pressureState)
 
 	require.InDelta(t, 6.0, weights["less-pressured"], 1e-9)
 	require.InDelta(t, 3.0, weights["more-pressured"], 1e-9)
 }
 
 func TestComputeExecutorCapacityWeightsPressureModeKeepsBaseWeightForMissingPressure(t *testing.T) {
-	now := time.Unix(100, 0).UTC()
 	currentAssignments := map[string][]string{
 		"unknown": {"shard-1"},
 		"ready":   {"shard-2"},
@@ -307,7 +305,7 @@ func TestComputeExecutorCapacityWeightsPressureModeKeepsBaseWeightForMissingPres
 		"ready":   10,
 	}
 
-	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModePressure, currentAssignments, namespaceState, loads, pressureState, now)
+	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModePressure, currentAssignments, namespaceState, loads, pressureState)
 
 	require.Equal(t, 4.0, weights["unknown"])
 	require.Equal(t, 8.0, weights["ready"])
