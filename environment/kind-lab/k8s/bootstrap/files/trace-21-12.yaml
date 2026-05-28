@@ -13,8 +13,8 @@ trace:
   interval: 10s
   qps_scale: 1.0
   qps_scale_ramp:
-    start: 0.035
-    end: 0.035
+    start: 0.025
+    end: 0.025
   time_scale: 1
   top_n: 2500
   start_row: 0
