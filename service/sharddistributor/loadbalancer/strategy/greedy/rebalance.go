@@ -802,7 +802,7 @@ func findSwapShards(
 		return 0
 	})
 
-	idealNetMove := optimalCapacityNormalizedMove(sourceLoad, sourceTargetLoad, destLoad, destTargetLoad)
+	idealNetMove := costAdjustedNormalizedMove(sourceLoad, sourceTargetLoad, destLoad, destTargetLoad, totalLoad, movePenaltyCoefficient)
 	bestScore := 0.0
 	var bestMoves []plan.Move
 
@@ -813,7 +813,10 @@ func findSwapShards(
 			return cmp.Compare(target, s.load)
 		})
 
-		for i := idx - 3; i <= idx+3; i++ {
+		// The swap score is concave in the net transfer and peaks at searchTarget,
+		// so the best source shard is one of the two straddling the insertion point:
+		// idx-1 (load just above the target) and idx (load just at or below it).
+		for i := idx - 1; i <= idx; i++ {
 			if i < 0 || i >= len(eligibleShardsSource) {
 				continue
 			}
@@ -852,6 +855,23 @@ func optimalCapacityNormalizedMove(sourceLoad, sourceTargetLoad, destLoad, destT
 	destDeviation := (destLoad - destTargetLoad) / (destTargetLoad * destTargetLoad)
 	denominator := 1/(sourceTargetLoad*sourceTargetLoad) + 1/(destTargetLoad*destTargetLoad)
 	return (sourceDeviation - destDeviation) / denominator
+}
+
+// costAdjustedNormalizedMove returns the net load transfer that maximizes the
+// capacity-normalized swap score (benefit minus cost). The normalized benefit is a
+// downward parabola in the net transfer that peaks at optimalCapacityNormalizedMove
+// with curvature 1/T_s^2 + 1/T_d^2, while the move cost is linear in the net transfer
+// with slope movePenaltyCoefficient/totalLoad. Their difference is therefore a parabola
+// whose peak is shifted toward smaller moves by a constant that depends only on the two
+// executors, so the search target can account for cost directly.
+func costAdjustedNormalizedMove(sourceLoad, sourceTargetLoad, destLoad, destTargetLoad, totalLoad, movePenaltyCoefficient float64) float64 {
+	ideal := optimalCapacityNormalizedMove(sourceLoad, sourceTargetLoad, destLoad, destTargetLoad)
+	if sourceTargetLoad <= 0 || destTargetLoad <= 0 || totalLoad <= 0 || movePenaltyCoefficient <= 0 {
+		return ideal
+	}
+	curvature := 1/(sourceTargetLoad*sourceTargetLoad) + 1/(destTargetLoad*destTargetLoad)
+	shift := movePenaltyCoefficient / (2 * totalLoad * curvature)
+	return ideal - shift
 }
 
 func destinationsSortedByDescendingDeficit(destinationExecutors map[string]struct{}, executorLoads, targetLoads map[string]float64) []string {
