@@ -52,23 +52,10 @@ func (s *CPUObservationState) updateExecutorCPUCostObservations(state *store.Nam
 	}
 
 	costs := make(map[string]float64)
-	seenExecutors := make(map[string]struct{}, len(state.Executors))
 	for executorID, executor := range state.Executors {
-		seenExecutors[executorID] = struct{}{}
 		cost, ok := s.updateExecutorCPUCostObservation(executorID, executor.Metadata, loads[executorID])
 		if ok {
 			costs[executorID] = cost
-		}
-	}
-
-	for executorID := range s.samples {
-		if _, ok := seenExecutors[executorID]; !ok {
-			delete(s.samples, executorID)
-		}
-	}
-	for executorID := range s.smoothedCosts {
-		if _, ok := seenExecutors[executorID]; !ok {
-			delete(s.smoothedCosts, executorID)
 		}
 	}
 
@@ -85,15 +72,12 @@ func (s *CPUObservationState) updateExecutorCPUCostObservation(executorID string
 
 	currentSample, ok := executorCPUSampleFromMetadata(metadata)
 	if !ok {
-		delete(s.samples, executorID)
-		delete(s.smoothedCosts, executorID)
-		return 0, false
+		return s.lastSmoothedCost(executorID)
 	}
 
 	previousSample, hasPreviousSample := s.samples[executorID]
 	s.samples[executorID] = currentSample
 	if !hasPreviousSample {
-		delete(s.smoothedCosts, executorID)
 		return 0, false
 	}
 
@@ -110,17 +94,14 @@ func (s *CPUObservationState) updateExecutorCPUCostObservation(executorID string
 
 	busyCores, ok := computeExecutorCPUObservation(previousSample, currentSample)
 	if !ok {
-		delete(s.smoothedCosts, executorID)
-		return 0, false
+		return s.lastSmoothedCost(executorID)
 	}
 	if load <= 0 {
-		delete(s.smoothedCosts, executorID)
-		return 0, false
+		return s.lastSmoothedCost(executorID)
 	}
 	cost := busyCores / load
 	if math.IsNaN(cost) || math.IsInf(cost, 0) {
-		delete(s.smoothedCosts, executorID)
-		return 0, false
+		return s.lastSmoothedCost(executorID)
 	}
 
 	if s.smoothingTau <= 0 {
@@ -138,7 +119,6 @@ func (s *CPUObservationState) updateExecutorCPUCostObservation(executorID string
 
 	newSmoothed, err := statistics.CalculateSmoothedLoadWithTau(prevSmoothed.cost, cost, prevSmoothed.lastUpdate, currentSample.sampleTime, s.smoothingTau)
 	if err != nil {
-		delete(s.smoothedCosts, executorID)
 		return cost, true
 	}
 
@@ -147,6 +127,17 @@ func (s *CPUObservationState) updateExecutorCPUCostObservation(executorID string
 		lastUpdate: currentSample.sampleTime,
 	}
 	return newSmoothed, true
+}
+
+func (s *CPUObservationState) lastSmoothedCost(executorID string) (float64, bool) {
+	if s == nil || s.smoothedCosts == nil {
+		return 0, false
+	}
+	prevSmoothed, ok := s.smoothedCosts[executorID]
+	if !ok {
+		return 0, false
+	}
+	return prevSmoothed.cost, true
 }
 
 func executorCPUSampleFromMetadata(metadata map[string]string) (executorCPUSample, bool) {
