@@ -78,17 +78,6 @@ func (s *CPUObservationState) updateExecutorCPUDiagnostics(state *store.Namespac
 		}
 	}
 
-	for executorID := range s.samples {
-		if _, ok := seenExecutors[executorID]; !ok {
-			delete(s.samples, executorID)
-		}
-	}
-	for executorID := range s.smoothedCosts {
-		if _, ok := seenExecutors[executorID]; !ok {
-			delete(s.smoothedCosts, executorID)
-		}
-	}
-
 	return diagnostics
 }
 
@@ -110,15 +99,12 @@ func (s *CPUObservationState) updateExecutorCPUDiagnostic(executorID string, met
 
 	currentSample, ok := executorCPUSampleFromMetadata(metadata)
 	if !ok {
-		delete(s.samples, executorID)
-		delete(s.smoothedCosts, executorID)
-		return executorCPUDiagnostic{}, false
+		return s.lastSmoothedDiagnostic(executorID)
 	}
 
 	previousSample, hasPreviousSample := s.samples[executorID]
 	s.samples[executorID] = currentSample
 	if !hasPreviousSample {
-		delete(s.smoothedCosts, executorID)
 		return executorCPUDiagnostic{}, false
 	}
 
@@ -139,17 +125,14 @@ func (s *CPUObservationState) updateExecutorCPUDiagnostic(executorID string, met
 
 	busyCores, ok := computeExecutorCPUObservation(previousSample, currentSample)
 	if !ok {
-		delete(s.smoothedCosts, executorID)
-		return executorCPUDiagnostic{}, false
+		return s.lastSmoothedDiagnostic(executorID)
 	}
 	if load <= 0 {
-		delete(s.smoothedCosts, executorID)
-		return executorCPUDiagnostic{}, false
+		return s.lastSmoothedDiagnostic(executorID)
 	}
 	cost := busyCores / load
 	if math.IsNaN(cost) || math.IsInf(cost, 0) {
-		delete(s.smoothedCosts, executorID)
-		return executorCPUDiagnostic{}, false
+		return s.lastSmoothedDiagnostic(executorID)
 	}
 
 	if s.smoothingTau <= 0 {
@@ -169,12 +152,10 @@ func (s *CPUObservationState) updateExecutorCPUDiagnostic(executorID string, met
 
 	newSmoothedCost, err := statistics.CalculateSmoothedLoadWithTau(prevSmoothed.cost, cost, prevSmoothed.lastUpdate, currentSample.sampleTime, s.smoothingTau)
 	if err != nil {
-		delete(s.smoothedCosts, executorID)
 		return executorCPUDiagnostic{cost: cost, busyCores: busyCores, smoothedBusyCores: busyCores}, true
 	}
 	newSmoothedBusyCores, err := statistics.CalculateSmoothedLoadWithTau(prevSmoothed.smoothedBusyCores, busyCores, prevSmoothed.lastUpdate, currentSample.sampleTime, s.smoothingTau)
 	if err != nil {
-		delete(s.smoothedCosts, executorID)
 		return executorCPUDiagnostic{cost: cost, busyCores: busyCores, smoothedBusyCores: busyCores}, true
 	}
 
@@ -185,6 +166,21 @@ func (s *CPUObservationState) updateExecutorCPUDiagnostic(executorID string, met
 		lastUpdate:        currentSample.sampleTime,
 	}
 	return executorCPUDiagnostic{cost: newSmoothedCost, busyCores: busyCores, smoothedBusyCores: newSmoothedBusyCores}, true
+}
+
+func (s *CPUObservationState) lastSmoothedDiagnostic(executorID string) (executorCPUDiagnostic, bool) {
+	if s == nil || s.smoothedCosts == nil {
+		return executorCPUDiagnostic{}, false
+	}
+	prevSmoothed, ok := s.smoothedCosts[executorID]
+	if !ok {
+		return executorCPUDiagnostic{}, false
+	}
+	return executorCPUDiagnostic{
+		cost:              prevSmoothed.cost,
+		busyCores:         prevSmoothed.busyCores,
+		smoothedBusyCores: prevSmoothed.smoothedBusyCores,
+	}, true
 }
 
 func executorCPUSampleFromMetadata(metadata map[string]string) (executorCPUSample, bool) {

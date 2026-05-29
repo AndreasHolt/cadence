@@ -129,7 +129,7 @@ func TestUpdateExecutorCPUDiagnostic_SmoothsBusyCores(t *testing.T) {
 	require.Less(t, diagnostic.smoothedBusyCores, 2.0)
 }
 
-func TestUpdateExecutorCPUCostObservation_MissingSampleResetsSmoothing(t *testing.T) {
+func TestUpdateExecutorCPUCostObservation_MissingSamplePreservesSmoothing(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	state := NewCPUObservationState()
 	state.SetSmoothingTau(300 * time.Second)
@@ -137,24 +137,27 @@ func TestUpdateExecutorCPUCostObservation_MissingSampleResetsSmoothing(t *testin
 	// Build up a smoothed value.
 	state.updateExecutorCPUCostObservation("exec-1", meta(10, now), 10)
 	state.updateExecutorCPUCostObservation("exec-1", meta(25, now.Add(10*time.Second)), 10)
-	_, ok := state.updateExecutorCPUCostObservation("exec-1", meta(45, now.Add(20*time.Second)), 10)
+	smoothedBefore, ok := state.updateExecutorCPUCostObservation("exec-1", meta(45, now.Add(20*time.Second)), 10)
 	require.True(t, ok)
 
-	// Invalid metadata wipes both the raw sample and the smoothed state.
-	_, ok = state.updateExecutorCPUCostObservation("exec-1", map[string]string{}, 10)
-	require.False(t, ok)
-
-	// Next valid sample starts a fresh sequence.
-	_, ok = state.updateExecutorCPUCostObservation("exec-1", meta(60, now.Add(30*time.Second)), 10)
-	require.False(t, ok)
-
-	// Second sample in the new sequence returns raw cost again (no smoothing history).
-	cost, ok := state.updateExecutorCPUCostObservation("exec-1", meta(75, now.Add(40*time.Second)), 10)
+	// Invalid metadata should not wipe the learned smoothed cost.
+	cost, ok := state.updateExecutorCPUCostObservation("exec-1", map[string]string{}, 10)
 	require.True(t, ok)
-	require.InDelta(t, 0.15, cost, 1e-9)
+	require.InDelta(t, smoothedBefore, cost, 1e-9)
+
+	// Once a fresh sample arrives again, smoothing continues from the preserved value.
+	cost, ok = state.updateExecutorCPUCostObservation("exec-1", meta(60, now.Add(30*time.Second)), 10)
+	require.True(t, ok)
+	require.Greater(t, cost, 0.15)
+	require.Less(t, cost, smoothedBefore)
+
+	cost, ok = state.updateExecutorCPUCostObservation("exec-1", meta(80, now.Add(40*time.Second)), 10)
+	require.True(t, ok)
+	require.Greater(t, cost, 0.15)
+	require.Less(t, cost, 0.2)
 }
 
-func TestUpdateExecutorCPUCostObservations_CleansUpSmoothedForRemovedExecutors(t *testing.T) {
+func TestUpdateExecutorCPUCostObservations_PreservesSmoothedForTransientlyMissingExecutors(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	state := NewCPUObservationState()
 	state.SetSmoothingTau(300 * time.Second)
@@ -171,11 +174,48 @@ func TestUpdateExecutorCPUCostObservations_CleansUpSmoothedForRemovedExecutors(t
 	namespaceState.Executors["exec-1"] = store.HeartbeatState{Metadata: meta(25, now.Add(10*time.Second))}
 	state.updateExecutorCPUCostObservations(namespaceState, map[string]float64{"exec-1": 10})
 	require.Contains(t, state.smoothedCosts, "exec-1")
+	require.Contains(t, state.samples, "exec-1")
 
-	// After the executor disappears, the smoothed entry should be cleaned up.
+	// A transiently missing executor should keep its learned state.
 	delete(namespaceState.Executors, "exec-1")
 	state.updateExecutorCPUCostObservations(namespaceState, map[string]float64{"exec-1": 10})
-	require.NotContains(t, state.smoothedCosts, "exec-1")
+	require.Contains(t, state.smoothedCosts, "exec-1")
+	require.Contains(t, state.samples, "exec-1")
+
+	// When the executor returns, its next valid delta should continue from the
+	// preserved state instead of reseeding from scratch.
+	namespaceState.Executors["exec-1"] = store.HeartbeatState{Metadata: meta(40, now.Add(20*time.Second))}
+	costs := state.updateExecutorCPUCostObservations(namespaceState, map[string]float64{"exec-1": 10})
+	require.Contains(t, costs, "exec-1")
+	require.InDelta(t, 0.15, costs["exec-1"], 1e-9)
+
+	namespaceState.Executors["exec-1"] = store.HeartbeatState{Metadata: meta(60, now.Add(30*time.Second))}
+	costs = state.updateExecutorCPUCostObservations(namespaceState, map[string]float64{"exec-1": 10})
+	require.Contains(t, costs, "exec-1")
+	require.Greater(t, costs["exec-1"], 0.15)
+	require.Less(t, costs["exec-1"], 0.2)
+}
+
+func TestUpdateExecutorCPUCostObservation_InvalidDeltaPreservesSmoothing(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	state := NewCPUObservationState()
+	state.SetSmoothingTau(300 * time.Second)
+
+	state.updateExecutorCPUCostObservation("exec-1", meta(10, now), 10)
+	state.updateExecutorCPUCostObservation("exec-1", meta(25, now.Add(10*time.Second)), 10)
+	smoothedBefore, ok := state.updateExecutorCPUCostObservation("exec-1", meta(45, now.Add(20*time.Second)), 10)
+	require.True(t, ok)
+
+	// A counter reset should keep the previous smoothed value rather than wiping it.
+	cost, ok := state.updateExecutorCPUCostObservation("exec-1", meta(5, now.Add(30*time.Second)), 10)
+	require.True(t, ok)
+	require.InDelta(t, smoothedBefore, cost, 1e-9)
+
+	// The next valid sample should re-anchor from the reset point and resume smoothing.
+	cost, ok = state.updateExecutorCPUCostObservation("exec-1", meta(20, now.Add(40*time.Second)), 10)
+	require.True(t, ok)
+	require.Greater(t, cost, 0.15)
+	require.Less(t, cost, 0.2)
 }
 
 func TestUpdateExecutorCPUCostObservation_RawWhenTauIsZero(t *testing.T) {
