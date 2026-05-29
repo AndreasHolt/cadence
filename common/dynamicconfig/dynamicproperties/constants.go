@@ -2371,6 +2371,20 @@ const (
 	// Allowed filters: DomainName
 	EnableTaskListAwareTaskSchedulerByDomain
 
+	// ShardDistributorLoadBalancingGreedyEnableSwap enables pairwise shard swaps in greedy load balancing.
+	// KeyName: shardDistributor.loadBalancingGreedy.enableSwap
+	// Value type: Bool
+	// Default value: false
+	// Allowed filters: namespace
+	ShardDistributorLoadBalancingGreedyEnableSwap
+
+	// ShardDistributorLoadBalancingGreedyEnableMultiMove enables multi-shard bundle moves in greedy load balancing.
+	// KeyName: shardDistributor.loadBalancingGreedy.enableMultiMove
+	// Value type: Bool
+	// Default value: false
+	// Allowed filters: namespace
+	ShardDistributorLoadBalancingGreedyEnableMultiMove
+
 	// LastBoolKey must be the last one in this const group
 	LastBoolKey
 )
@@ -4582,6 +4596,18 @@ var BoolKeys = map[BoolKey]DynamicBool{
 		Description:  "",
 		DefaultValue: false,
 		Filters:      []Filter{ShardID},
+	},
+	ShardDistributorLoadBalancingGreedyEnableSwap: {
+		KeyName:      "shardDistributor.loadBalancingGreedy.enableSwap",
+		Description:  "ShardDistributorLoadBalancingGreedyEnableSwap enables pairwise shard swaps in greedy load balancing",
+		DefaultValue: false,
+		Filters:      []Filter{Namespace},
+	},
+	ShardDistributorLoadBalancingGreedyEnableMultiMove: {
+		KeyName:      "shardDistributor.loadBalancingGreedy.enableMultiMove",
+		Description:  "ShardDistributorLoadBalancingGreedyEnableMultiMove enables multi-shard bundle moves in greedy load balancing",
+		DefaultValue: false,
+		Filters:      []Filter{Namespace},
 	},
 	EnableVisibilitySampling: {
 		KeyName:      "system.enableVisibilitySampling",

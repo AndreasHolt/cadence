@@ -495,6 +495,22 @@ func (c *Collection) GetStringPropertyFilteredByNamespace(key dynamicproperties.
 	}
 }
 
+// GetBoolPropertyFilteredByNamespace gets property with namespace filter and asserts that it's a bool
+func (c *Collection) GetBoolPropertyFilteredByNamespace(key dynamicproperties.BoolKey) dynamicproperties.BoolPropertyFnWithNamespaceFilters {
+	return func(namespace string) bool {
+		filters := c.toFilterMap(dynamicproperties.NamespaceFilter(namespace))
+		val, err := c.client.GetBoolValue(
+			key,
+			filters,
+		)
+		if err != nil {
+			c.logError(key, filters, err)
+			return key.DefaultBool()
+		}
+		return val
+	}
+}
+
 // GetBoolPropertyFilteredByDomain gets property with domain filter and asserts that it's a bool
 func (c *Collection) GetBoolPropertyFilteredByDomain(key dynamicproperties.BoolKey) dynamicproperties.BoolPropertyFnWithDomainFilter {
 	return func(domain string) bool {

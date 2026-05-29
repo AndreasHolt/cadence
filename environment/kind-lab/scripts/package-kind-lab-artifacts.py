@@ -21,6 +21,10 @@ KEEP_PROMETHEUS_CSVS = [
     # Churn / shard movement.
     "sd_load_based_moves_total.csv",
     "sd_load_based_moves_rate_1m.csv",
+    "sd_load_based_single_moves_total.csv",
+    "sd_load_based_single_moves_rate_1m.csv",
+    "sd_load_based_swap_moves_total.csv",
+    "sd_load_based_swap_moves_rate_1m.csv",
     "sd_moved_shard_load.csv",
     "sd_moved_shard_load_total.csv",
     # Assignment balance.

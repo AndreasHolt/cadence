@@ -77,6 +77,9 @@ type DurationPropertyFnWithShardIDFilter func(shardID int) time.Duration
 // BoolPropertyFn is a wrapper to get bool property from dynamic config
 type BoolPropertyFn func(opts ...FilterOption) bool
 
+// BoolPropertyFnWithNamespaceFilters is a wrapper to get bool property from dynamic config with namespace as filter
+type BoolPropertyFnWithNamespaceFilters func(namespace string) bool
+
 // StringPropertyFn is a wrapper to get string property from dynamic config
 type StringPropertyFn func(opts ...FilterOption) string
 

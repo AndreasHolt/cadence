@@ -31,15 +31,17 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 
 
-METHOD_ORDER = ["off", "latency", "cpuseconds"]
+METHOD_ORDER = ["off", "latency", "latencycostaware", "cpuseconds"]
 METHOD_LABELS = {
     "off": "Greedy baseline",
     "latency": "Latency-aware greedy",
+    "latencycostaware": "Latency + cost-aware greedy",
     "cpuseconds": "CPU utilization aware greedy",
 }
 METHOD_COLORS = {
     "off": "#4c78a8",
     "latency": "#54a24b",
+    "latencycostaware": "#b279a2",
     "cpuseconds": "#e45756",
 }
 POD_LABELS = {
@@ -79,6 +81,8 @@ def normalize(value: str) -> str:
 def infer_method(path: Path) -> str | None:
     parts = [normalize(part) for part in path.parts]
     for part in reversed(parts):
+        if "latencycostaware" in part or "latencyca" in part:
+            return "latencycostaware"
         if "latency" in part:
             return "latency"
         if "cpusecond" in part or part == "cpu" or part.startswith("cpu"):
@@ -324,11 +328,37 @@ def cpu_pod_series(run: Run, pod: str, *, step: float) -> dict[float, float]:
     return out
 
 
+def throttling_events_total_series(run: Run, *, step: float) -> dict[float, float]:
+    if not run.cpu_rows:
+        return {}
+    start = utilization_start(run)
+    if start is None:
+        return {}
+    per_sample: dict[float, float] = defaultdict(float)
+    for row in run.cpu_rows:
+        t = round((row["timestamp"] - start).total_seconds(), 6)
+        per_sample[t] += float(row["throttled_events"])
+    return dict(per_sample)
+
+
+def throttling_events_pod_series(run: Run, pod: str, *, step: float) -> dict[float, float]:
+    if not run.cpu_rows:
+        return {}
+    start = utilization_start(run)
+    if start is None:
+        return {}
+    out: dict[float, float] = {}
+    for row in run.cpu_rows:
+        if row["pod"] == pod:
+            out[round((row["timestamp"] - start).total_seconds(), 6)] = float(row["throttled_events"])
+    return out
+
+
 def aggregate(series_list: list[dict[float, float]]) -> tuple[list[float], list[float], list[float], list[float]]:
     times = sorted(set().union(*(s.keys() for s in series_list))) if series_list else []
     xs: list[float] = []
     lows: list[float] = []
-    meds: list[float] = []
+    means: list[float] = []
     highs: list[float] = []
     for t in times:
         vals = [s[t] for s in series_list if t in s and not math.isnan(s[t])]
@@ -336,9 +366,9 @@ def aggregate(series_list: list[dict[float, float]]) -> tuple[list[float], list[
             continue
         xs.append(t / 60.0)
         lows.append(min(vals))
-        meds.append(statistics.median(vals))
+        means.append(statistics.fmean(vals))
         highs.append(max(vals))
-    return xs, lows, meds, highs
+    return xs, lows, means, highs
 
 
 def apply_common_axes(ax, ylabel: str | None, x_max: float | None = None):
@@ -425,13 +455,13 @@ def plot_completed_cumulative(output: Path, runs_by_method: dict[str, list[Run]]
         final_counts = [final_value(r, "completed") for r in runs]
         valid_counts = [v for v in final_counts if not math.isnan(v)]
         if valid_counts:
-            final_med = statistics.median(valid_counts)
+            final_mean = statistics.fmean(valid_counts)
             final_min = min(valid_counts)
             final_max = max(valid_counts)
             if final_min == final_max:
-                legend = f"{method_label(method)} total={final_med:,.0f}"
+                legend = f"{method_label(method)} mean={final_mean:,.0f}"
             else:
-                legend = f"{method_label(method)} total={final_med:,.0f} ({final_min:,.0f}-{final_max:,.0f})"
+                legend = f"{method_label(method)} mean={final_mean:,.0f} ({final_min:,.0f}-{final_max:,.0f})"
         else:
             legend = method_label(method)
         color = METHOD_COLORS.get(method)
@@ -482,6 +512,9 @@ def prometheus_csv_path(run: Run, name: str) -> Path | None:
     for candidate in candidates:
         if candidate.exists():
             return candidate
+    nested = sorted(run.directory.glob(f"**/csv/{name}"))
+    if nested:
+        return nested[0]
     return None
 
 
@@ -635,7 +668,7 @@ def plot_throttling_by_method(output: Path, runs_by_method: dict[str, list[Run]]
     for ax, method in zip(axes, methods):
         runs = runs_by_method[method]
         for pod in POD_LABELS:
-            series = [prometheus_pod_series(r, "matching_cpu_throttled_cores.csv", pod) for r in runs]
+            series = [throttling_events_pod_series(r, pod, step=PROMETHEUS_STEP_SECONDS) for r in runs]
             series = [s for s in series if s]
             xs, lows, meds, highs = aggregate(series)
             if not xs:
@@ -650,9 +683,9 @@ def plot_throttling_by_method(output: Path, runs_by_method: dict[str, list[Run]]
             ax.set_ylim(0, y_max)
         handles, labels = ax.get_legend_handles_labels()
         if not handles:
-            ax.text(0.5, 0.5, "No compact Prometheus CSVs found", transform=ax.transAxes, ha="center", va="center", alpha=0.65)
+            ax.text(0.5, 0.5, "No utilization throttling samples found", transform=ax.transAxes, ha="center", va="center", alpha=0.65)
     fig.suptitle("Matching CPU throttling by executor", fontsize=13, y=0.985)
-    finish_shared_axes(fig, axes, xlabel="Time since start (min)", ylabel="Throttled CPU time (cores)")
+    finish_shared_axes(fig, axes, xlabel="Time since start (min)", ylabel="Throttling events per 10s sample")
     add_shared_legend(fig, axes, ncol=3, y=0.965)
     fig.savefig(output, dpi=180)
     plt.close(fig)
@@ -662,8 +695,8 @@ def plot_throttling_total(output: Path, runs_by_method: dict[str, list[Run]], *,
     plot_aggregate_metric(
         output,
         "Total Matching CPU throttling",
-        "Throttled CPU time (cores)",
-        {m: [prometheus_series(r, "matching_cpu_throttled_cores.csv", combine="sum") for r in rs] for m, rs in runs_by_method.items()},
+        "Throttling events per 10s sample",
+        {m: [throttling_events_total_series(r, step=PROMETHEUS_STEP_SECONDS) for r in rs] for m, rs in runs_by_method.items()},
         x_max=x_max,
         y_min=0,
     )
@@ -683,6 +716,77 @@ def plot_shard_moves_total(output: Path, runs_by_method: dict[str, list[Run]], *
     )
 
 
+def plot_shard_single_moves_total(output: Path, runs_by_method: dict[str, list[Run]], *, x_max: float | None):
+    plot_aggregate_metric(
+        output,
+        "Cumulative single-shard moves",
+        "Shards moved (single moves)",
+        {
+            m: [prometheus_series(r, "sd_load_based_single_moves_total.csv", combine="max") for r in rs]
+            for m, rs in runs_by_method.items()
+        },
+        x_max=x_max,
+        y_min=0,
+    )
+
+
+def plot_shard_swap_moves_total(output: Path, runs_by_method: dict[str, list[Run]], *, x_max: float | None):
+    plot_aggregate_metric(
+        output,
+        "Cumulative pairwise swap moves",
+        "Swap operations",
+        {
+            m: [prometheus_series(r, "sd_load_based_swap_moves_total.csv", combine="max") for r in rs]
+            for m, rs in runs_by_method.items()
+        },
+        x_max=x_max,
+        y_min=0,
+    )
+
+
+def plot_shard_swap_fraction(output: Path, runs_by_method: dict[str, list[Run]], *, x_max: float | None):
+    """Fraction of shard-moves attributable to swaps: 2*swap_ops / (single_shards + 2*swap_ops)."""
+    method_series: dict[str, list[dict[float, float]]] = {}
+    for method, runs in runs_by_method.items():
+        fractions: list[dict[float, float]] = []
+        for run in runs:
+            single = prometheus_series(run, "sd_load_based_single_moves_total.csv", combine="max")
+            swap = prometheus_series(run, "sd_load_based_swap_moves_total.csv", combine="max")
+            if not single and not swap:
+                continue
+            keys = sorted(set(single) | set(swap))
+            fractions.append(
+                {
+                    t: (2.0 * swap.get(t, 0.0)) / denom
+                    for t in keys
+                    if (denom := single.get(t, 0.0) + 2.0 * swap.get(t, 0.0)) > 0
+                }
+            )
+        if fractions:
+            method_series[method] = fractions
+    plot_aggregate_metric(
+        output,
+        "Share of shard moves from swap operations",
+        "Swap share of shard moves",
+        method_series,
+        x_max=x_max,
+        y_min=0,
+        y_max=1,
+        percent=True,
+    )
+
+
+def prometheus_counter_final_delta(run: Run, name: str) -> float:
+    series = prometheus_series(run, name, combine="max")
+    if not series:
+        return math.nan
+    first = series[min(series)]
+    last = series[max(series)]
+    if last >= first:
+        return last - first
+    return last
+
+
 def plot_moved_shard_load(output: Path, runs_by_method: dict[str, list[Run]], *, x_max: float | None):
     plot_aggregate_metric(
         output,
@@ -690,6 +794,34 @@ def plot_moved_shard_load(output: Path, runs_by_method: dict[str, list[Run]], *,
         "Moved shard load",
         {
             m: [prometheus_series(r, "sd_moved_shard_load.csv", combine="max") for r in rs]
+            for m, rs in runs_by_method.items()
+        },
+        x_max=x_max,
+        y_min=0,
+    )
+
+
+def scale_series(series: dict[float, float], factor: float) -> dict[float, float]:
+    return {t: value * factor for t, value in series.items()}
+
+
+def counter_delta_series(series: dict[float, float]) -> dict[float, float]:
+    if not series:
+        return {}
+    first = series[min(series)]
+    return {t: max(0.0, value - first) for t, value in series.items()}
+
+
+def plot_moved_shard_load_total(output: Path, runs_by_method: dict[str, list[Run]], *, x_max: float | None):
+    plot_aggregate_metric(
+        output,
+        "Cumulative moved shard load",
+        "Moved shard load",
+        {
+            m: [
+                scale_series(counter_delta_series(prometheus_series(r, "sd_moved_shard_load_total.csv", combine="max")), 0.001)
+                for r in rs
+            ]
             for m, rs in runs_by_method.items()
         },
         x_max=x_max,
@@ -805,7 +937,30 @@ def run_metrics(run: Run) -> dict[str, float | str]:
         "frac_valid_windows_p95_gt_2s": mean([1.0 if v > 2000 else 0.0 for v in p95_values]),
         "time_to_backlog_gt_1000_s": time_backlog_1000,
         "time_to_completed_lt_95pct_started_s": time_rps_gap,
+        "single_shard_moves_total": prometheus_counter_final_delta(run, "sd_load_based_single_moves_total.csv"),
+        "swap_move_ops_total": prometheus_counter_final_delta(run, "sd_load_based_swap_moves_total.csv"),
+        "load_based_shard_moves_total": prometheus_counter_final_delta(run, "sd_load_based_moves_total.csv"),
     }
+
+
+def enrich_move_type_metrics(row: dict[str, float | str]) -> dict[str, float | str]:
+    single = row.get("single_shard_moves_total", math.nan)
+    swap_ops = row.get("swap_move_ops_total", math.nan)
+    total_moves = row.get("load_based_shard_moves_total", math.nan)
+    try:
+        single_f = float(single)
+        swap_f = float(swap_ops)
+        total_f = float(total_moves)
+    except (TypeError, ValueError):
+        single_f = swap_f = total_f = math.nan
+    shard_moves_from_swaps = 2.0 * swap_f if math.isfinite(swap_f) else math.nan
+    denom = single_f + shard_moves_from_swaps if math.isfinite(single_f) and math.isfinite(shard_moves_from_swaps) else math.nan
+    row["swap_shard_move_share"] = shard_moves_from_swaps / denom if math.isfinite(denom) and denom > 0 else math.nan
+    if math.isfinite(total_f) and total_f > 0 and math.isfinite(single_f) and math.isfinite(swap_f):
+        row["move_counter_consistency_gap"] = abs(total_f - (single_f + shard_moves_from_swaps))
+    else:
+        row["move_counter_consistency_gap"] = math.nan
+    return row
 
 
 def fmt(value: float | str, digits: int = 2) -> str:
@@ -817,7 +972,7 @@ def fmt(value: float | str, digits: int = 2) -> str:
 
 
 def write_summary_tables(output_dir: Path, runs: list[Run]):
-    per_run = [run_metrics(run) for run in runs]
+    per_run = [enrich_move_type_metrics(run_metrics(run)) for run in runs]
     fieldnames = list(per_run[0].keys()) if per_run else []
     with (output_dir / "aggregate-summary-runs.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -925,6 +1080,8 @@ def main() -> int:
         method = normalize(method)
         if method in {"cpu", "cpusecond", "cpuseconds", "cpusecondsgreedy"}:
             method = "cpuseconds"
+        if method in {"latencyca", "latencycostaware"}:
+            method = "latencycostaware"
         if method not in METHOD_LABELS:
             parser.error(f"unknown method {method!r}; expected one of {sorted(METHOD_LABELS)}")
         method_dirs[method] = Path(directory)
@@ -1021,7 +1178,11 @@ def main() -> int:
     )
     plot_throttling_total(output_dir / "aggregate-throttling-total.png", runs_by_method, x_max=args.x_max)
     plot_shard_moves_total(output_dir / "aggregate-shard-moves-total.png", runs_by_method, x_max=args.x_max)
+    plot_shard_single_moves_total(output_dir / "aggregate-shard-single-moves-total.png", runs_by_method, x_max=args.x_max)
+    plot_shard_swap_moves_total(output_dir / "aggregate-shard-swap-moves-total.png", runs_by_method, x_max=args.x_max)
+    plot_shard_swap_fraction(output_dir / "aggregate-shard-swap-fraction.png", runs_by_method, x_max=args.x_max)
     plot_moved_shard_load(output_dir / "aggregate-moved-shard-load.png", runs_by_method, x_max=args.x_max)
+    plot_moved_shard_load_total(output_dir / "aggregate-moved-shard-load-total.png", runs_by_method, x_max=args.x_max)
     plot_assignment_imbalance(output_dir / "aggregate-assignment-imbalance-cv.png", runs_by_method, x_max=args.x_max, kind="cv")
     plot_assignment_imbalance(
         output_dir / "aggregate-assignment-imbalance-max-over-mean.png",

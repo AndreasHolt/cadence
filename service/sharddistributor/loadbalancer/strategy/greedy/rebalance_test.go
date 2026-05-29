@@ -48,8 +48,12 @@ func testGreedyConfig() config.LoadBalancingGreedyConfig {
 		CPUSecondsSmoothingTau: func(namespace string) time.Duration {
 			return 5 * time.Minute
 		},
-		EnableSwap:      true,
-		EnableMultiMove: false,
+		EnableSwap: func(namespace string) bool {
+			return true
+		},
+		EnableMultiMove: func(namespace string) bool {
+			return false
+		},
 	}
 }
 
@@ -981,8 +985,9 @@ func TestLoadBalance_MultiShardBundle(t *testing.T) {
 	}
 
 	cfgMulti := testGreedyConfig()
-	cfgMulti.EnableSwap = false
-	cfgMulti.EnableMultiMove = true
+	cfgMulti.EnableSwap = func(string) bool { return false }
+	cfgMulti.EnableMultiMove = func(string) bool { return true }
+	cfgMulti.MoveBudgetProportion = func(string) float64 { return 1.0 }
 
 	namespaceState, assignments := buildState()
 	moves, err := PlanRebalance(cfgMulti, testNamespace, namespaceState, assignments, now, time.Minute, metrics.NoopScope)
@@ -996,8 +1001,8 @@ func TestLoadBalance_MultiShardBundle(t *testing.T) {
 	assert.ElementsMatch(t, []string{"s25", "s14"}, moved)
 
 	cfgSingle := testGreedyConfig()
-	cfgSingle.EnableSwap = false
-	cfgSingle.EnableMultiMove = false
+	cfgSingle.EnableSwap = func(string) bool { return false }
+	cfgSingle.EnableMultiMove = func(string) bool { return false }
 
 	namespaceState, assignments = buildState()
 	moves, err = PlanRebalance(cfgSingle, testNamespace, namespaceState, assignments, now, time.Minute, metrics.NoopScope)
@@ -1050,6 +1055,9 @@ func TestFindMultiShards_BasicBundle(t *testing.T) {
 // provides better benefit than any single move.
 func TestLoadBalance_SwapShards(t *testing.T) {
 	cfg := testGreedyConfig()
+	cfg.MoveBudgetProportion = func(namespace string) float64 {
+		return 1.0
+	}
 
 	execA, execB := "exec-A", "exec-B"
 	now := time.Now().UTC()
@@ -1092,10 +1100,127 @@ func TestLoadBalance_SwapShards(t *testing.T) {
 	assert.True(t, slices.Contains(currentAssignments[execB], "s5"))
 }
 
+func TestLoadBalance_SwapRequiresTwoMoveBudget(t *testing.T) {
+	cfg := testGreedyConfig()
+
+	execA, execB := "exec-A", "exec-B"
+	now := time.Now().UTC()
+	currentAssignments := map[string][]string{
+		execA: {"s60", "s40"},
+		execB: {"s25", "s5"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardAssignments: map[string]store.AssignedState{
+			execA: {AssignedShards: map[string]*types.ShardAssignment{"s60": {}, "s40": {}}},
+			execB: {AssignedShards: map[string]*types.ShardAssignment{"s25": {}, "s5": {}}},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"s60": {SmoothedLoad: 60, LastUpdateTime: now},
+			"s40": {SmoothedLoad: 40, LastUpdateTime: now},
+			"s25": {SmoothedLoad: 25, LastUpdateTime: now},
+			"s5":  {SmoothedLoad: 5, LastUpdateTime: now},
+		},
+	}
+
+	moves, err := PlanRebalance(cfg, testNamespace, namespaceState, currentAssignments, now, time.Minute, metrics.NoopScope)
+	require.NoError(t, err)
+	require.Len(t, moves, 1, "one remaining move budget should allow only a single-shard move")
+}
+
+func TestFindSwapShards_UsesCapacityNormalizedTargets(t *testing.T) {
+	execA, execB := "exec-A", "exec-B"
+	now := time.Now().UTC()
+	currentAssignments := map[string][]string{
+		execA: {"s40", "s25"},
+		execB: {"s5"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"s40": {SmoothedLoad: 40, LastUpdateTime: now},
+			"s25": {SmoothedLoad: 25, LastUpdateTime: now},
+			"s5":  {SmoothedLoad: 5, LastUpdateTime: now},
+		},
+	}
+
+	moves, score := findSwapShards(
+		currentAssignments,
+		namespaceState,
+		execA,
+		execB,
+		100,
+		30,
+		80,
+		50,
+		map[string]struct{}{},
+		time.Minute,
+		now,
+		130,
+		0,
+	)
+
+	require.Positive(t, score)
+	require.Len(t, moves, 2)
+	assert.Equal(t, "s25", moves[0].ShardID)
+	assert.Equal(t, "s5", moves[1].ShardID)
+}
+
+func TestFindSwapShards_CostUsesBothMovedShards(t *testing.T) {
+	execA, execB := "exec-A", "exec-B"
+	now := time.Now().UTC()
+	currentAssignments := map[string][]string{
+		execA: {"s60", "s40"},
+		execB: {"s25", "s5"},
+	}
+	namespaceState := &store.NamespaceState{
+		Executors: map[string]store.HeartbeatState{
+			execA: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+			execB: {Status: types.ExecutorStatusACTIVE, LastHeartbeat: now},
+		},
+		ShardStats: map[string]store.ShardStatistics{
+			"s60": {SmoothedLoad: 60, LastUpdateTime: now},
+			"s40": {SmoothedLoad: 40, LastUpdateTime: now},
+			"s25": {SmoothedLoad: 25, LastUpdateTime: now},
+			"s5":  {SmoothedLoad: 5, LastUpdateTime: now},
+		},
+	}
+
+	moves, score := findSwapShards(
+		currentAssignments,
+		namespaceState,
+		execA,
+		execB,
+		100,
+		30,
+		65,
+		65,
+		map[string]struct{}{},
+		time.Minute,
+		now,
+		130,
+		1,
+	)
+
+	require.Positive(t, score)
+	require.Len(t, moves, 2)
+	assert.Equal(t, "s40", moves[0].ShardID)
+	assert.Equal(t, "s5", moves[1].ShardID)
+}
+
 // TestLoadBalance_SwapSkipsMovedShards verifies that shards already moved in
 // the current cycle are not considered for swaps.
 func TestLoadBalance_SwapSkipsMovedShards(t *testing.T) {
 	cfg := testGreedyConfig()
+	cfg.MoveBudgetProportion = func(namespace string) float64 {
+		return 1.0
+	}
 
 	execA, execB := "exec-A", "exec-B"
 	now := time.Now().UTC()

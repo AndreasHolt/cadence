@@ -204,6 +204,33 @@ def resolve_churn_run_args(run_args, explicit_churn_args, prometheus_dir, no_aut
     return churn_args
 
 
+def sibling_move_type_csvs(churn_path: Path) -> tuple[Path | None, Path | None]:
+    csv_dir = churn_path.parent
+    single = csv_dir / "sd_load_based_single_moves_total.csv"
+    swap = csv_dir / "sd_load_based_swap_moves_total.csv"
+    return (
+        single if single.exists() else None,
+        swap if swap.exists() else None,
+    )
+
+
+def resolve_move_type_runs(churn_run_args: list[tuple[str, Path]]) -> list[tuple[str, list[dict], list[dict]]]:
+    move_type_runs: list[tuple[str, list[dict], list[dict]]] = []
+    for label, churn_path in churn_run_args:
+        single_path, swap_path = sibling_move_type_csvs(churn_path)
+        if single_path is None and swap_path is None:
+            continue
+        single_points = read_prometheus_series_csv(single_path) if single_path is not None else []
+        swap_points = read_prometheus_series_csv(swap_path) if swap_path is not None else []
+        if single_points or swap_points:
+            move_type_runs.append((label, single_points, swap_points))
+
+    if move_type_runs:
+        found = ", ".join(label for label, _, _ in move_type_runs)
+        print(f"auto-detected move-type CSVs for: {found}", file=sys.stderr)
+    return move_type_runs
+
+
 def x_series(points):
     return [point / 60.0 for point in series(points, "at_seconds")]
 
@@ -419,6 +446,73 @@ def write_churn_totals(path, churn_runs):
             )
 
 
+def plot_move_types_total(ax, move_type_runs, title):
+    for label, single_points, swap_points in move_type_runs:
+        if single_points:
+            single_cum = cumulative_counter_points(single_points)
+            single_total = single_cum[-1]["value"] if single_cum else 0.0
+            ax.plot(
+                [point["seconds"] / 60.0 for point in single_cum],
+                [point["value"] for point in single_cum],
+                linewidth=1.8,
+                label=f"{label} single shards={single_total:,.0f}",
+            )
+        if swap_points:
+            swap_cum = cumulative_counter_points(swap_points)
+            swap_total = swap_cum[-1]["value"] if swap_cum else 0.0
+            ax.plot(
+                [point["seconds"] / 60.0 for point in swap_cum],
+                [point["value"] for point in swap_cum],
+                linewidth=1.8,
+                linestyle="--",
+                label=f"{label} swap ops={swap_total:,.0f}",
+            )
+
+    ax.set_title(title or "Cumulative single-shard vs swap moves")
+    ax.set_xlabel("Time since start (min)")
+    ax.set_ylabel("Count")
+    ax.grid(True, alpha=0.25)
+    ax.legend()
+
+
+def write_move_type_totals(path, move_type_runs):
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "run",
+                "single_shard_moves_total",
+                "swap_move_ops_total",
+                "shard_moves_from_swaps",
+                "swap_shard_move_share",
+                "duration_seconds",
+            ]
+        )
+        for label, single_points, swap_points in move_type_runs:
+            single_cum = cumulative_counter_points(single_points) if single_points else []
+            swap_cum = cumulative_counter_points(swap_points) if swap_points else []
+            single_total = single_cum[-1]["value"] if single_cum else 0.0
+            swap_total = swap_cum[-1]["value"] if swap_cum else 0.0
+            shard_moves_from_swaps = 2.0 * swap_total
+            denom = single_total + shard_moves_from_swaps
+            swap_share = shard_moves_from_swaps / denom if denom > 0 else 0.0
+            duration = 0.0
+            if single_points:
+                duration = single_points[-1]["seconds"]
+            elif swap_points:
+                duration = swap_points[-1]["seconds"]
+            writer.writerow(
+                [
+                    label,
+                    single_total,
+                    swap_total,
+                    shard_moves_from_swaps,
+                    swap_share,
+                    duration,
+                ]
+            )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Plot matching-lab throughput and p95 latency from summary_json logs."
@@ -533,6 +627,11 @@ def main():
         default="",
         help="Override the cumulative churn plot title.",
     )
+    parser.add_argument(
+        "--move-types-title",
+        default="",
+        help="Override the single-shard vs swap cumulative plot title.",
+    )
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -556,6 +655,7 @@ def main():
         (label, read_prometheus_series_csv(path), infer_churn_kind(path, args.churn_kind))
         for label, path in churn_run_args
     ]
+    move_type_runs = resolve_move_type_runs(churn_run_args)
 
     throughput_path = args.output_dir / f"{args.prefix}-throughput.png"
     completed_total_path = args.output_dir / f"{args.prefix}-completed-total.png"
@@ -564,6 +664,8 @@ def main():
     churn_rate_path = args.output_dir / f"{args.prefix}-churn-rate.png"
     churn_total_path = args.output_dir / f"{args.prefix}-churn-total.png"
     churn_totals_csv_path = args.output_dir / f"{args.prefix}-churn-totals.csv"
+    move_types_total_path = args.output_dir / f"{args.prefix}-move-types-total.png"
+    move_type_totals_csv_path = args.output_dir / f"{args.prefix}-move-type-totals.csv"
 
     fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
     plot_completed_rps(
@@ -627,6 +729,14 @@ def main():
         plt.close(fig)
         write_churn_totals(churn_totals_csv_path, churn_runs)
 
+    if move_type_runs:
+        fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
+        plot_move_types_total(ax, move_type_runs, args.move_types_title)
+        apply_time_axis(ax, args.x_min, args.x_max)
+        fig.savefig(move_types_total_path, dpi=180)
+        plt.close(fig)
+        write_move_type_totals(move_type_totals_csv_path, move_type_runs)
+
     print(f"wrote {throughput_path}")
     print(f"wrote {completed_total_path}")
     print(f"wrote {completed_totals_csv_path}")
@@ -635,6 +745,9 @@ def main():
         print(f"wrote {churn_rate_path}")
         print(f"wrote {churn_total_path}")
         print(f"wrote {churn_totals_csv_path}")
+    if move_type_runs:
+        print(f"wrote {move_types_total_path}")
+        print(f"wrote {move_type_totals_csv_path}")
 
 
 if __name__ == "__main__":

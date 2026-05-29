@@ -132,8 +132,9 @@ func PlanRebalance(
 				perShardCooldown,
 				totalLoad,
 				penaltyCoefficient,
-				cfg.EnableSwap,
-				cfg.EnableMultiMove,
+				cfg.EnableSwap(namespace),
+				cfg.EnableMultiMove(namespace),
+				moveBudget,
 			)
 			if !found {
 				// No eligible shard for this source+destination (cooldown, or no beneficial move), try the next source.
@@ -171,7 +172,7 @@ func PlanRebalance(
 				}
 			}
 			updateExecutorLoadsAfterMoves(namespaceState, loads, shardsToMove)
-			moveBudget--
+			moveBudget -= len(shardsToMove)
 			movedThisIteration = true
 			break
 		}
@@ -525,6 +526,7 @@ func findShardsToMove(
 	movePenaltyCoefficient float64,
 	enableSwap bool,
 	enableMultiMove bool,
+	remainingMoveBudget int,
 ) ([]plan.Move, bool) {
 	sourceLoad := executorLoads[source]
 	destLoad := executorLoads[destination]
@@ -566,13 +568,13 @@ func findShardsToMove(
 			totalLoad,
 			movePenaltyCoefficient,
 		)
-		if multiScore > bestScore {
+		if len(multiMoves) > 0 && len(multiMoves) <= remainingMoveBudget && multiScore > bestScore {
 			bestMoves = multiMoves
 			bestScore = multiScore
 		}
 	}
 
-	if enableSwap {
+	if enableSwap && remainingMoveBudget >= 2 {
 		swapMoves, swapScore := findSwapShards(
 			currentAssignments,
 			namespaceState,
@@ -800,47 +802,56 @@ func findSwapShards(
 		return 0
 	})
 
-	idealLoad := (sourceLoad - destLoad) / 2
-	bestDiff := idealLoad
-	bestActualMove := 0.0
+	idealNetMove := optimalCapacityNormalizedMove(sourceLoad, sourceTargetLoad, destLoad, destTargetLoad)
+	bestScore := 0.0
 	var bestMoves []plan.Move
-	found := false
 
 	for _, dShard := range eligibleShardsDestination {
-		searchTarget := idealLoad + dShard.load
+		searchTarget := idealNetMove + dShard.load
 
 		idx, _ := slices.BinarySearchFunc(eligibleShardsSource, searchTarget, func(s shardInfo, target float64) int {
 			return cmp.Compare(target, s.load)
 		})
 
-		for _, i := range []int{idx - 1, idx, idx + 1} {
+		for i := idx - 3; i <= idx+3; i++ {
 			if i < 0 || i >= len(eligibleShardsSource) {
 				continue
 			}
 			sShard := eligibleShardsSource[i]
-
 			actualMove := sShard.load - dShard.load
-			diff := math.Abs(idealLoad - actualMove)
-
-			if diff < bestDiff {
-				bestDiff = diff
-				bestActualMove = actualMove
+			if actualMove <= 0 {
+				continue
+			}
+			benefit := computeCapacityNormalizedBenefitOfMove(sourceLoad, sourceTargetLoad, destLoad, destTargetLoad, actualMove)
+			if benefit <= 0 {
+				continue
+			}
+			cost := computeMoveCost(totalLoad, sShard.load+dShard.load, movePenaltyCoefficient)
+			score := benefit - cost
+			if score > bestScore {
+				bestScore = score
 				bestMoves = []plan.Move{
 					{ShardID: sShard.id, From: source, To: destination},
 					{ShardID: dShard.id, From: destination, To: source},
 				}
-				found = true
 			}
 		}
 	}
 
-	if !found {
+	if bestScore <= 0 {
 		return nil, 0
 	}
+	return bestMoves, bestScore
+}
 
-	benefit := computeCapacityNormalizedBenefitOfMove(sourceLoad, sourceTargetLoad, destLoad, destTargetLoad, bestActualMove)
-	cost := computeMoveCost(totalLoad, bestActualMove, movePenaltyCoefficient)
-	return bestMoves, benefit - cost
+func optimalCapacityNormalizedMove(sourceLoad, sourceTargetLoad, destLoad, destTargetLoad float64) float64 {
+	if sourceTargetLoad <= 0 || destTargetLoad <= 0 {
+		return (sourceLoad - destLoad) / 2
+	}
+	sourceDeviation := (sourceLoad - sourceTargetLoad) / (sourceTargetLoad * sourceTargetLoad)
+	destDeviation := (destLoad - destTargetLoad) / (destTargetLoad * destTargetLoad)
+	denominator := 1/(sourceTargetLoad*sourceTargetLoad) + 1/(destTargetLoad*destTargetLoad)
+	return (sourceDeviation - destDeviation) / denominator
 }
 
 func destinationsSortedByDescendingDeficit(destinationExecutors map[string]struct{}, executorLoads, targetLoads map[string]float64) []string {
@@ -916,11 +927,13 @@ func updateExecutorLoadsAfterMoves(
 	moves []plan.Move,
 ) {
 	for _, move := range moves {
-		stats, ok := state.ShardStats[move.ShardID]
-		if !ok {
-			continue
+		load := 0.0
+		if stats, ok := state.ShardStats[move.ShardID]; ok {
+			load = stats.SmoothedLoad
+		} else if report := state.Executors[move.From].ReportedShards[move.ShardID]; report != nil {
+			load = report.ShardLoad
 		}
-		executorLoads[move.From] -= stats.SmoothedLoad
-		executorLoads[move.To] += stats.SmoothedLoad
+		executorLoads[move.From] -= load
+		executorLoads[move.To] += load
 	}
 }

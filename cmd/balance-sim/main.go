@@ -141,8 +141,10 @@ func run() error {
 		MoveScoringMode:        func(string) string { return moveScoringMode },
 		MovePenaltyCoefficient: func(string) float64 { return movePenaltyCoefficient },
 		CPUSecondsSmoothingTau: func(string) time.Duration { return 5 * time.Minute },
-		EnableSwap:             enableSwap,
-		EnableMultiMove:        enableMultiMove,
+		EnableSwap: func(string) bool { return enableSwap },
+		EnableMultiMove: func(string) bool {
+			return enableMultiMove
+		},
 	}
 
 	// ── Initialise namespace state ────────────────────────────────────────────
