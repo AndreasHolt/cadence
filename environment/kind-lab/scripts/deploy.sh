@@ -15,6 +15,7 @@ MATCHING_FAST_BURN_ITERATIONS="${MATCHING_FAST_BURN_ITERATIONS:-5000000}"
 MATCHING_SLOW_BURN_ITERATIONS="${MATCHING_SLOW_BURN_ITERATIONS:-15000000}"
 GREEDY_CPU_SECONDS_SMOOTHING_TAU="${GREEDY_CPU_SECONDS_SMOOTHING_TAU:-10m}"
 GREEDY_ENABLE_SWAP="${GREEDY_ENABLE_SWAP:-false}"
+GREEDY_ENABLE_MULTI_MOVE="${GREEDY_ENABLE_MULTI_MOVE:-false}"
 MATCHING_ENABLE_ADAPTIVE_SCALER="${MATCHING_ENABLE_ADAPTIVE_SCALER:-false}"
 MATCHING_NUM_TASKLIST_READ_PARTITIONS="${MATCHING_NUM_TASKLIST_READ_PARTITIONS:-1}"
 MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="${MATCHING_NUM_TASKLIST_WRITE_PARTITIONS:-1}"
@@ -51,6 +52,15 @@ case "$GREEDY_ENABLE_SWAP" in
     ;;
   *)
     echo "GREEDY_ENABLE_SWAP must be true or false" >&2
+    exit 2
+    ;;
+esac
+
+case "$GREEDY_ENABLE_MULTI_MOVE" in
+  true|false)
+    ;;
+  *)
+    echo "GREEDY_ENABLE_MULTI_MOVE must be true or false" >&2
     exit 2
     ;;
 esac
@@ -123,7 +133,7 @@ tmp_config_dir="$(mktemp -d)"
 metadata_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_config_dir" "$metadata_dir"' EXIT
 cp "$ROOT"/environment/kind-lab/k8s/bootstrap/files/* "$tmp_config_dir"/
-awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GREEDY_MOVE_SCORING_MODE" -v move_penalty_coefficient="$GREEDY_MOVE_PENALTY_COEFFICIENT" -v cpu_smoothing_tau="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" -v enable_swap="$GREEDY_ENABLE_SWAP" -v matching_enable_adaptive_scaler="$MATCHING_ENABLE_ADAPTIVE_SCALER" -v matching_read_partitions="$MATCHING_NUM_TASKLIST_READ_PARTITIONS" -v matching_write_partitions="$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" '
+awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GREEDY_MOVE_SCORING_MODE" -v move_penalty_coefficient="$GREEDY_MOVE_PENALTY_COEFFICIENT" -v cpu_smoothing_tau="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" -v enable_swap="$GREEDY_ENABLE_SWAP" -v enable_multi_move="$GREEDY_ENABLE_MULTI_MOVE" -v matching_enable_adaptive_scaler="$MATCHING_ENABLE_ADAPTIVE_SCALER" -v matching_read_partitions="$MATCHING_NUM_TASKLIST_READ_PARTITIONS" -v matching_write_partitions="$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" '
   $0 == "shardDistributor.loadBalancingGreedy.heterogeneityMode:" {
     in_heterogeneity_key = 1
     print
@@ -146,6 +156,11 @@ awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GR
   }
   $0 == "shardDistributor.loadBalancingGreedy.enableSwap:" {
     in_enable_swap_key = 1
+    print
+    next
+  }
+  $0 == "shardDistributor.loadBalancingGreedy.enableMultiMove:" {
+    in_enable_multi_move_key = 1
     print
     next
   }
@@ -189,6 +204,11 @@ awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GR
     in_enable_swap_key = 0
     next
   }
+  in_enable_multi_move_key && $1 == "-" && $2 == "value:" {
+    print "  - value: " enable_multi_move
+    in_enable_multi_move_key = 0
+    next
+  }
   in_matching_enable_adaptive_scaler_key && $1 == "-" && $2 == "value:" {
     print "  - value: " matching_enable_adaptive_scaler
     in_matching_enable_adaptive_scaler_key = 0
@@ -222,6 +242,7 @@ GREEDY_MOVE_SCORING_MODE="$GREEDY_MOVE_SCORING_MODE" \
 GREEDY_MOVE_PENALTY_COEFFICIENT="$GREEDY_MOVE_PENALTY_COEFFICIENT" \
 GREEDY_CPU_SECONDS_SMOOTHING_TAU="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" \
 GREEDY_ENABLE_SWAP="$GREEDY_ENABLE_SWAP" \
+GREEDY_ENABLE_MULTI_MOVE="$GREEDY_ENABLE_MULTI_MOVE" \
 MATCHING_ENABLE_ADAPTIVE_SCALER="$MATCHING_ENABLE_ADAPTIVE_SCALER" \
 MATCHING_NUM_TASKLIST_READ_PARTITIONS="$MATCHING_NUM_TASKLIST_READ_PARTITIONS" \
 MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" \
@@ -249,6 +270,7 @@ echo "  cadence-matching-b: cpu=$MATCHING_B_CPU burn_iterations=$MATCHING_B_BURN
 echo "  cadence-matching-c: cpu=$MATCHING_C_CPU burn_iterations=$MATCHING_C_BURN"
 echo "greedy cpu seconds smoothing tau: $GREEDY_CPU_SECONDS_SMOOTHING_TAU"
 echo "greedy enable swap: $GREEDY_ENABLE_SWAP"
+echo "greedy enable multi-move: $GREEDY_ENABLE_MULTI_MOVE"
 echo "matching adaptive scaler: $MATCHING_ENABLE_ADAPTIVE_SCALER"
 echo "matching tasklist partitions: read=$MATCHING_NUM_TASKLIST_READ_PARTITIONS write=$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS"
 echo "run metadata: kubectl get configmap kind-lab-run-metadata -n $NAMESPACE -o jsonpath='{.data.metadata\\.json}'"
