@@ -708,7 +708,7 @@ func findMultiShards(
 		return 0
 	})
 
-	idealLoad := (sourceLoad - destLoad) / 2
+	idealLoad := optimalCapacityNormalizedMove(sourceLoad, sourceTargetLoad, destLoad, destTargetLoad)
 	if idealLoad <= 0 {
 		return nil, 0
 	}
