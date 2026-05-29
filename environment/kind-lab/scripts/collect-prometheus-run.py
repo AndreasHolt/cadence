@@ -32,6 +32,8 @@ ANALYSIS_QUERY_NAMES = {
     "sd_load_based_single_moves_rate_1m",
     "sd_load_based_swap_moves_total",
     "sd_load_based_swap_moves_rate_1m",
+    "sd_load_based_multi_moves_total",
+    "sd_load_based_multi_moves_rate_1m",
     "sd_moved_shard_load",
     "sd_moved_shard_load_total",
     # Assignment balance.
@@ -89,6 +91,16 @@ DEFAULT_QUERIES = [
     QuerySpec(
         "sd_load_based_swap_moves_rate_1m",
         "rate(shard_distributor_shard_assign_load_based_swap_moves[1m])",
+        "rate",
+    ),
+    QuerySpec(
+        "sd_load_based_multi_moves_total",
+        "shard_distributor_shard_assign_load_based_multi_moves",
+        "counter",
+    ),
+    QuerySpec(
+        "sd_load_based_multi_moves_rate_1m",
+        "rate(shard_distributor_shard_assign_load_based_multi_moves[1m])",
         "rate",
     ),
     QuerySpec(

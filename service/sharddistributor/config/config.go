@@ -58,6 +58,7 @@ type (
 		MovePenaltyCoefficient dynamicproperties.Float64PropertyFnWithNamespaceFilters // penalty coefficient for cost-aware scoring
 		CPUSecondsSmoothingTau dynamicproperties.DurationPropertyFnWithNamespaceFilters
 		EnableSwap             bool
+		EnableMultiMove        bool
 	}
 
 	StaticConfig struct {
@@ -158,6 +159,7 @@ func NewConfig(dc *dynamicconfig.Collection) *Config {
 			MovePenaltyCoefficient: dc.GetFloat64PropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyMovePenaltyCoefficient),
 			CPUSecondsSmoothingTau: dc.GetDurationPropertyFilteredByNamespace(dynamicproperties.ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau),
 			EnableSwap:             false,
+			EnableMultiMove:        false,
 		},
 	}
 }

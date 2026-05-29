@@ -76,6 +76,7 @@ func run() error {
 		severeRatio            float64
 		useOptimal             bool
 		enableSwap             bool
+		enableMultiMove        bool
 		moveScoringMode        string
 		movePenaltyCoefficient float64
 	)
@@ -92,6 +93,7 @@ func run() error {
 	flag.Float64Var(&severeRatio, "severe-ratio", 1.3, "Severe-imbalance escape-hatch ratio")
 	flag.BoolVar(&useOptimal, "optimal", true, "Compare to optimal")
 	flag.BoolVar(&enableSwap, "swap", true, "Enable pairwise shard swaps in greedy rebalancer")
+	flag.BoolVar(&enableMultiMove, "multi-move", true, "Enable multi-shard bundle moves in greedy rebalancer")
 	flag.StringVar(&moveScoringMode, "move-scoring-mode", "benefit", "Move scoring mode: benefit | cost_aware")
 	flag.Float64Var(&movePenaltyCoefficient, "move-penalty-coefficient", 0.0, "Penalty coefficient for variable move cost in cost-aware scoring")
 	flag.Parse()
@@ -140,6 +142,7 @@ func run() error {
 		MovePenaltyCoefficient: func(string) float64 { return movePenaltyCoefficient },
 		CPUSecondsSmoothingTau: func(string) time.Duration { return 5 * time.Minute },
 		EnableSwap:             enableSwap,
+		EnableMultiMove:        enableMultiMove,
 	}
 
 	// ── Initialise namespace state ────────────────────────────────────────────

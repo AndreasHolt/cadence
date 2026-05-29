@@ -3255,6 +3255,8 @@ const (
 	ShardDistributorAssignLoopLoadBasedSingleMoves
 	// ShardDistributorAssignLoopLoadBasedSwapMoves counts the number of pairwise swap moves planned by the rebalancer
 	ShardDistributorAssignLoopLoadBasedSwapMoves
+	// ShardDistributorAssignLoopLoadBasedMultiMoves counts the number of multi-shard bundle moves planned by the rebalancer
+	ShardDistributorAssignLoopLoadBasedMultiMoves
 	// ShardDistributorAssignLoopDeletedShards counts the number of shards removed (DONE status) in a rebalance cycle
 	ShardDistributorAssignLoopDeletedShards
 	// ShardDistributorAssignLoopMovedShardLoad tracks the load of a shard that was moved due to load rebalancing
@@ -4223,6 +4225,7 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		ShardDistributorAssignLoopLoadBasedMoves:       {metricName: "shard_distributor_shard_assign_load_based_moves", metricType: Counter},
 		ShardDistributorAssignLoopLoadBasedSingleMoves: {metricName: "shard_distributor_shard_assign_load_based_single_moves", metricType: Counter},
 		ShardDistributorAssignLoopLoadBasedSwapMoves:   {metricName: "shard_distributor_shard_assign_load_based_swap_moves", metricType: Counter},
+		ShardDistributorAssignLoopLoadBasedMultiMoves:  {metricName: "shard_distributor_shard_assign_load_based_multi_moves", metricType: Counter},
 		ShardDistributorAssignLoopDeletedShards:        {metricName: "shard_distributor_shard_assign_deleted_shards", metricType: Gauge},
 		ShardDistributorAssignLoopMovedShardLoad:       {metricName: "shard_distributor_shard_assign_moved_shard_load", metricType: Gauge},
 		ShardDistributorAssignLoopMovedShardLoadTotal:  {metricName: "shard_distributor_shard_assign_moved_shard_load_total", metricType: Counter},

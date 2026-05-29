@@ -66,7 +66,7 @@ func PlanRebalance(
 	moveScoringMode := cfg.MoveScoringMode(namespace)
 	movePenaltyCoefficient := cfg.MovePenaltyCoefficient(namespace)
 	perShardCooldown := cfg.PerShardCooldown(namespace)
-	var singleMoves, swapMoves int
+	var singleMoves, swapMoves, multiMoves int
 
 	// Plan multiple moves per cycle (within budget), recomputing eligibility after each move.
 	// Stop early once sources/destinations are empty, i.e. imbalance is within hysteresis bands.
@@ -133,6 +133,7 @@ func PlanRebalance(
 				totalLoad,
 				penaltyCoefficient,
 				cfg.EnableSwap,
+				cfg.EnableMultiMove,
 			)
 			if !found {
 				// No eligible shard for this source+destination (cooldown, or no beneficial move), try the next source.
@@ -147,9 +148,12 @@ func PlanRebalance(
 				movedShards[m.ShardID] = struct{}{}
 			}
 
-			if len(shardsToMove) == 2 {
+			switch classifyPlannedMoveType(shardsToMove) {
+			case plannedMoveTypeSwap:
 				swapMoves++
-			} else {
+			case plannedMoveTypeMulti:
+				multiMoves++
+			default:
 				singleMoves += len(shardsToMove)
 			}
 
@@ -186,7 +190,26 @@ func PlanRebalance(
 	if swapMoves > 0 && metricsScope != nil {
 		metricsScope.AddCounter(metrics.ShardDistributorAssignLoopLoadBasedSwapMoves, int64(swapMoves))
 	}
+	if multiMoves > 0 && metricsScope != nil {
+		metricsScope.AddCounter(metrics.ShardDistributorAssignLoopLoadBasedMultiMoves, int64(multiMoves))
+	}
 	return moves, nil
+}
+
+const (
+	plannedMoveTypeSingle = iota
+	plannedMoveTypeSwap
+	plannedMoveTypeMulti
+)
+
+func classifyPlannedMoveType(moves []plan.Move) int {
+	if len(moves) == 2 && moves[0].From == moves[1].To && moves[0].To == moves[1].From {
+		return plannedMoveTypeSwap
+	}
+	if len(moves) >= 2 {
+		return plannedMoveTypeMulti
+	}
+	return plannedMoveTypeSingle
 }
 
 func cloneAssignments(assignments map[string][]string) map[string][]string {
@@ -501,13 +524,14 @@ func findShardsToMove(
 	totalLoad float64,
 	movePenaltyCoefficient float64,
 	enableSwap bool,
+	enableMultiMove bool,
 ) ([]plan.Move, bool) {
 	sourceLoad := executorLoads[source]
 	destLoad := executorLoads[destination]
 	sourceTargetLoad := targetLoads[source]
 	destTargetLoad := targetLoads[destination]
 
-	singleMove, singleScore := findSingleShard(
+	bestMoves, bestScore := findSingleShard(
 		currentAssignments,
 		namespaceState,
 		source,
@@ -522,38 +546,58 @@ func findShardsToMove(
 		totalLoad,
 		movePenaltyCoefficient,
 	)
-
-	if !enableSwap {
-		if singleScore <= 0 {
-			return nil, false
-		}
-		return singleMove, true
+	if bestScore <= 0 {
+		bestMoves = nil
 	}
 
-	swapMoves, swapScore := findSwapShards(
-		currentAssignments,
-		namespaceState,
-		source,
-		destination,
-		sourceLoad,
-		destLoad,
-		sourceTargetLoad,
-		destTargetLoad,
-		movedShards,
-		perShardCooldown,
-		now,
-		totalLoad,
-		movePenaltyCoefficient,
-	)
+	if enableMultiMove {
+		multiMoves, multiScore := findMultiShards(
+			currentAssignments,
+			namespaceState,
+			source,
+			destination,
+			sourceLoad,
+			destLoad,
+			sourceTargetLoad,
+			destTargetLoad,
+			movedShards,
+			perShardCooldown,
+			now,
+			totalLoad,
+			movePenaltyCoefficient,
+		)
+		if multiScore > bestScore {
+			bestMoves = multiMoves
+			bestScore = multiScore
+		}
+	}
 
-	if singleScore <= 0 && swapScore <= 0 {
+	if enableSwap {
+		swapMoves, swapScore := findSwapShards(
+			currentAssignments,
+			namespaceState,
+			source,
+			destination,
+			sourceLoad,
+			destLoad,
+			sourceTargetLoad,
+			destTargetLoad,
+			movedShards,
+			perShardCooldown,
+			now,
+			totalLoad,
+			movePenaltyCoefficient,
+		)
+		if swapScore > bestScore {
+			bestMoves = swapMoves
+			bestScore = swapScore
+		}
+	}
+
+	if bestScore <= 0 {
 		return nil, false
 	}
-
-	if singleScore >= swapScore {
-		return singleMove, true
-	}
-	return swapMoves, true
+	return bestMoves, true
 }
 
 func findSingleShard(
@@ -608,6 +652,89 @@ func findSingleShard(
 		return nil, 0
 	}
 	return []plan.Move{{ShardID: bestShard, From: source, To: destination}}, bestScore
+}
+
+func findMultiShards(
+	currentAssignments map[string][]string,
+	namespaceState *store.NamespaceState,
+	source string,
+	destination string,
+	sourceLoad float64,
+	destLoad float64,
+	sourceTargetLoad float64,
+	destTargetLoad float64,
+	movedShards map[string]struct{},
+	perShardCooldown time.Duration,
+	now time.Time,
+	totalLoad float64,
+	movePenaltyCoefficient float64,
+) ([]plan.Move, float64) {
+	var eligibleShards []shardInfo
+	for _, shardID := range currentAssignments[source] {
+		if _, ok := movedShards[shardID]; ok {
+			continue
+		}
+
+		stats, hasStats := namespaceState.ShardStats[shardID]
+		if hasStats && !stats.LastMoveTime.IsZero() && perShardCooldown > 0 && now.Sub(stats.LastMoveTime) < perShardCooldown {
+			continue
+		}
+
+		load := 0.0
+		if hasStats {
+			load = stats.SmoothedLoad
+		} else if report := namespaceState.Executors[source].ReportedShards[shardID]; report != nil {
+			load = report.ShardLoad
+		}
+		if load <= 0 {
+			continue
+		}
+
+		eligibleShards = append(eligibleShards, shardInfo{
+			id:   shardID,
+			load: load,
+		})
+	}
+
+	slices.SortFunc(eligibleShards, func(a, b shardInfo) int {
+		la, lb := a.load, b.load
+		if la > lb {
+			return -1
+		} else if la < lb {
+			return 1
+		}
+		return 0
+	})
+
+	idealLoad := (sourceLoad - destLoad) / 2
+	if idealLoad <= 0 {
+		return nil, 0
+	}
+
+	remainingLoad := idealLoad
+	selectedMoves := make([]plan.Move, 0, len(eligibleShards))
+	for _, s := range eligibleShards {
+		if s.load < remainingLoad {
+			selectedMoves = append(selectedMoves, plan.Move{ShardID: s.id, From: source, To: destination})
+			remainingLoad -= s.load
+		}
+	}
+
+	if len(selectedMoves) == 0 {
+		return nil, 0
+	}
+
+	movedLoad := idealLoad - remainingLoad
+	benefit := computeCapacityNormalizedBenefitOfMove(sourceLoad, sourceTargetLoad, destLoad, destTargetLoad, movedLoad)
+	if benefit <= 0 {
+		return nil, 0
+	}
+	cost := computeMoveCost(totalLoad, movedLoad, movePenaltyCoefficient)
+	score := benefit - cost
+	if score <= 0 {
+		return nil, 0
+	}
+	return selectedMoves, score
 }
 
 func findSwapShards(

@@ -254,6 +254,7 @@ func runGridSimulation(
 		MovePenaltyCoefficient: func(string) float64 { return cb.movePenaltyCoefficient },
 		CPUSecondsSmoothingTau: func(string) time.Duration { return 5 * time.Minute },
 		EnableSwap:             true,
+		EnableMultiMove:        true,
 	}
 
 	assignments := make(map[string][]string)
