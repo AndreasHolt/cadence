@@ -19,23 +19,23 @@ shardDistributor.loadBalancingMode:
     constraints:
       namespace: cadence-matching-kind-lab
 shardDistributor.loadBalancingGreedy.moveBudgetProportion:
-  - value: 0.01
+  - value: 0.05
     constraints:
       namespace: cadence-matching-kind-lab
 shardDistributor.loadBalancingGreedy.hysteresisUpperBand:
-  - value: 1.15
+  - value: 1.05
     constraints:
       namespace: cadence-matching-kind-lab
 shardDistributor.loadBalancingGreedy.hysteresisLowerBand:
-  - value: 0.9
+  - value: 0.95
     constraints:
       namespace: cadence-matching-kind-lab
 shardDistributor.loadBalancingGreedy.severeImbalanceRatio:
-  - value: 1.23
+  - value: 1.20
     constraints:
       namespace: cadence-matching-kind-lab
 shardDistributor.loadBalancingGreedy.perShardCooldown:
-  - value: 3m
+  - value: 1m
     constraints:
       namespace: cadence-matching-kind-lab
 shardDistributor.loadBalancingGreedy.heterogeneityMode:
