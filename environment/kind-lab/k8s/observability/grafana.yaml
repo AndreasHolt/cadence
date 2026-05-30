@@ -239,6 +239,123 @@ data:
             "type": "prometheus",
             "uid": "Prometheus"
           },
+          "description": "Cumulative smoothed shard load moved by greedy rebalancing. The counter is stored in milli-load units (divide by 1000). Each shard in a swap contributes its own load.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 4,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 24,
+            "x": 0,
+            "y": 7
+          },
+          "id": 13,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+              },
+              "editorMode": "code",
+              "expr": "shard_distributor_shard_assign_moved_shard_load_total{namespace=~\"$metric_namespace\"} / 1000",
+              "legendFormat": "cumulative moved load",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+              },
+              "editorMode": "code",
+              "expr": "rate(shard_distributor_shard_assign_moved_shard_load_total{namespace=~\"$metric_namespace\"}[$__rate_interval]) / 1000",
+              "legendFormat": "moved load/sec",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "Prometheus"
+              },
+              "editorMode": "code",
+              "expr": "shard_distributor_shard_assign_moved_shard_load{namespace=~\"$metric_namespace\"}",
+              "legendFormat": "last moved shard load",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "Moved Shard Load",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
           "description": "Early warning for bad input data. If these rise, compare move spikes and heartbeat lag.",
           "fieldConfig": {
             "defaults": {
@@ -527,7 +644,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 7
+            "y": 14
           },
           "id": 4,
           "options": {
@@ -633,7 +750,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 7
+            "y": 14
           },
           "id": 5,
           "options": {
@@ -738,7 +855,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 15
+            "y": 22
           },
           "id": 6,
           "options": {
@@ -832,7 +949,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 15
+            "y": 22
           },
           "id": 7,
           "options": {
@@ -927,7 +1044,7 @@ data:
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 23
+            "y": 30
           },
           "id": 8,
           "options": {
@@ -1043,7 +1160,7 @@ data:
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 23
+            "y": 30
           },
           "id": 9,
           "options": {
@@ -1159,7 +1276,7 @@ data:
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 23
+            "y": 30
           },
           "id": 10,
           "options": {
@@ -1253,7 +1370,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 30
+            "y": 37
           },
           "id": 11,
           "options": {
@@ -1369,7 +1486,7 @@ data:
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 30
+            "y": 37
           },
           "id": 12,
           "options": {
@@ -1479,7 +1596,7 @@ data:
       "timezone": "browser",
       "title": "Cadence Matching Lab Experiments",
       "uid": "cadence-kind-lab-experiments",
-      "version": 1,
+      "version": 2,
       "weekStart": ""
     }
 ---
