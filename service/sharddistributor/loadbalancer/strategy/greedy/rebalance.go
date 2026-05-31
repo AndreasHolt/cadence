@@ -48,7 +48,7 @@ func PlanRebalance(
 	if cpuState != nil {
 		cpuState.SetSmoothingTau(cfg.CPUSecondsSmoothingTau(namespace))
 	}
-	targetLoads := computeTargetLoads(loads, computeExecutorCapacityWeights(cfg.HeterogeneityMode(namespace), workingAssignments, namespaceState, loads, cpuState), totalLoad)
+	targetLoads := computeTargetLoads(loads, computeExecutorCapacityWeights(cfg.HeterogeneityMode(namespace), workingAssignments, namespaceState, loads, cpuState, now), totalLoad)
 	totalShards := 0
 	for _, shards := range currentAssignments {
 		totalShards += len(shards)
@@ -210,6 +210,7 @@ func computeExecutorCapacityWeights(
 	state *store.NamespaceState,
 	loads map[string]float64,
 	cpuObservationState *CPUObservationState,
+	now time.Time,
 ) map[string]float64 {
 	weights := make(map[string]float64, len(currentAssignments))
 	for executorID := range currentAssignments {
@@ -221,7 +222,7 @@ func computeExecutorCapacityWeights(
 	case config.GreedyHeterogeneityModeCPUSeconds:
 		return computeCPUSecondsAdjustedWeights(currentAssignments, state, loads, cpuObservationState, weights)
 	case config.GreedyHeterogeneityModePressure:
-		return computePressureAdjustedWeights(currentAssignments, state, loads, weights)
+		return computePressureAdjustedWeights(currentAssignments, state, loads, cpuObservationState, weights, now)
 	default:
 		return weights
 	}
@@ -296,13 +297,18 @@ func computePressureAdjustedWeights(
 	currentAssignments map[string][]string,
 	state *store.NamespaceState,
 	loads map[string]float64,
+	cpuObservationState *CPUObservationState,
 	weights map[string]float64,
+	now time.Time,
 ) map[string]float64 {
 	for executorID := range currentAssignments {
 		weights[executorID] = capacity.WeightFromMetadata(state.Executors[executorID].Metadata)
 	}
+	if cpuObservationState == nil {
+		return weights
+	}
 
-	pressureCosts := updateExecutorPressureCostObservations(state, loads)
+	pressureCosts := cpuObservationState.updateExecutorPressureCostObservations(state, loads, now)
 	totalPressureCost := 0.0
 	validCount := 0
 	for _, cost := range pressureCosts {

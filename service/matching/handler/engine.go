@@ -121,7 +121,6 @@ type (
 		ShardDistributorMatchingConfig clientcommon.Config
 		drainObserver                  clientcommon.DrainSignalObserver
 		requestLatencyTracker          requestLatencyTracker
-		activeWorkTracker              activeWorkTracker
 		metadataLock                   sync.Mutex
 		activeWork                     int64
 	}
@@ -203,56 +202,34 @@ func (e *matchingEngineImpl) Stop() {
 
 func (e *matchingEngineImpl) ObserveRequestLatency(duration time.Duration) {
 	latencyEWMAms := e.requestLatencyTracker.Observe(duration)
-	e.updateLatencyMetadata(latencyEWMAms)
+	e.metadataLock.Lock()
+	defer e.metadataLock.Unlock()
+
+	metadata := e.executor.GetMetadata()
+	metadata[capacity.LatencyEWmaMsMetadataKey] = strconv.FormatFloat(latencyEWMAms, 'f', 6, 64)
+	e.executor.SetMetadata(metadata)
 }
 
 func (e *matchingEngineImpl) BeginActiveWork() func() {
 	activeWork := atomic.AddInt64(&e.activeWork, 1)
-	e.observeActiveWork(activeWork, e.now())
+	e.observeActiveWork(activeWork)
 	return func() {
 		activeWork := atomic.AddInt64(&e.activeWork, -1)
 		if activeWork < 0 {
 			atomic.StoreInt64(&e.activeWork, 0)
 			activeWork = 0
 		}
-		e.observeActiveWork(activeWork, e.now())
+		e.observeActiveWork(activeWork)
 	}
 }
 
-func (e *matchingEngineImpl) now() time.Time {
-	if e.timeSource != nil {
-		return e.timeSource.Now()
-	}
-	return time.Now()
-}
-
-func (e *matchingEngineImpl) observeActiveWork(activeWork int64, now time.Time) float64 {
-	return e.activeWorkTracker.ObserveAt(now, activeWork)
-}
-
-func (e *matchingEngineImpl) refreshActiveWorkMetadata(metadata map[string]string, now time.Time) map[string]string {
-	activeWorkEWMA := e.observeActiveWork(atomic.LoadInt64(&e.activeWork), now)
-	refreshed := make(map[string]string, len(metadata)+1)
-	for key, value := range metadata {
-		refreshed[key] = value
-	}
-	refreshed[capacity.ActiveWorkMetadataKey] = strconv.FormatFloat(activeWorkEWMA, 'f', 6, 64)
-	return refreshed
-}
-
-func (e *matchingEngineImpl) updateExecutorMetadata(update func(map[string]string)) {
+func (e *matchingEngineImpl) observeActiveWork(activeWork int64) {
 	e.metadataLock.Lock()
 	defer e.metadataLock.Unlock()
 
 	metadata := e.executor.GetMetadata()
-	update(metadata)
+	metadata[capacity.ActiveWorkMetadataKey] = strconv.FormatInt(activeWork, 10)
 	e.executor.SetMetadata(metadata)
-}
-
-func (e *matchingEngineImpl) updateLatencyMetadata(latencyEWMAms float64) {
-	e.updateExecutorMetadata(func(metadata map[string]string) {
-		metadata[capacity.LatencyEWmaMsMetadataKey] = strconv.FormatFloat(latencyEWMAms, 'f', 6, 64)
-	})
 }
 
 func (e *matchingEngineImpl) setupExecutor(shardDistributorExecutorClient executorclient.Client) {
@@ -305,8 +282,7 @@ func (e *matchingEngineImpl) setupExecutor(shardDistributorExecutorClient execut
 			"hostIP":   hostIP.String(),
 			"hostname": hostname,
 		},
-		MetadataRefresh: e.refreshActiveWorkMetadata,
-		DrainObserver:   e.drainObserver,
+		DrainObserver: e.drainObserver,
 	}
 	executor, err := executorclient.NewExecutor[tasklist.ShardProcessor](params)
 	if err != nil {

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/uber-go/tally"
@@ -83,10 +82,9 @@ type Params[SP ShardProcessor] struct {
 	ShardProcessorFactory ShardProcessorFactory[SP]
 	Config                clientcommon.Config
 	TimeSource            clock.TimeSource
-	Metadata              ExecutorMetadata                                     `optional:"true"`
-	MetadataRefresh       func(map[string]string, time.Time) map[string]string `optional:"true"`
-	DrainObserver         clientcommon.DrainSignalObserver                     `optional:"true"`
-	ProcessCPUSampler     capacity.ProcessCPUSampler                           `optional:"true"`
+	Metadata              ExecutorMetadata                 `optional:"true"`
+	DrainObserver         clientcommon.DrainSignalObserver `optional:"true"`
+	ProcessCPUSampler     capacity.ProcessCPUSampler       `optional:"true"`
 }
 
 // NewExecutorWithNamespace creates an executor for a specific namespace
@@ -159,7 +157,6 @@ func newExecutorWithConfig[SP ShardProcessor](params Params[SP], namespaceConfig
 		metadata: syncExecutorMetadata{
 			data: params.Metadata,
 		},
-		metadataRefresh:   params.MetadataRefresh,
 		drainObserver:     params.DrainObserver,
 		processCPUSampler: params.ProcessCPUSampler,
 	}
