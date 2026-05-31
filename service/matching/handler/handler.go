@@ -47,7 +47,6 @@ type (
 		throttledLogger   log.Logger
 		domainCache       cache.DomainCache
 		observeLatency    func(time.Duration)
-		beginActiveWork   func() func()
 	}
 )
 
@@ -64,7 +63,6 @@ func NewHandler(
 	logger log.Logger,
 	throttledLogger log.Logger,
 	observeLatency func(time.Duration),
-	beginActiveWork func() func(),
 ) Handler {
 	handler := &handlerImpl{
 		metricsClient: metricsClient,
@@ -89,7 +87,6 @@ func NewHandler(
 		throttledLogger: throttledLogger,
 		domainCache:     domainCache,
 		observeLatency:  observeLatency,
-		beginActiveWork: beginActiveWork,
 	}
 	// prevent us from trying to serve requests before matching engine is started and ready
 	handler.startWG.Add(1)
@@ -166,11 +163,6 @@ func (h *handlerImpl) AddActivityTask(
 		return nil, hCtx.handleErr(errMatchingHostThrottle)
 	}
 
-	if h.beginActiveWork != nil {
-		finishActiveWork := h.beginActiveWork()
-		defer finishActiveWork()
-	}
-
 	resp, err := h.engine.AddActivityTask(hCtx, request)
 	return resp, hCtx.handleErr(err)
 }
@@ -208,11 +200,6 @@ func (h *handlerImpl) AddDecisionTask(
 
 	if ok := h.workerRateLimiter.Allow(quotas.Info{Domain: domainName}); !ok {
 		return nil, hCtx.handleErr(errMatchingHostThrottle)
-	}
-
-	if h.beginActiveWork != nil {
-		finishActiveWork := h.beginActiveWork()
-		defer finishActiveWork()
 	}
 
 	resp, err := h.engine.AddDecisionTask(hCtx, request)

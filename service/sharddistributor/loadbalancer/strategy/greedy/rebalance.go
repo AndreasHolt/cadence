@@ -48,7 +48,7 @@ func PlanRebalance(
 	if cpuState != nil {
 		cpuState.SetSmoothingTau(cfg.CPUSecondsSmoothingTau(namespace))
 	}
-	targetLoads := computeTargetLoads(loads, computeExecutorCapacityWeights(cfg.HeterogeneityMode(namespace), workingAssignments, namespaceState, loads, cpuState, now), totalLoad)
+	targetLoads := computeTargetLoads(loads, computeExecutorCapacityWeights(cfg.HeterogeneityMode(namespace), workingAssignments, namespaceState, loads, cpuState), totalLoad)
 	totalShards := 0
 	for _, shards := range currentAssignments {
 		totalShards += len(shards)
@@ -210,7 +210,6 @@ func computeExecutorCapacityWeights(
 	state *store.NamespaceState,
 	loads map[string]float64,
 	cpuObservationState *CPUObservationState,
-	now time.Time,
 ) map[string]float64 {
 	weights := make(map[string]float64, len(currentAssignments))
 	for executorID := range currentAssignments {
@@ -221,8 +220,6 @@ func computeExecutorCapacityWeights(
 		return computeLatencyAdjustedWeights(currentAssignments, state, weights)
 	case config.GreedyHeterogeneityModeCPUSeconds:
 		return computeCPUSecondsAdjustedWeights(currentAssignments, state, loads, cpuObservationState, weights)
-	case config.GreedyHeterogeneityModePressure:
-		return computePressureAdjustedWeights(currentAssignments, state, loads, cpuObservationState, weights, now)
 	default:
 		return weights
 	}
@@ -288,54 +285,6 @@ func computeCPUSecondsAdjustedWeights(
 		}
 		relativeCost := clamp(cost/averageCPUCost, minRelativeCPUCost, maxRelativeCPUCost)
 		weights[executorID] = weights[executorID] / math.Sqrt(relativeCost)
-	}
-
-	return weights
-}
-
-func computePressureAdjustedWeights(
-	currentAssignments map[string][]string,
-	state *store.NamespaceState,
-	loads map[string]float64,
-	cpuObservationState *CPUObservationState,
-	weights map[string]float64,
-	now time.Time,
-) map[string]float64 {
-	for executorID := range currentAssignments {
-		weights[executorID] = capacity.WeightFromMetadata(state.Executors[executorID].Metadata)
-	}
-	if cpuObservationState == nil {
-		return weights
-	}
-
-	pressureCosts := cpuObservationState.updateExecutorPressureCostObservations(state, loads, now)
-	totalPressureCost := 0.0
-	validCount := 0
-	for _, cost := range pressureCosts {
-		if cost <= 0 {
-			continue
-		}
-		if math.IsNaN(cost) || math.IsInf(cost, 0) {
-			continue
-		}
-		totalPressureCost += cost
-		validCount++
-	}
-	if validCount == 0 {
-		return weights
-	}
-
-	averagePressureCost := totalPressureCost / float64(validCount)
-	for executorID := range currentAssignments {
-		cost := pressureCosts[executorID]
-		if cost <= 0 {
-			continue
-		}
-		relativeCost := cost / averagePressureCost
-		if relativeCost <= 0 || math.IsNaN(relativeCost) || math.IsInf(relativeCost, 0) {
-			continue
-		}
-		weights[executorID] = weights[executorID] / relativeCost
 	}
 
 	return weights

@@ -82,16 +82,3 @@ func TestProcessCPUSampleFromMetadataRejectsInvalidValues(t *testing.T) {
 		})
 	}
 }
-
-func TestActiveWorkFromMetadata(t *testing.T) {
-	require.Equal(t, 3.0, ActiveWorkFromMetadata(map[string]string{
-		ActiveWorkMetadataKey: "3",
-	}))
-	require.Equal(t, 0.0, ActiveWorkFromMetadata(map[string]string{
-		ActiveWorkMetadataKey: "-1",
-	}))
-	require.Equal(t, 0.0, ActiveWorkFromMetadata(map[string]string{
-		ActiveWorkMetadataKey: "not-a-number",
-	}))
-	require.Equal(t, 0.0, ActiveWorkFromMetadata(nil))
-}

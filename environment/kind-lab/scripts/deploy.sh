@@ -28,10 +28,10 @@ case "$MODE" in
 esac
 
 case "$GREEDY_HETEROGENEITY_MODE" in
-  off|latency|cpu_seconds|pressure)
+  off|latency|cpu_seconds)
     ;;
   *)
-    echo "GREEDY_HETEROGENEITY_MODE must be one of: off, latency, cpu_seconds, pressure" >&2
+    echo "GREEDY_HETEROGENEITY_MODE must be one of: off, latency, cpu_seconds" >&2
     exit 2
     ;;
 esac

@@ -39,7 +39,7 @@ Options:
   --run NAME                    Result stem, e.g. latency-1hr-2500-final
   --scenario NAME               Scenario passed to run-load.sh (default: trace-21-12)
   --profile NAME                MATCHING_HETEROGENEITY_PROFILE (default: equal_cores)
-  --heterogeneity-mode MODE     GREEDY_HETEROGENEITY_MODE: off|latency|cpu_seconds|pressure (default: latency)
+  --heterogeneity-mode MODE     GREEDY_HETEROGENEITY_MODE: off|latency|cpu_seconds (default: latency)
   --move-scoring-mode MODE      GREEDY_MOVE_SCORING_MODE: benefit|cost_aware (default: benefit)
   --penalty VALUE               GREEDY_MOVE_PENALTY_COEFFICIENT (default: 0.2)
   --cpu-tau DURATION            GREEDY_CPU_SECONDS_SMOOTHING_TAU (default: 10m)
@@ -157,8 +157,8 @@ if [[ -z "$RUN_NAME" ]]; then
 fi
 
 case "$GREEDY_HETEROGENEITY_MODE" in
-  off|latency|cpu_seconds|pressure) ;;
-  *) echo "--heterogeneity-mode must be one of: off, latency, cpu_seconds, pressure" >&2; exit 2 ;;
+  off|latency|cpu_seconds) ;;
+  *) echo "--heterogeneity-mode must be one of: off, latency, cpu_seconds" >&2; exit 2 ;;
 esac
 case "$GREEDY_MOVE_SCORING_MODE" in
   benefit|cost_aware) ;;

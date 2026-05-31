@@ -30,7 +30,6 @@ import (
 	"os"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pborman/uuid"
@@ -121,8 +120,6 @@ type (
 		ShardDistributorMatchingConfig clientcommon.Config
 		drainObserver                  clientcommon.DrainSignalObserver
 		requestLatencyTracker          requestLatencyTracker
-		metadataLock                   sync.Mutex
-		activeWork                     int64
 	}
 )
 
@@ -202,33 +199,8 @@ func (e *matchingEngineImpl) Stop() {
 
 func (e *matchingEngineImpl) ObserveRequestLatency(duration time.Duration) {
 	latencyEWMAms := e.requestLatencyTracker.Observe(duration)
-	e.metadataLock.Lock()
-	defer e.metadataLock.Unlock()
-
 	metadata := e.executor.GetMetadata()
 	metadata[capacity.LatencyEWmaMsMetadataKey] = strconv.FormatFloat(latencyEWMAms, 'f', 6, 64)
-	e.executor.SetMetadata(metadata)
-}
-
-func (e *matchingEngineImpl) BeginActiveWork() func() {
-	activeWork := atomic.AddInt64(&e.activeWork, 1)
-	e.observeActiveWork(activeWork)
-	return func() {
-		activeWork := atomic.AddInt64(&e.activeWork, -1)
-		if activeWork < 0 {
-			atomic.StoreInt64(&e.activeWork, 0)
-			activeWork = 0
-		}
-		e.observeActiveWork(activeWork)
-	}
-}
-
-func (e *matchingEngineImpl) observeActiveWork(activeWork int64) {
-	e.metadataLock.Lock()
-	defer e.metadataLock.Unlock()
-
-	metadata := e.executor.GetMetadata()
-	metadata[capacity.ActiveWorkMetadataKey] = strconv.FormatInt(activeWork, 10)
 	e.executor.SetMetadata(metadata)
 }
 

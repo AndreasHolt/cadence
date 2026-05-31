@@ -52,10 +52,6 @@ type latencyObserver interface {
 	ObserveRequestLatency(time.Duration)
 }
 
-type activeWorkObserver interface {
-	BeginActiveWork() func()
-}
-
 // NewService builds a new cadence-matching service
 func NewService(
 	params *resource.Params,
@@ -128,11 +124,7 @@ func (s *Service) Start() {
 	if observer, ok := engine.(latencyObserver); ok {
 		observeLatency = observer.ObserveRequestLatency
 	}
-	var beginActiveWork func() func()
-	if observer, ok := engine.(activeWorkObserver); ok {
-		beginActiveWork = observer.BeginActiveWork
-	}
-	s.handler = handler.NewHandler(engine, s.config, s.GetDomainCache(), s.GetMetricsClient(), s.GetLogger(), s.GetThrottledLogger(), observeLatency, beginActiveWork)
+	s.handler = handler.NewHandler(engine, s.config, s.GetDomainCache(), s.GetMetricsClient(), s.GetLogger(), s.GetThrottledLogger(), observeLatency)
 
 	thriftHandler := thrift.NewThriftHandler(s.handler)
 	thriftHandler.Register(s.GetDispatcher())
