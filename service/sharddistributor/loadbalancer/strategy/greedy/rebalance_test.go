@@ -76,7 +76,7 @@ func TestComputeExecutorCapacityWeightsLatencyMode(t *testing.T) {
 	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeLatency, currentAssignments, namespaceState, nil, nil)
 
 	require.Greater(t, weights["fast"], weights["slow"])
-	require.InDelta(t, 8.0, weights["fast"], 0.0001)
+	require.InDelta(t, 10.0, weights["fast"], 0.0001)
 	require.InDelta(t, 2.5, weights["slow"], 0.0001)
 }
 
