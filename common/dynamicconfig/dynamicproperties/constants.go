@@ -6075,7 +6075,7 @@ var DurationKeys = map[DurationKey]DynamicDuration{
 		KeyName:      "shardDistributor.loadBalancingGreedy.cpuSecondsSmoothingTau",
 		Filters:      []Filter{Namespace},
 		Description:  "ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau is the EWMA time constant for smoothing CPU-seconds based capacity observations. 0 disables smoothing.",
-		DefaultValue: 5 * time.Minute,
+		DefaultValue: 3 * time.Minute,
 	},
 }
 

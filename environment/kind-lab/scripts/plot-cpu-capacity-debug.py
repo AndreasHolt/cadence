@@ -6,8 +6,8 @@ Reads CSV files collected by collect-cpu-debug.sh:
   - observation.csv: shard-distributor CPU cost observations used for greedy weights
 
 Greedy cpu_seconds balancing applies EWMA to CPU cost (busy_cores / load), then scales
-executor capacity weights by 1/sqrt(relative_cost) where relative_cost is smoothed_cost
-divided by the cluster average and clamped to [0.5, 2.0].
+executor capacity weights by 1/relative_cost where relative_cost is smoothed_cost divided
+by the cluster average.
 """
 
 from __future__ import annotations
@@ -18,13 +18,15 @@ import math
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-MIN_RELATIVE_CPU_COST = 0.5
-MAX_RELATIVE_CPU_COST = 2.0
+OBSERVATION_BATCH_WINDOW = timedelta(seconds=3)
+INITIAL_EXECUTOR_RECORD_WINDOW = timedelta(minutes=2)
+PLOT_GAP_BREAK_SECONDS = 5.0
+CAPACITY_COST_YLIM_TOP = 0.5
 
 
 EXECUTOR_RAW_COLUMNS = (
@@ -164,6 +166,67 @@ def read_observations(path: Path) -> list[ObservationPoint]:
     return points
 
 
+def group_observations_by_executor(
+    points: list[ObservationPoint],
+) -> dict[str, list[ObservationPoint]]:
+    grouped: dict[str, list[ObservationPoint]] = defaultdict(list)
+    for point in points:
+        grouped[point.executor_id].append(point)
+    for executor_points in grouped.values():
+        executor_points.sort(key=lambda point: point.sample_time)
+    return dict(sorted(grouped.items()))
+
+
+def cluster_observation_batches(points: list[ObservationPoint]) -> list[list[ObservationPoint]]:
+    if not points:
+        return []
+
+    sorted_points = sorted(points, key=lambda point: point.logged_at)
+    batches: list[list[ObservationPoint]] = []
+    current_batch = [sorted_points[0]]
+    batch_start = sorted_points[0].logged_at
+
+    for point in sorted_points[1:]:
+        if point.logged_at - batch_start <= OBSERVATION_BATCH_WINDOW:
+            current_batch.append(point)
+        else:
+            batches.append(current_batch)
+            current_batch = [point]
+            batch_start = point.logged_at
+    batches.append(current_batch)
+    return batches
+
+
+def initial_executor_set(points: list[ObservationPoint]) -> set[str]:
+    """Record the startup executor crew from the fullest batch in the opening window."""
+    if not points:
+        return set()
+
+    sorted_points = sorted(points, key=lambda point: point.logged_at)
+    record_until = sorted_points[0].logged_at + INITIAL_EXECUTOR_RECORD_WINDOW
+    early_points = [point for point in sorted_points if point.logged_at <= record_until]
+
+    initial_executors: set[str] = set()
+    max_seen = 0
+    for batch in cluster_observation_batches(early_points):
+        latest = latest_observation_per_executor(batch)
+        if len(latest) > max_seen:
+            max_seen = len(latest)
+            initial_executors = set(latest.keys())
+    return initial_executors
+
+
+def latest_observation_per_executor(
+    batch: list[ObservationPoint],
+) -> dict[str, ObservationPoint]:
+    latest: dict[str, ObservationPoint] = {}
+    for point in batch:
+        previous = latest.get(point.executor_id)
+        if previous is None or point.sample_time > previous.sample_time:
+            latest[point.executor_id] = point
+    return latest
+
+
 def derive_executor_busy_cores(points: list[ExecutorRawPoint]) -> list[ExecutorRatePoint]:
     rates: list[ExecutorRatePoint] = []
     for previous, current in zip(points, points[1:]):
@@ -182,6 +245,42 @@ def derive_executor_busy_cores(points: list[ExecutorRawPoint]) -> list[ExecutorR
 
 def minutes_since_start(times: list[datetime], origin: datetime) -> list[float]:
     return [(time - origin).total_seconds() / 60.0 for time in times]
+
+
+def executor_color(index: int):
+    return plt.cm.tab10.colors[index % len(plt.cm.tab10.colors)]
+
+
+def plot_series_with_gaps(
+    ax,
+    times: list[datetime],
+    values: list[float],
+    origin: datetime,
+    *,
+    gap_break_seconds: float = PLOT_GAP_BREAK_SECONDS,
+    color: str | tuple[float, float, float, float] | None = None,
+    **plot_kwargs,
+) -> None:
+    if not times:
+        return
+
+    label = plot_kwargs.pop("label", None)
+    if color is not None:
+        plot_kwargs["color"] = color
+    segment_x: list[float] = []
+    segment_y: list[float] = []
+    for index, (time, value) in enumerate(zip(times, values)):
+        if index > 0 and (time - times[index - 1]).total_seconds() > gap_break_seconds:
+            if segment_x:
+                ax.plot(segment_x, segment_y, label=label, **plot_kwargs)
+                label = None
+            segment_x = []
+            segment_y = []
+        segment_x.append((time - origin).total_seconds() / 60.0)
+        segment_y.append(value)
+
+    if segment_x:
+        ax.plot(segment_x, segment_y, label=label, **plot_kwargs)
 
 
 def plot_executor_cumulative(ax, points: list[ExecutorRawPoint], title: str) -> None:
@@ -214,13 +313,19 @@ def plot_executor_busy_cores(ax, raw_points: list[ExecutorRawPoint], title: str)
 
 
 def compute_capacity_weight_points(points: list[ObservationPoint]) -> list[CapacityWeightPoint]:
-    grouped: dict[datetime, list[ObservationPoint]] = defaultdict(list)
-    for point in points:
-        grouped[point.sample_time].append(point)
+    batches = cluster_observation_batches(points)
+    initial_executors = initial_executor_set(points)
+    if len(initial_executors) < 2:
+        return []
 
     weight_points: list[CapacityWeightPoint] = []
-    for sample_time in sorted(grouped):
-        group = grouped[sample_time]
+    for batch in batches:
+        latest_by_executor = latest_observation_per_executor(batch)
+        if not initial_executors.issubset(latest_by_executor):
+            continue
+
+        group = [latest_by_executor[executor_id] for executor_id in sorted(initial_executors)]
+        sample_time = max(point.sample_time for point in group)
         valid_costs = [
             point.smoothed_cost
             for point in group
@@ -234,43 +339,64 @@ def compute_capacity_weight_points(points: list[ObservationPoint]) -> list[Capac
             cost = point.smoothed_cost
             if cost <= 0 or math.isnan(cost) or math.isinf(cost):
                 cost = average_cost
-            relative_cost = min(max(cost / average_cost, MIN_RELATIVE_CPU_COST), MAX_RELATIVE_CPU_COST)
+            relative_cost = cost / average_cost
             weight_points.append(
                 CapacityWeightPoint(
                     sample_time=sample_time,
                     executor_id=point.executor_id,
                     smoothed_cost=cost,
                     relative_cost=relative_cost,
-                    weight_factor=1.0 / math.sqrt(relative_cost),
+                    weight_factor=1.0 / relative_cost,
                 )
             )
 
     return weight_points
 
 
-def plot_capacity_cost_signal(ax, points: list[ObservationPoint], title: str) -> None:
-    origin = points[0].sample_time
-    x = minutes_since_start([point.sample_time for point in points], origin)
-    ax.plot(
-        x,
-        [point.raw_cost for point in points],
-        linewidth=1.0,
-        color="tab:orange",
-        alpha=0.85,
-        label="raw cost (busy cores / load)",
-    )
-    ax.plot(
-        x,
-        [point.smoothed_cost for point in points],
-        linewidth=1.8,
-        color="tab:green",
-        label="smoothed cost (EWMA input to weights)",
-    )
+def plot_capacity_cost_signal(
+    ax,
+    points: list[ObservationPoint],
+    title: str,
+    *,
+    ylim_top: float | None = None,
+) -> None:
+    origin = min(point.sample_time for point in points)
+    executor_groups = group_observations_by_executor(points)
+    multi_executor = len(executor_groups) > 1
+    colors = plt.cm.tab10.colors
+
+    for index, (executor_id, series) in enumerate(executor_groups.items()):
+        color = colors[index % len(colors)]
+        label_suffix = f" ({executor_id[:8]}…)" if multi_executor else ""
+        x = minutes_since_start([point.sample_time for point in series], origin)
+        ax.plot(
+            x,
+            [point.raw_cost for point in series],
+            linewidth=1.0,
+            color=color,
+            alpha=0.45,
+            linestyle="--",
+            label=f"raw cost{label_suffix}",
+        )
+        ax.plot(
+            x,
+            [point.smoothed_cost for point in series],
+            linewidth=1.8,
+            color=color,
+            alpha=0.95,
+            label=f"smoothed cost{label_suffix}",
+        )
+
     ax.set_title(title)
     ax.set_xlabel("Time since first observation (min)")
     ax.set_ylabel("CPU cost (busy cores per unit load)")
+    if ylim_top is not None:
+        ax.set_ylim(0, ylim_top)
     ax.grid(True, alpha=0.25)
-    ax.legend()
+    if multi_executor:
+        ax.legend(fontsize=8, ncol=2)
+    else:
+        ax.legend()
 
 
 def plot_capacity_weight_factor(ax, weight_points: list[CapacityWeightPoint], title: str) -> None:
@@ -281,17 +407,25 @@ def plot_capacity_weight_factor(ax, weight_points: list[CapacityWeightPoint], ti
 
     origin = weight_points[0].sample_time
     executor_ids = sorted({point.executor_id for point in weight_points})
-    for executor_id in executor_ids:
-        series = [point for point in weight_points if point.executor_id == executor_id]
-        x = minutes_since_start([point.sample_time for point in series], origin)
-        y = [point.weight_factor for point in series]
-        ax.plot(x, y, linewidth=1.8, label=f"{executor_id[:8]}… weight / sqrt(rel_cost)")
+    for index, executor_id in enumerate(executor_ids):
+        series = sorted(
+            [point for point in weight_points if point.executor_id == executor_id],
+            key=lambda point: point.sample_time,
+        )
+        plot_series_with_gaps(
+            ax,
+            [point.sample_time for point in series],
+            [point.weight_factor for point in series],
+            origin,
+            color=executor_color(index),
+            linewidth=1.8,
+            label=f"{executor_id[:8]}… weight / rel_cost",
+        )
 
     ax.axhline(1.0, color="black", linewidth=0.8, linestyle="--", alpha=0.5)
     ax.set_title(title)
     ax.set_xlabel("Time since first observation (min)")
     ax.set_ylabel("Capacity weight factor")
-    ax.set_ylim(MIN_RELATIVE_CPU_COST ** -0.5 * 0.95, MAX_RELATIVE_CPU_COST ** -0.5 * 1.05)
     ax.grid(True, alpha=0.25)
     ax.legend()
 
@@ -304,30 +438,50 @@ def plot_relative_cost(ax, weight_points: list[CapacityWeightPoint], title: str)
 
     origin = weight_points[0].sample_time
     executor_ids = sorted({point.executor_id for point in weight_points})
-    for executor_id in executor_ids:
-        series = [point for point in weight_points if point.executor_id == executor_id]
-        x = minutes_since_start([point.sample_time for point in series], origin)
-        y = [point.relative_cost for point in series]
-        ax.plot(x, y, linewidth=1.4, label=f"{executor_id[:8]}… rel. cost")
+    for index, executor_id in enumerate(executor_ids):
+        series = sorted(
+            [point for point in weight_points if point.executor_id == executor_id],
+            key=lambda point: point.sample_time,
+        )
+        plot_series_with_gaps(
+            ax,
+            [point.sample_time for point in series],
+            [point.relative_cost for point in series],
+            origin,
+            color=executor_color(index),
+            linewidth=1.4,
+            label=f"{executor_id[:8]}… rel. cost",
+        )
 
     ax.axhline(1.0, color="black", linewidth=0.8, linestyle="--", alpha=0.5)
-    ax.axhline(MIN_RELATIVE_CPU_COST, color="tab:red", linewidth=0.8, linestyle=":", alpha=0.6)
-    ax.axhline(MAX_RELATIVE_CPU_COST, color="tab:red", linewidth=0.8, linestyle=":", alpha=0.6)
     ax.set_title(title)
     ax.set_xlabel("Time since first observation (min)")
-    ax.set_ylabel("Relative CPU cost (clamped)")
+    ax.set_ylabel("Relative CPU cost")
     ax.grid(True, alpha=0.25)
     ax.legend()
 
 
 def plot_load(ax, points: list[ObservationPoint], title: str) -> None:
-    origin = points[0].sample_time
-    x = minutes_since_start([point.sample_time for point in points], origin)
-    ax.plot(x, [point.load for point in points], linewidth=1.4, color="tab:purple")
+    origin = min(point.sample_time for point in points)
+    executor_groups = group_observations_by_executor(points)
+    colors = plt.cm.tab10.colors
+
+    for index, (executor_id, series) in enumerate(executor_groups.items()):
+        color = colors[index % len(colors)]
+        x = minutes_since_start([point.sample_time for point in series], origin)
+        label = (
+            f"{executor_id[:8]}… load"
+            if len(executor_groups) > 1
+            else "assignment load"
+        )
+        ax.plot(x, [point.load for point in series], linewidth=1.4, color=color, label=label)
+
     ax.set_title(title)
     ax.set_xlabel("Time since first observation (min)")
     ax.set_ylabel("Assignment load")
     ax.grid(True, alpha=0.25)
+    if len(executor_groups) > 1:
+        ax.legend(fontsize=8)
 
 
 def write_summary(path: Path, executor_raw: list[ExecutorRawPoint], observations: list[ObservationPoint]) -> None:
@@ -348,6 +502,13 @@ def write_summary(path: Path, executor_raw: list[ExecutorRawPoint], observations
         lines.append(f"observation_raw_cost_max,{max(raw_costs):.6f}")
         lines.append(f"observation_smoothed_cost_min,{min(smoothed_costs):.6f}")
         lines.append(f"observation_smoothed_cost_max,{max(smoothed_costs):.6f}")
+        initial_executors = initial_executor_set(observations)
+        lines.append(f"initial_executor_count,{len(initial_executors)}")
+        if initial_executors:
+            lines.append(
+                "initial_executor_ids,"
+                + ";".join(sorted(executor_id[:8] for executor_id in initial_executors))
+            )
         weight_points = compute_capacity_weight_points(observations)
         if weight_points:
             relative_costs = [point.relative_cost for point in weight_points]
@@ -419,6 +580,7 @@ def main() -> None:
             ax,
             observations,
             "Greedy capacity signal: smoothed CPU cost (busy cores per unit load)",
+            ylim_top=CAPACITY_COST_YLIM_TOP,
         )
         path = output_dir / f"{args.prefix}-capacity-cost.png"
         fig.savefig(path, dpi=180)
@@ -429,7 +591,7 @@ def main() -> None:
         plot_relative_cost(
             ax,
             weight_points,
-            "Greedy capacity weights: relative CPU cost (cluster average = 1.0)",
+            "Greedy capacity weights: relative CPU cost (cluster average = 1.0, unclamped)",
         )
         path = output_dir / f"{args.prefix}-capacity-relative-cost.png"
         fig.savefig(path, dpi=180)
@@ -440,7 +602,7 @@ def main() -> None:
         plot_capacity_weight_factor(
             ax,
             weight_points,
-            "Greedy capacity weights: executor weight factor (1 / sqrt(relative cost))",
+            "Greedy capacity weights: executor weight factor (1 / relative cost)",
         )
         path = output_dir / f"{args.prefix}-capacity-weight.png"
         fig.savefig(path, dpi=180)

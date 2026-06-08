@@ -18,10 +18,8 @@ import (
 const (
 	maxMissingShardStatsRatioForRebalance = 0.02
 	maxStaleShardStatsRatioForRebalance   = 0.10
-	minRelativeLatency                    = 0.5
-	maxRelativeLatency                    = 2.0
-	minRelativeCPUCost                    = 0.5
-	maxRelativeCPUCost                    = 2.0
+	minRelativeLatency = 0.5
+	maxRelativeLatency = 2.0
 )
 
 // PlanRebalance returns planned shard moves for the current assignment state.
@@ -323,8 +321,8 @@ func computeCPUSecondsAdjustedWeights(
 		if cost <= 0 {
 			cost = averageCPUCost
 		}
-		relativeCost := clamp(cost/averageCPUCost, minRelativeCPUCost, maxRelativeCPUCost)
-		weights[executorID] = weights[executorID] / math.Sqrt(relativeCost)
+		relativeCost := cost / averageCPUCost
+		weights[executorID] = weights[executorID] / relativeCost
 	}
 
 	return weights

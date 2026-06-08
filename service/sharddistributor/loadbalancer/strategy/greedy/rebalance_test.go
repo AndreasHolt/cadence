@@ -46,7 +46,7 @@ func testGreedyConfig() config.LoadBalancingGreedyConfig {
 			return 0.001
 		},
 		CPUSecondsSmoothingTau: func(namespace string) time.Duration {
-			return 5 * time.Minute
+			return 3 * time.Minute
 		},
 		EnableSwap: func(namespace string) bool {
 			return true
@@ -152,11 +152,11 @@ func TestComputeExecutorCapacityWeightsCPUSecondsMode(t *testing.T) {
 
 	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
 
-	require.InDelta(t, 4.898979486, weights["fast"], 1e-9)
-	require.InDelta(t, 3.464101615, weights["slow"], 1e-9)
+	require.InDelta(t, 6.0, weights["fast"], 1e-9)
+	require.InDelta(t, 3.0, weights["slow"], 1e-9)
 }
 
-func TestComputeExecutorCapacityWeightsCPUSecondsModeClampsRelativeCost(t *testing.T) {
+func TestComputeExecutorCapacityWeightsCPUSecondsModeScalesUnboundedRelativeCost(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	currentAssignments := map[string][]string{
 		"fast-1": {"shard-1"},
@@ -215,9 +215,9 @@ func TestComputeExecutorCapacityWeightsCPUSecondsModeClampsRelativeCost(t *testi
 
 	weights := computeExecutorCapacityWeights(config.GreedyHeterogeneityModeCPUSeconds, currentAssignments, namespaceState, loads, cpuState)
 
-	require.InDelta(t, 5.656854249, weights["fast-1"], 1e-9)
-	require.InDelta(t, 5.656854249, weights["fast-2"], 1e-9)
-	require.InDelta(t, 2.828427125, weights["slow"], 1e-9)
+	require.InDelta(t, 1336.0, weights["fast-1"], 1e-9)
+	require.InDelta(t, 1336.0, weights["fast-2"], 1e-9)
+	require.InDelta(t, 1.336, weights["slow"], 1e-9)
 }
 
 func TestComputeExecutorCapacityWeightsCPUSecondsModeKeepsBaseWeightForMissingCost(t *testing.T) {
