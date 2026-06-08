@@ -50,6 +50,7 @@ func PlanRebalance(
 		cpuState.SetSmoothingTau(cfg.CPUSecondsSmoothingTau(namespace))
 	}
 	targetLoads := computeTargetLoads(loads, computeExecutorCapacityWeights(cfg.HeterogeneityMode(namespace), workingAssignments, namespaceState, loads, cpuState), totalLoad)
+	averageExecutorTarget := computeAverageExecutorTarget(targetLoads)
 	totalShards := 0
 	for _, shards := range currentAssignments {
 		totalShards += len(shards)
@@ -130,7 +131,7 @@ func PlanRebalance(
 				movedShards,
 				now,
 				perShardCooldown,
-				totalLoad,
+				averageExecutorTarget,
 				penaltyCoefficient,
 				cfg.EnableSwap(namespace),
 				cfg.EnableMultiMove(namespace),
@@ -382,6 +383,17 @@ func computeTargetLoads(executorLoads map[string]float64, executorCapacityWeight
 	return targetLoads
 }
 
+func computeAverageExecutorTarget(targetLoads map[string]float64) float64 {
+	if len(targetLoads) == 0 {
+		return 0
+	}
+	sum := 0.0
+	for _, targetLoad := range targetLoads {
+		sum += targetLoad
+	}
+	return sum / float64(len(targetLoads))
+}
+
 func computeMoveBudget(totalShards int, proportion float64) int {
 	if totalShards <= 0 || proportion <= 0 {
 		return 0
@@ -522,7 +534,7 @@ func findShardsToMove(
 	movedShards map[string]struct{},
 	now time.Time,
 	perShardCooldown time.Duration,
-	totalLoad float64,
+	averageExecutorTarget float64,
 	movePenaltyCoefficient float64,
 	enableSwap bool,
 	enableMultiMove bool,
@@ -545,7 +557,7 @@ func findShardsToMove(
 		movedShards,
 		perShardCooldown,
 		now,
-		totalLoad,
+		averageExecutorTarget,
 		movePenaltyCoefficient,
 	)
 	if bestScore <= 0 {
@@ -565,7 +577,7 @@ func findShardsToMove(
 			movedShards,
 			perShardCooldown,
 			now,
-			totalLoad,
+			averageExecutorTarget,
 			movePenaltyCoefficient,
 		)
 		if len(multiMoves) > 0 && len(multiMoves) <= remainingMoveBudget && multiScore > bestScore {
@@ -587,7 +599,7 @@ func findShardsToMove(
 			movedShards,
 			perShardCooldown,
 			now,
-			totalLoad,
+			averageExecutorTarget,
 			movePenaltyCoefficient,
 		)
 		if swapScore > bestScore {
@@ -614,7 +626,7 @@ func findSingleShard(
 	movedShards map[string]struct{},
 	perShardCooldown time.Duration,
 	now time.Time,
-	totalLoad float64,
+	averageExecutorTarget float64,
 	movePenaltyCoefficient float64,
 ) ([]plan.Move, float64) {
 	bestShard := ""
@@ -642,7 +654,7 @@ func findSingleShard(
 			continue
 		}
 
-		cost := computeMoveCost(totalLoad, load, movePenaltyCoefficient)
+		cost := computeMoveCost(averageExecutorTarget, load, movePenaltyCoefficient)
 		score := benefit - cost
 		if score > bestScore {
 			bestScore = score
@@ -668,7 +680,7 @@ func findMultiShards(
 	movedShards map[string]struct{},
 	perShardCooldown time.Duration,
 	now time.Time,
-	totalLoad float64,
+	averageExecutorTarget float64,
 	movePenaltyCoefficient float64,
 ) ([]plan.Move, float64) {
 	var eligibleShards []shardInfo
@@ -731,7 +743,7 @@ func findMultiShards(
 	if benefit <= 0 {
 		return nil, 0
 	}
-	cost := computeMoveCost(totalLoad, movedLoad, movePenaltyCoefficient)
+	cost := computeMoveCost(averageExecutorTarget, movedLoad, movePenaltyCoefficient)
 	score := benefit - cost
 	if score <= 0 {
 		return nil, 0
@@ -751,7 +763,7 @@ func findSwapShards(
 	movedShards map[string]struct{},
 	perShardCooldown time.Duration,
 	now time.Time,
-	totalLoad float64,
+	averageExecutorTarget float64,
 	movePenaltyCoefficient float64,
 ) ([]plan.Move, float64) {
 	var eligibleShardsSource []shardInfo
@@ -802,7 +814,7 @@ func findSwapShards(
 		return 0
 	})
 
-	idealNetMove := costAdjustedNormalizedMove(sourceLoad, sourceTargetLoad, destLoad, destTargetLoad, totalLoad, movePenaltyCoefficient)
+	idealNetMove := costAdjustedNormalizedMove(sourceLoad, sourceTargetLoad, destLoad, destTargetLoad, averageExecutorTarget, movePenaltyCoefficient)
 	bestScore := 0.0
 	var bestMoves []plan.Move
 
@@ -829,7 +841,7 @@ func findSwapShards(
 			if benefit <= 0 {
 				continue
 			}
-			cost := computeMoveCost(totalLoad, sShard.load+dShard.load, movePenaltyCoefficient)
+			cost := computeMoveCost(averageExecutorTarget, sShard.load+dShard.load, movePenaltyCoefficient)
 			score := benefit - cost
 			if score > bestScore {
 				bestScore = score
@@ -861,16 +873,16 @@ func optimalCapacityNormalizedMove(sourceLoad, sourceTargetLoad, destLoad, destT
 // capacity-normalized swap score (benefit minus cost). The normalized benefit is a
 // downward parabola in the net transfer that peaks at optimalCapacityNormalizedMove
 // with curvature 1/T_s^2 + 1/T_d^2, while the move cost is linear in the net transfer
-// with slope movePenaltyCoefficient/totalLoad. Their difference is therefore a parabola
+// with slope movePenaltyCoefficient/averageExecutorTarget. Their difference is therefore a parabola
 // whose peak is shifted toward smaller moves by a constant that depends only on the two
 // executors, so the search target can account for cost directly.
-func costAdjustedNormalizedMove(sourceLoad, sourceTargetLoad, destLoad, destTargetLoad, totalLoad, movePenaltyCoefficient float64) float64 {
+func costAdjustedNormalizedMove(sourceLoad, sourceTargetLoad, destLoad, destTargetLoad, averageExecutorTarget, movePenaltyCoefficient float64) float64 {
 	ideal := optimalCapacityNormalizedMove(sourceLoad, sourceTargetLoad, destLoad, destTargetLoad)
-	if sourceTargetLoad <= 0 || destTargetLoad <= 0 || totalLoad <= 0 || movePenaltyCoefficient <= 0 {
+	if sourceTargetLoad <= 0 || destTargetLoad <= 0 || averageExecutorTarget <= 0 || movePenaltyCoefficient <= 0 {
 		return ideal
 	}
 	curvature := 1/(sourceTargetLoad*sourceTargetLoad) + 1/(destTargetLoad*destTargetLoad)
-	shift := movePenaltyCoefficient / (2 * totalLoad * curvature)
+	shift := movePenaltyCoefficient / (2 * averageExecutorTarget * curvature)
 	return ideal - shift
 }
 
@@ -920,11 +932,11 @@ func normalizedSSE(load, targetLoad float64) float64 {
 	return normalizedDeviation * normalizedDeviation
 }
 
-func computeMoveCost(totalLoad, shardLoad, penaltyCoefficient float64) float64 {
-	if totalLoad <= 0 || shardLoad <= 0 {
+func computeMoveCost(averageExecutorTarget, shardLoad, penaltyCoefficient float64) float64 {
+	if averageExecutorTarget <= 0 || shardLoad <= 0 {
 		return 0
 	}
-	return (shardLoad / totalLoad) * penaltyCoefficient
+	return (shardLoad / averageExecutorTarget) * penaltyCoefficient
 }
 
 func moveShards(currentAssignments map[string][]string, moves []plan.Move) error {

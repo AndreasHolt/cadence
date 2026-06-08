@@ -2637,7 +2637,7 @@ const (
 
 	// ShardDistributorLoadBalancingGreedyMovePenaltyCoefficient is the penalty
 	// coefficient for the variable move cost in greedy cost-aware scoring.
-	// Cost = shardLoad * totalLoad * coefficient.
+	// Cost = (shardLoad / averageExecutorTarget) * coefficient.
 	//
 	// KeyName: shardDistributor.loadBalancingGreedy.movePenaltyCoefficient
 	// Value type: Float64
@@ -5430,7 +5430,7 @@ var FloatKeys = map[FloatKey]DynamicFloat{
 	},
 	ShardDistributorLoadBalancingGreedyMovePenaltyCoefficient: {
 		KeyName:      "shardDistributor.loadBalancingGreedy.movePenaltyCoefficient",
-		Description:  "ShardDistributorLoadBalancingGreedyMovePenaltyCoefficient is the penalty coefficient for the variable move cost in greedy cost-aware scoring (cost = shardLoad * totalLoad * coefficient)",
+		Description:  "ShardDistributorLoadBalancingGreedyMovePenaltyCoefficient is the penalty coefficient for the variable move cost in greedy cost-aware scoring (cost = (shardLoad / averageExecutorTarget) * coefficient)",
 		DefaultValue: 0.0,
 		Filters:      []Filter{Namespace},
 	},

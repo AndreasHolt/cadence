@@ -268,6 +268,22 @@ func TestComputeCapacityNormalizedBenefitOfMoveUsesNormalizedSSEDelta(t *testing
 	require.InDelta(t, 0.0152, benefit, 1e-9)
 }
 
+func TestComputeAverageExecutorTarget(t *testing.T) {
+	targetLoads := map[string]float64{
+		"exec-a": 80,
+		"exec-b": 50,
+		"exec-c": 70,
+	}
+
+	require.InDelta(t, 66.6666666667, computeAverageExecutorTarget(targetLoads), 1e-9)
+}
+
+func TestComputeMoveCostUsesAverageExecutorTarget(t *testing.T) {
+	require.InDelta(t, 0.5, computeMoveCost(20, 10, 1), 1e-9)
+	require.Equal(t, 0.0, computeMoveCost(0, 10, 1))
+	require.Equal(t, 0.0, computeMoveCost(20, 0, 1))
+}
+
 // TestLoadBalance_Convergence verifies the balancer moves shards from an overloaded executor to an underloaded one.
 func TestLoadBalance_Convergence(t *testing.T) {
 	cfg := testGreedyConfig()
@@ -1204,8 +1220,8 @@ func TestFindSwapShards_CostUsesBothMovedShards(t *testing.T) {
 		map[string]struct{}{},
 		time.Minute,
 		now,
-		130,
-		1,
+		65,
+		0.5,
 	)
 
 	require.Positive(t, score)
