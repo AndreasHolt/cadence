@@ -46,7 +46,7 @@ func testGreedyConfig() config.LoadBalancingGreedyConfig {
 			return 0.001
 		},
 		CPUSecondsSmoothingTau: func(namespace string) time.Duration {
-			return 5 * time.Minute
+			return 3 * time.Minute
 		},
 	}
 }
@@ -150,7 +150,7 @@ func TestComputeExecutorCapacityWeightsCPUSecondsMode(t *testing.T) {
 	require.InDelta(t, 3.0, weights["slow"], 1e-9)
 }
 
-func TestComputeExecutorCapacityWeightsCPUSecondsModeUsesRawRelativeCost(t *testing.T) {
+func TestComputeExecutorCapacityWeightsCPUSecondsModeScalesUnboundedRelativeCost(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	currentAssignments := map[string][]string{
 		"fast-1": {"shard-1"},
