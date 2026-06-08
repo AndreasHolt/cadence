@@ -14,26 +14,28 @@ GREEDY_CPU_SECONDS_SMOOTHING_TAU="${GREEDY_CPU_SECONDS_SMOOTHING_TAU:-10m}"
 MATCHING_ENABLE_ADAPTIVE_SCALER="${MATCHING_ENABLE_ADAPTIVE_SCALER:-false}"
 MATCHING_NUM_TASKLIST_READ_PARTITIONS="${MATCHING_NUM_TASKLIST_READ_PARTITIONS:-1}"
 MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="${MATCHING_NUM_TASKLIST_WRITE_PARTITIONS:-1}"
+MATCHING_EXECUTOR_COUNT="${MATCHING_EXECUTOR_COUNT:-1}"
 SAMPLE_INTERVAL_SECONDS="30"
 DURATION_SECONDS="3600"
 SETTLE_SECONDS="120"
 READINESS_TIMEOUT_SECONDS="300"
-SESSION_NAME=""
 BUILD_IMAGE="false"
+BUILD_IMAGE_NO_CACHE="false"
 CREATE_CLUSTER="false"
-ATTACH="true"
-# Local port on the experiment host where Grafana port-forward listens (default 3000).
+PORT_FORWARD="false"
 GRAFANA_REMOTE_PORT="${GRAFANA_REMOTE_PORT:-3000}"
+
+RUN_PIDS=()
 
 usage() {
   cat <<'EOF'
 Usage:
   run-controlled-kind-lab.sh --run RUN_NAME [options]
 
-Prepares a clean kind-lab run, then starts a tmux session with:
-  pane 1: sample-utilization.sh
-  pane 2: run-load.sh | tee results/RUN_NAME.log
-  pane 3: kubectl watch pane
+Prepares a clean kind-lab run, deploys the cluster, then runs:
+  - sample-utilization.sh in the background
+  - run-load.sh in the foreground (matching-lab workload)
+  - optional CPU debug log collection (cpu_seconds mode only)
 
 Options:
   --run NAME                    Result stem, e.g. latency-1hr-2500-final
@@ -46,22 +48,54 @@ Options:
   --adaptive-scaler BOOL        MATCHING_ENABLE_ADAPTIVE_SCALER: true|false (default: false)
   --read-partitions N           MATCHING_NUM_TASKLIST_READ_PARTITIONS (default: 1)
   --write-partitions N          MATCHING_NUM_TASKLIST_WRITE_PARTITIONS (default: 1)
+  --executors N                 MATCHING_EXECUTOR_COUNT: 1|2|3 (default: 1)
   --sample-interval SECONDS     Utilization sample interval (default: 30)
   --duration SECONDS            Run/sampling duration (default: 3600)
   --settle-seconds SECONDS      Wait after deploy before starting run (default: 120)
   --readiness-timeout SECONDS   Wait for shard-distributor assignment readiness (default: 300)
-  --session NAME                tmux session name (default: kind-lab-RUN_NAME)
   --build-image                 Build cadence-kind-lab image first
+  --no-cache-build              Pass --no-cache to docker build (with --build-image)
   --create-cluster              Create/load kind cluster first
-  --no-attach                   Do not attach to tmux after creating panes
+  --port-forward                Start Grafana/Prometheus port-forwards in the background
   -h, --help                    Show this help
+
+Stop a background run:
+  kill $(cat environment/kind-lab/results/RUN_NAME/run.pids)
 
 Environment variables with the same names can also be used for the greedy/profile settings.
 EOF
 }
 
-safe_name() {
-  printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '-'
+stop_previous_run() {
+  local pids_file="$1"
+  if [[ ! -f "$pids_file" ]]; then
+    return 0
+  fi
+
+  echo "stopping previous background tasks from $pids_file"
+  while IFS= read -r pid; do
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done <"$pids_file"
+  rm -f "$pids_file"
+}
+
+track_pid() {
+  local pid="$1"
+  local pids_file="$2"
+  RUN_PIDS+=("$pid")
+  echo "$pid" >>"$pids_file"
+}
+
+wait_for_background_tasks() {
+  local failed=0
+  for pid in "${RUN_PIDS[@]}"; do
+    if ! wait "$pid"; then
+      failed=1
+    fi
+  done
+  return "$failed"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -106,6 +140,10 @@ while [[ $# -gt 0 ]]; do
       MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="$2"
       shift 2
       ;;
+    --executors)
+      MATCHING_EXECUTOR_COUNT="$2"
+      shift 2
+      ;;
     --sample-interval)
       SAMPLE_INTERVAL_SECONDS="$2"
       shift 2
@@ -122,21 +160,29 @@ while [[ $# -gt 0 ]]; do
       READINESS_TIMEOUT_SECONDS="$2"
       shift 2
       ;;
-    --session)
-      SESSION_NAME="$2"
-      shift 2
-      ;;
     --build-image)
       BUILD_IMAGE="true"
+      shift
+      ;;
+    --no-cache-build)
+      BUILD_IMAGE_NO_CACHE="true"
       shift
       ;;
     --create-cluster)
       CREATE_CLUSTER="true"
       shift
       ;;
-    --no-attach)
-      ATTACH="false"
+    --port-forward)
+      PORT_FORWARD="true"
       shift
+      ;;
+    --no-attach)
+      echo "warning: --no-attach is deprecated (tmux was removed); ignoring" >&2
+      shift
+      ;;
+    --session)
+      echo "warning: --session is deprecated (tmux was removed); ignoring" >&2
+      shift 2
       ;;
     -h|--help)
       usage
@@ -168,6 +214,14 @@ case "$MATCHING_HETEROGENEITY_PROFILE" in
   equal_burn|equal_cores|mixed) ;;
   *) echo "--profile must be one of: equal_burn, equal_cores, mixed" >&2; exit 2 ;;
 esac
+case "$GREEDY_ENABLE_SWAP" in
+  true|false) ;;
+  *) echo "--enable-swap must be true or false" >&2; exit 2 ;;
+esac
+case "$GREEDY_ENABLE_MULTI_MOVE" in
+  true|false) ;;
+  *) echo "--enable-multi-move must be true or false" >&2; exit 2 ;;
+esac
 case "$MATCHING_ENABLE_ADAPTIVE_SCALER" in
   true|false) ;;
   *) echo "--adaptive-scaler must be true or false" >&2; exit 2 ;;
@@ -180,29 +234,31 @@ if ! [[ "$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" =~ ^[1-9][0-9]*$ ]]; then
   echo "--write-partitions must be a positive integer" >&2
   exit 2
 fi
+if ! [[ "$MATCHING_EXECUTOR_COUNT" =~ ^[1-3]$ ]]; then
+  echo "--executors must be 1, 2, or 3" >&2
+  exit 2
+fi
 if ! [[ "$READINESS_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   echo "--readiness-timeout must be a positive integer" >&2
   exit 2
 fi
 
-if ! command -v tmux >/dev/null 2>&1; then
-  echo "tmux is required for this script" >&2
-  exit 1
-fi
-
-SESSION_NAME="${SESSION_NAME:-kind-lab-$(safe_name "$RUN_NAME")}" 
 RESULT_DIR="$ROOT/environment/kind-lab/results"
+RUN_DIR="$RESULT_DIR/$RUN_NAME"
 CSV_PATH="$RESULT_DIR/$RUN_NAME.csv"
 LOG_PATH="$RESULT_DIR/$RUN_NAME.log"
-mkdir -p "$RESULT_DIR"
-
-if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-  echo "killing existing tmux session: $SESSION_NAME"
-  tmux kill-session -t "$SESSION_NAME"
-fi
+CPU_DEBUG_DIR="$RESULT_DIR/$RUN_NAME-cpu-debug"
+SAMPLE_LOG="$RUN_DIR/sample.log"
+PIDS_FILE="$RUN_DIR/run.pids"
+mkdir -p "$RESULT_DIR" "$RUN_DIR" "$CPU_DEBUG_DIR"
+stop_previous_run "$PIDS_FILE"
 
 if [[ "$BUILD_IMAGE" == "true" ]]; then
-  "$ROOT/environment/kind-lab/scripts/build-image.sh"
+  if [[ "$BUILD_IMAGE_NO_CACHE" == "true" ]]; then
+    CADENCE_KIND_LAB_DOCKER_NO_CACHE=1 "$ROOT/environment/kind-lab/scripts/build-image.sh"
+  else
+    "$ROOT/environment/kind-lab/scripts/build-image.sh"
+  fi
 fi
 if [[ "$CREATE_CLUSTER" == "true" ]]; then
   "$ROOT/environment/kind-lab/scripts/create-cluster.sh"
@@ -219,6 +275,7 @@ GREEDY_CPU_SECONDS_SMOOTHING_TAU="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" \
 MATCHING_ENABLE_ADAPTIVE_SCALER="$MATCHING_ENABLE_ADAPTIVE_SCALER" \
 MATCHING_NUM_TASKLIST_READ_PARTITIONS="$MATCHING_NUM_TASKLIST_READ_PARTITIONS" \
 MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" \
+MATCHING_EXECUTOR_COUNT="$MATCHING_EXECUTOR_COUNT" \
   "$ROOT/environment/kind-lab/scripts/deploy.sh" heterogeneous
 
 "$ROOT/environment/kind-lab/scripts/deploy-observability.sh"
@@ -258,8 +315,8 @@ wait_for_shard_assignments() {
 
     executor_status_count="${executor_status_count:-0}"
     assigned_count="${assigned_count:-0}"
-    if [[ "$executor_status_count" -ge 3 && "$assigned_count" -ge 3 ]]; then
-      echo "shard-distributor assignments ready: executors=$executor_status_count assigned_state=$assigned_count"
+    if [[ "$executor_status_count" -ge "$MATCHING_EXECUTOR_COUNT" && "$assigned_count" -ge "$MATCHING_EXECUTOR_COUNT" ]]; then
+      echo "shard-distributor assignments ready: executors=$executor_status_count assigned_state=$assigned_count (expected=$MATCHING_EXECUTOR_COUNT)"
       return 0
     fi
 
@@ -280,8 +337,7 @@ kubectl delete job matching-lab -n "$NAMESPACE" --ignore-not-found
 kubectl wait --for=delete job/matching-lab -n "$NAMESPACE" --timeout=60s >/dev/null 2>&1 || true
 
 cat <<EOF
-Starting tmux session: $SESSION_NAME
-Run name:              $RUN_NAME
+Starting run: $RUN_NAME
 Scenario:              $SCENARIO
 Profile:               $MATCHING_HETEROGENEITY_PROFILE
 Heterogeneity mode:    $GREEDY_HETEROGENEITY_MODE
@@ -290,35 +346,71 @@ Move penalty:          $GREEDY_MOVE_PENALTY_COEFFICIENT
 CPU smoothing tau:     $GREEDY_CPU_SECONDS_SMOOTHING_TAU
 Adaptive scaler:       $MATCHING_ENABLE_ADAPTIVE_SCALER
 Tasklist partitions:   read=$MATCHING_NUM_TASKLIST_READ_PARTITIONS write=$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS
+Executor count:        $MATCHING_EXECUTOR_COUNT
 Utilization CSV:       $CSV_PATH
+Sample log:            $SAMPLE_LOG
 Matching log:          $LOG_PATH
+CPU debug logs:        $CPU_DEBUG_DIR
+Background PIDs file:  $PIDS_FILE
 
-Grafana on this host:  http://localhost:${GRAFANA_REMOTE_PORT}/d/cadence-kind-lab-experiments
-From your laptop:      http://localhost:<local>/d/cadence-kind-lab-experiments
-  (active run banner is the top panel — heterogeneity / scoring / profile)
-  Example tunnel:      ssh -p 2273 -L 3002:localhost:${GRAFANA_REMOTE_PORT} ucloud@ssh.cloud.sdu.dk
-                       then open http://localhost:3002/d/cadence-kind-lab-experiments
+Grafana:  http://localhost:${GRAFANA_REMOTE_PORT}/d/cadence-kind-lab-experiments
+Prometheus: http://localhost:9090
 EOF
 
-sample_cmd="cd '$ROOT' && ./environment/kind-lab/scripts/sample-utilization.sh '$SAMPLE_INTERVAL_SECONDS' '$DURATION_SECONDS' '$CSV_PATH'; echo; echo 'sample-utilization finished; press enter'; read"
-load_cmd="cd '$ROOT' && ./environment/kind-lab/scripts/run-load.sh '$SCENARIO' | tee '$LOG_PATH'; echo; echo 'run-load finished; press enter'; read"
-watch_cmd="cd '$ROOT' && watch -n 5 'kubectl get pods,jobs -n $NAMESPACE; echo; kubectl top pods -n $NAMESPACE 2>/dev/null || true'"
+(
+  cd "$ROOT"
+  ./environment/kind-lab/scripts/sample-utilization.sh \
+    "$SAMPLE_INTERVAL_SECONDS" "$DURATION_SECONDS" "$CSV_PATH"
+) >"$SAMPLE_LOG" 2>&1 &
+track_pid "$!" "$PIDS_FILE"
+echo "sample-utilization pid: ${RUN_PIDS[-1]} (log: $SAMPLE_LOG)"
 
-grafana_cmd="kubectl -n '$NAMESPACE' port-forward svc/grafana ${GRAFANA_REMOTE_PORT}:3000; echo; echo 'grafana port-forward exited; press enter'; read"
-prometheus_cmd="kubectl -n '$NAMESPACE' port-forward svc/prometheus 9090:9090; echo; echo 'prometheus port-forward exited; press enter'; read"
+if [[ "$GREEDY_HETEROGENEITY_MODE" == "cpu_seconds" ]]; then
+  (
+    cd "$ROOT"
+    ./environment/kind-lab/scripts/collect-cpu-debug.sh \
+      "$CPU_DEBUG_DIR" "$SAMPLE_INTERVAL_SECONDS" "$DURATION_SECONDS"
+  ) >"$CPU_DEBUG_DIR/collector.log" 2>&1 &
+  track_pid "$!" "$PIDS_FILE"
+  echo "cpu debug collector pid: ${RUN_PIDS[-1]} (log: $CPU_DEBUG_DIR/collector.log)"
+fi
 
-tmux new-session -d -s "$SESSION_NAME" -n run "$sample_cmd"
-tmux split-window -h -t "$SESSION_NAME:run" "$load_cmd"
-tmux split-window -v -t "$SESSION_NAME:run.1" "$watch_cmd"
-tmux select-layout -t "$SESSION_NAME:run" tiled >/dev/null 2>&1 || true
+if [[ "$PORT_FORWARD" == "true" ]]; then
+  kubectl -n "$NAMESPACE" port-forward svc/grafana "${GRAFANA_REMOTE_PORT}:3000" \
+    >"$RUN_DIR/grafana-port-forward.log" 2>&1 &
+  track_pid "$!" "$PIDS_FILE"
+  echo "grafana port-forward pid: ${RUN_PIDS[-1]}"
 
-tmux new-window -t "$SESSION_NAME" -n ports "$grafana_cmd"
-tmux split-window -h -t "$SESSION_NAME:ports" "$prometheus_cmd"
-tmux select-layout -t "$SESSION_NAME:ports" even-horizontal >/dev/null 2>&1 || true
-tmux select-window -t "$SESSION_NAME:run" >/dev/null 2>&1 || true
-
-if [[ "$ATTACH" == "true" ]]; then
-  tmux attach -t "$SESSION_NAME"
+  kubectl -n "$NAMESPACE" port-forward svc/prometheus 9090:9090 \
+    >"$RUN_DIR/prometheus-port-forward.log" 2>&1 &
+  track_pid "$!" "$PIDS_FILE"
+  echo "prometheus port-forward pid: ${RUN_PIDS[-1]}"
 else
-  echo "attach with: tmux attach -t $SESSION_NAME"
+  echo "port-forward disabled; rerun with --port-forward or run:"
+  echo "  kubectl -n $NAMESPACE port-forward svc/grafana ${GRAFANA_REMOTE_PORT}:3000"
+  echo "  kubectl -n $NAMESPACE port-forward svc/prometheus 9090:9090"
+fi
+
+load_status=0
+(
+  cd "$ROOT"
+  ./environment/kind-lab/scripts/run-load.sh "$SCENARIO"
+) 2>&1 | tee "$LOG_PATH" || load_status=$?
+
+echo "matching-lab workload finished"
+if ! wait_for_background_tasks; then
+  echo "one or more background tasks failed; check $RUN_DIR/*.log" >&2
+  exit 1
+fi
+if [[ "$load_status" -ne 0 ]]; then
+  echo "matching-lab workload failed; see $LOG_PATH" >&2
+  exit "$load_status"
+fi
+
+echo "run complete: $RUN_NAME"
+echo "results:"
+echo "  utilization: $CSV_PATH"
+echo "  workload:    $LOG_PATH"
+if [[ "$GREEDY_HETEROGENEITY_MODE" == "cpu_seconds" ]]; then
+  echo "  cpu debug:   $CPU_DEBUG_DIR"
 fi

@@ -82,6 +82,17 @@ func setupProcessorTestWithMigrationConfig(t *testing.T, namespaceType string, m
 	return deps
 }
 
+func TestCreateProcessor_ReusesLBRuntimeAcrossProcessors(t *testing.T) {
+	mocks := setupProcessorTest(t, config.NamespaceTypeFixed)
+	defer mocks.ctrl.Finish()
+
+	first := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+	second := mocks.factory.CreateProcessor(mocks.cfg, mocks.store, mocks.election).(*namespaceProcessor)
+
+	require.Same(t, first.lbRuntime, second.lbRuntime)
+	require.NotNil(t, first.lbRuntime.GreedyCPUObservations)
+}
+
 func TestRunAndTerminate(t *testing.T) {
 	defer goleak.VerifyNone(t)
 

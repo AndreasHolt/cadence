@@ -181,6 +181,43 @@ func TestUpdateExecutorCPUCostObservation_InvalidDeltaPreservesSmoothing(t *test
 	require.Less(t, cost, 0.2)
 }
 
+func TestUpdateExecutorCPUCostObservation_ZeroLoadPreservesSmoothedCost(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	state := NewCPUObservationState()
+	state.SetSmoothingTau(300 * time.Second)
+
+	state.updateExecutorCPUCostObservation("exec-1", meta(10, now), 10)
+	state.updateExecutorCPUCostObservation("exec-1", meta(25, now.Add(10*time.Second)), 10)
+	smoothedBefore, ok := state.updateExecutorCPUCostObservation("exec-1", meta(45, now.Add(20*time.Second)), 10)
+	require.True(t, ok)
+
+	cost, ok := state.updateExecutorCPUCostObservation("exec-1", meta(60, now.Add(30*time.Second)), 0)
+	require.True(t, ok)
+	require.InDelta(t, smoothedBefore, cost, 1e-9)
+	require.InDelta(t, smoothedBefore, state.smoothedCosts["exec-1"].cost, 1e-9)
+}
+
+func TestUpdateExecutorCPUCostObservation_ContinuesSmoothingAfterZeroLoad(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	state := NewCPUObservationState()
+	state.SetSmoothingTau(300 * time.Second)
+
+	state.updateExecutorCPUCostObservation("exec-1", meta(10, now), 10)
+	state.updateExecutorCPUCostObservation("exec-1", meta(25, now.Add(10*time.Second)), 10)
+	costBeforeGap, ok := state.updateExecutorCPUCostObservation("exec-1", meta(45, now.Add(20*time.Second)), 10)
+	require.True(t, ok)
+
+	cost, ok := state.updateExecutorCPUCostObservation("exec-1", meta(55, now.Add(30*time.Second)), 0)
+	require.True(t, ok)
+	require.InDelta(t, costBeforeGap, cost, 1e-9)
+
+	cost, ok = state.updateExecutorCPUCostObservation("exec-1", meta(70, now.Add(40*time.Second)), 10)
+	require.True(t, ok)
+	require.Less(t, cost, costBeforeGap)
+	require.GreaterOrEqual(t, cost, 0.15)
+	require.InDelta(t, state.smoothedCosts["exec-1"].cost, cost, 1e-9)
+}
+
 func TestUpdateExecutorCPUCostObservation_RawWhenTauIsZero(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	state := NewCPUObservationState()

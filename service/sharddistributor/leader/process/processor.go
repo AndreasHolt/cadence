@@ -59,6 +59,9 @@ type processorFactory struct {
 	cfg           config.LeaderProcess
 	metricsClient metrics.Client
 	sdConfig      *config.Config
+
+	lbRuntimeMu          sync.Mutex
+	lbRuntimeByNamespace map[string]*loadbalancer.RuntimeState
 }
 
 type namespaceProcessor struct {
@@ -73,7 +76,7 @@ type namespaceProcessor struct {
 	wg            sync.WaitGroup
 	shardStore    store.Store
 	election      store.Election
-	lbRuntime     loadbalancer.RuntimeState
+	lbRuntime     *loadbalancer.RuntimeState
 }
 
 // NewProcessorFactory creates a new processor factory
@@ -117,8 +120,27 @@ func (f *processorFactory) CreateProcessor(cfg config.Namespace, shardStore stor
 		election:      election, // Store the election object
 		metricsClient: f.metricsClient,
 		sdConfig:      f.sdConfig,
-		lbRuntime:     loadbalancer.NewRuntimeState(),
+		lbRuntime:     f.lbRuntimeForNamespace(cfg.Name),
 	}
+}
+
+func (f *processorFactory) lbRuntimeForNamespace(namespace string) *loadbalancer.RuntimeState {
+	f.lbRuntimeMu.Lock()
+	defer f.lbRuntimeMu.Unlock()
+
+	if f.lbRuntimeByNamespace == nil {
+		f.lbRuntimeByNamespace = make(map[string]*loadbalancer.RuntimeState)
+	}
+
+	rt, ok := f.lbRuntimeByNamespace[namespace]
+	if ok {
+		return rt
+	}
+
+	newRuntime := loadbalancer.NewRuntimeState()
+	rt = &newRuntime
+	f.lbRuntimeByNamespace[namespace] = rt
+	return rt
 }
 
 // Run begins processing for this namespace
@@ -451,7 +473,7 @@ func (p *namespaceProcessor) rebalanceShardsImpl(ctx context.Context, metricsLoo
 		p.cfg.HeartbeatTTL,
 		p.logger,
 		metricsLoopScope,
-		&p.lbRuntime,
+		p.lbRuntime,
 	)
 	if err != nil {
 		return fmt.Errorf("load balance: %w", err)
