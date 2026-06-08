@@ -5,12 +5,15 @@
 //
 //	go run ./cmd/balance-grid -csv <file> [flags]
 //
+// Defaults match Algorithm Replay move-cost experiments: single-move only
+// (-swap and -multi-move false), 1m cooldown, moderate bands (1.15 / 0.90).
+//
 // Outputs:
 //
 //	grid_results.csv
 //
-//	Columns: move_scoring_mode, move_penalty_coefficient, total_moves, total_load_moved,
-//
+//	Columns: move_scoring_mode, move_penalty_coefficient, upper_band, lower_band,
+//	total_moves, total_load_moved,
 //	avg_mm_smooth, worst_mm_smooth, avg_mm_reported, worst_mm_reported,
 //	avg_cv_smooth, worst_cv_smooth, avg_cv_reported, worst_cv_reported
 package main
@@ -42,12 +45,16 @@ import (
 type combo struct {
 	moveScoringMode        string
 	movePenaltyCoefficient float64
+	upperBand              float64
+	lowerBand              float64
 }
 
 func (c combo) toRow() []string {
 	return []string{
 		c.moveScoringMode,
 		strconv.FormatFloat(c.movePenaltyCoefficient, 'f', 4, 64),
+		strconv.FormatFloat(c.upperBand, 'f', 2, 64),
+		strconv.FormatFloat(c.lowerBand, 'f', 2, 64),
 	}
 }
 
@@ -94,6 +101,8 @@ func main() {
 		upperBand         float64
 		lowerBand         float64
 		severeRatio       float64
+		enableSwap        bool
+		enableMultiMove   bool
 	)
 
 	flag.StringVar(&csvPath, "csv", "", "Path to input CSV file (required)")
@@ -102,10 +111,12 @@ func main() {
 	flag.DurationVar(&rebalanceInterval, "rebalance-interval", 2*time.Second, "Simulated time between rebalance passes")
 	flag.DurationVar(&loadInterval, "load-interval", 10*time.Second, "Simulated time between CSV row advances")
 	flag.Float64Var(&moveBudget, "move-budget", 0.01, "Fraction of shards that may move per rebalance pass")
-	flag.DurationVar(&cooldown, "cooldown", 30*time.Second, "Per-shard move cooldown")
+	flag.DurationVar(&cooldown, "cooldown", time.Minute, "Per-shard move cooldown")
 	flag.Float64Var(&upperBand, "upper-band", 1.15, "Hysteresis upper-band multiplier")
 	flag.Float64Var(&lowerBand, "lower-band", 0.90, "Hysteresis lower-band multiplier")
 	flag.Float64Var(&severeRatio, "severe-ratio", 1.3, "Severe-imbalance escape-hatch ratio")
+	flag.BoolVar(&enableSwap, "swap", false, "Enable pairwise shard swaps in greedy rebalancer")
+	flag.BoolVar(&enableMultiMove, "multi-move", false, "Enable multi-shard bundle moves in greedy rebalancer")
 	flag.Parse()
 
 	if csvPath == "" {
@@ -138,22 +149,38 @@ func main() {
 	fmt.Printf("Loaded %d rows, %d shards from %s\n", len(history), len(shardIDs), csvPath)
 
 	// ── Build combo list ───────────────────────────────────────────────────
-	scoringModes := []string{"benefit", "cost_aware"}
 	fixedCosts := []float64{0.0}
-	i := 0.02
-	for i < 1.0 {
+	for i := 0.01; i < 4; i += 0.01 {
 		fixedCosts = append(fixedCosts, i)
-		i += 0.02
 	}
 
 	var combos []combo
-	for _, mode := range scoringModes {
-		for _, fixed := range fixedCosts {
-			combos = append(combos, combo{
-				moveScoringMode:        mode,
-				movePenaltyCoefficient: fixed,
-			})
-		}
+	// Benefit-only: penalty is unused; run once per hysteresis configuration.
+	combos = append(combos, combo{
+		moveScoringMode:        "benefit",
+		movePenaltyCoefficient: 0.0,
+		upperBand:              upperBand,
+		lowerBand:              lowerBand,
+	})
+	combos = append(combos, combo{
+		moveScoringMode:        "benefit",
+		movePenaltyCoefficient: 0.0,
+		upperBand:              1.05,
+		lowerBand:              0.95,
+	})
+	for _, fixed := range fixedCosts {
+		combos = append(combos, combo{
+			moveScoringMode:        "cost_aware",
+			movePenaltyCoefficient: fixed,
+			upperBand:              upperBand,
+			lowerBand:              lowerBand,
+		})
+		combos = append(combos, combo{
+			moveScoringMode:        "cost_aware",
+			movePenaltyCoefficient: fixed,
+			upperBand:              1.05,
+			lowerBand:              0.95,
+		})
 	}
 
 	fmt.Printf("Running %d grid permutations across %d workers\n", len(combos), runtime.NumCPU())
@@ -170,7 +197,8 @@ func main() {
 				res, err := runGridSimulation(
 					cb, history, shardIDs, numExecutors,
 					rebalanceInterval, loadInterval,
-					moveBudget, cooldown, upperBand, lowerBand, severeRatio,
+					moveBudget, cooldown, cb.upperBand, cb.lowerBand, severeRatio,
+					enableSwap, enableMultiMove,
 				)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Simulation failed for combo %v: %v\n", cb, err)
@@ -201,7 +229,7 @@ func main() {
 
 	w := csv.NewWriter(outFile)
 	header := []string{
-		"move_scoring_mode", "move_penalty_coefficient",
+		"move_scoring_mode", "move_penalty_coefficient", "upper_band", "lower_band",
 		"total_moves", "total_load_moved",
 		"avg_mm_smooth", "worst_mm_smooth",
 		"avg_mm_reported", "worst_mm_reported",
@@ -236,6 +264,8 @@ func runGridSimulation(
 	upperBand float64,
 	lowerBand float64,
 	severeRatio float64,
+	enableSwap bool,
+	enableMultiMove bool,
 ) (result, error) {
 
 	executors := make([]string, numExecutors)
@@ -253,10 +283,8 @@ func runGridSimulation(
 		MoveScoringMode:        func(string) string { return cb.moveScoringMode },
 		MovePenaltyCoefficient: func(string) float64 { return cb.movePenaltyCoefficient },
 		CPUSecondsSmoothingTau: func(string) time.Duration { return 5 * time.Minute },
-		EnableSwap: func(string) bool { return true },
-		EnableMultiMove: func(string) bool {
-			return true
-		},
+		EnableSwap:             func(string) bool { return enableSwap },
+		EnableMultiMove:        func(string) bool { return enableMultiMove },
 	}
 
 	assignments := make(map[string][]string)
