@@ -19,6 +19,8 @@ GREEDY_ENABLE_MULTI_MOVE="${GREEDY_ENABLE_MULTI_MOVE:-false}"
 MATCHING_ENABLE_ADAPTIVE_SCALER="${MATCHING_ENABLE_ADAPTIVE_SCALER:-false}"
 MATCHING_NUM_TASKLIST_READ_PARTITIONS="${MATCHING_NUM_TASKLIST_READ_PARTITIONS:-1}"
 MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="${MATCHING_NUM_TASKLIST_WRITE_PARTITIONS:-1}"
+MATCHING_EXECUTOR_COUNT="${MATCHING_EXECUTOR_COUNT:-3}"
+CPU_CAPACITY_DEBUG_DIR="${CPU_CAPACITY_DEBUG_DIR:-/var/log/cadence-cpu-debug}"
 
 case "$MODE" in
   homogeneous|heterogeneous)
@@ -82,6 +84,10 @@ if ! [[ "$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" =~ ^[1-9][0-9]*$ ]]; then
   echo "MATCHING_NUM_TASKLIST_WRITE_PARTITIONS must be a positive integer" >&2
   exit 2
 fi
+if ! [[ "$MATCHING_EXECUTOR_COUNT" =~ ^[1-3]$ ]]; then
+  echo "MATCHING_EXECUTOR_COUNT must be 1, 2, or 3" >&2
+  exit 2
+fi
 
 case "$MATCHING_HETEROGENEITY_PROFILE" in
   equal_burn)
@@ -127,12 +133,51 @@ configure_matching_executor() {
     "MATCHING_LAB_ADD_TASK_CPU_BURN_ITERATIONS=${burn_iterations}"
 }
 
+patch_scenario_matching_peers() {
+  local file="$1"
+  local peers="  - cadence-matching-a-0.cadence-matching-a-headless"$'\n'
+  if [[ "$MATCHING_EXECUTOR_COUNT" -ge 2 ]]; then
+    peers+="  - cadence-matching-b-0.cadence-matching-b-headless"$'\n'
+  fi
+  if [[ "$MATCHING_EXECUTOR_COUNT" -ge 3 ]]; then
+    peers+="  - cadence-matching-c-0.cadence-matching-c-headless"$'\n'
+  fi
+
+  awk -v peers="$peers" '
+    /^matching_peers:/ {
+      print
+      printf "%s", peers
+      skip = 1
+      next
+    }
+    skip && /^  - / { next }
+    skip && !/^  - / { skip = 0 }
+    { print }
+  ' "$file" >"$file.tmp"
+  mv "$file.tmp" "$file"
+}
+
+configure_cpu_capacity_debug_logging() {
+  if [[ "$GREEDY_HETEROGENEITY_MODE" != "cpu_seconds" ]]; then
+    return 0
+  fi
+
+  kubectl set env "statefulset/cadence-matching-a" -n "$NAMESPACE" \
+    "CADENCE_CPU_CAPACITY_DEBUG_LOG=${CPU_CAPACITY_DEBUG_DIR}/executor-raw.csv"
+  kubectl set env "statefulset/cadence-shard-distributor" -n "$NAMESPACE" \
+    "CADENCE_CPU_CAPACITY_DEBUG_LOG=${CPU_CAPACITY_DEBUG_DIR}/observation.csv"
+  echo "cpu capacity debug logs: matching-a=${CPU_CAPACITY_DEBUG_DIR}/executor-raw.csv shard-distributor=${CPU_CAPACITY_DEBUG_DIR}/observation.csv"
+}
+
 kubectl apply -k "$ROOT/environment/kind-lab/k8s/bootstrap"
 
 tmp_config_dir="$(mktemp -d)"
 metadata_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_config_dir" "$metadata_dir"' EXIT
 cp "$ROOT"/environment/kind-lab/k8s/bootstrap/files/* "$tmp_config_dir"/
+for scenario_file in hotspot.yaml trace-21-12.yaml; do
+  patch_scenario_matching_peers "$tmp_config_dir/$scenario_file"
+done
 awk -v heterogeneity_mode="$GREEDY_HETEROGENEITY_MODE" -v move_scoring_mode="$GREEDY_MOVE_SCORING_MODE" -v move_penalty_coefficient="$GREEDY_MOVE_PENALTY_COEFFICIENT" -v cpu_smoothing_tau="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" -v enable_swap="$GREEDY_ENABLE_SWAP" -v enable_multi_move="$GREEDY_ENABLE_MULTI_MOVE" -v matching_enable_adaptive_scaler="$MATCHING_ENABLE_ADAPTIVE_SCALER" -v matching_read_partitions="$MATCHING_NUM_TASKLIST_READ_PARTITIONS" -v matching_write_partitions="$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" '
   $0 == "shardDistributor.loadBalancingGreedy.heterogeneityMode:" {
     in_heterogeneity_key = 1
@@ -273,6 +318,7 @@ echo "greedy enable swap: $GREEDY_ENABLE_SWAP"
 echo "greedy enable multi-move: $GREEDY_ENABLE_MULTI_MOVE"
 echo "matching adaptive scaler: $MATCHING_ENABLE_ADAPTIVE_SCALER"
 echo "matching tasklist partitions: read=$MATCHING_NUM_TASKLIST_READ_PARTITIONS write=$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS"
+echo "matching executor count: $MATCHING_EXECUTOR_COUNT"
 echo "run metadata: kubectl get configmap kind-lab-run-metadata -n $NAMESPACE -o jsonpath='{.data.metadata\\.json}'"
 echo "grafana:      Cadence Matching Lab Experiments (banner panel at top)"
 
@@ -286,13 +332,26 @@ kubectl wait -n "$NAMESPACE" --for=condition=complete job/cadence-schema-setup -
 kubectl apply -k "$ROOT/environment/kind-lab/k8s/apps/overlays/$MODE"
 if [[ "$MODE" == "heterogeneous" ]]; then
   configure_matching_executor "a" "$MATCHING_A_CPU" "$MATCHING_A_BURN"
-  configure_matching_executor "b" "$MATCHING_B_CPU" "$MATCHING_B_BURN"
-  configure_matching_executor "c" "$MATCHING_C_CPU" "$MATCHING_C_BURN"
+  if [[ "$MATCHING_EXECUTOR_COUNT" -ge 2 ]]; then
+    configure_matching_executor "b" "$MATCHING_B_CPU" "$MATCHING_B_BURN"
+  else
+    kubectl scale statefulset/cadence-matching-b -n "$NAMESPACE" --replicas=0
+  fi
+  if [[ "$MATCHING_EXECUTOR_COUNT" -ge 3 ]]; then
+    configure_matching_executor "c" "$MATCHING_C_CPU" "$MATCHING_C_BURN"
+  else
+    kubectl scale statefulset/cadence-matching-c -n "$NAMESPACE" --replicas=0
+  fi
+  configure_cpu_capacity_debug_logging
 fi
 
 kubectl rollout status statefulset/cadence-shard-distributor -n "$NAMESPACE" --timeout=5m
 kubectl rollout status statefulset/cadence-frontend -n "$NAMESPACE" --timeout=5m
 kubectl rollout status statefulset/cadence-history -n "$NAMESPACE" --timeout=5m
 kubectl rollout status statefulset/cadence-matching-a -n "$NAMESPACE" --timeout=5m
-kubectl rollout status statefulset/cadence-matching-b -n "$NAMESPACE" --timeout=5m
-kubectl rollout status statefulset/cadence-matching-c -n "$NAMESPACE" --timeout=5m
+if [[ "$MATCHING_EXECUTOR_COUNT" -ge 2 ]]; then
+  kubectl rollout status statefulset/cadence-matching-b -n "$NAMESPACE" --timeout=5m
+fi
+if [[ "$MATCHING_EXECUTOR_COUNT" -ge 3 ]]; then
+  kubectl rollout status statefulset/cadence-matching-c -n "$NAMESPACE" --timeout=5m
+fi

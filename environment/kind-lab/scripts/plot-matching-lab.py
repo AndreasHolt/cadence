@@ -4,6 +4,7 @@ import csv
 import json
 import math
 import os
+import re
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
@@ -164,6 +165,10 @@ def cumulative_from_rate_points(points):
         cumulative.append({"seconds": point["seconds"], "value": total})
         previous = point
     return cumulative
+
+
+def safe_filename(value):
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-")
 
 
 def infer_churn_kind(path, explicit):

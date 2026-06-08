@@ -84,57 +84,50 @@ func TestUpdateExecutorCPUCostObservation_Smoothing(t *testing.T) {
 	state := NewCPUObservationState()
 	state.SetSmoothingTau(300 * time.Second)
 
-	// First heartbeat only stores the sample.
 	_, ok := state.updateExecutorCPUCostObservation("exec-1", meta(10, now), 10)
 	require.False(t, ok)
 
-	// Second heartbeat produces the first delta; no prior smoothed value exists,
-	// so the raw CPU cost is returned directly.
 	cost, ok := state.updateExecutorCPUCostObservation("exec-1", meta(25, now.Add(10*time.Second)), 10)
 	require.True(t, ok)
 	require.InDelta(t, 0.15, cost, 1e-9)
 
-	// Third heartbeat: raw cost jumps to 0.2 but the returned value should be
-	// EWMA-smoothed (pulled back toward the previous 0.15).
 	cost, ok = state.updateExecutorCPUCostObservation("exec-1", meta(45, now.Add(20*time.Second)), 10)
 	require.True(t, ok)
 	require.Greater(t, cost, 0.15)
 	require.Less(t, cost, 0.2)
 
-	// Fourth heartbeat: raw cost drops back to 0.15; smoothed value should move
-	// downward but stay above the raw rate.
 	cost, ok = state.updateExecutorCPUCostObservation("exec-1", meta(60, now.Add(30*time.Second)), 10)
 	require.True(t, ok)
 	require.Greater(t, cost, 0.15)
 	require.Less(t, cost, 0.2)
 }
 
-func TestUpdateExecutorCPUCostObservation_MissingSampleResetsSmoothing(t *testing.T) {
+func TestUpdateExecutorCPUCostObservation_MissingSamplePreservesSmoothing(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	state := NewCPUObservationState()
 	state.SetSmoothingTau(300 * time.Second)
 
-	// Build up a smoothed value.
 	state.updateExecutorCPUCostObservation("exec-1", meta(10, now), 10)
 	state.updateExecutorCPUCostObservation("exec-1", meta(25, now.Add(10*time.Second)), 10)
-	_, ok := state.updateExecutorCPUCostObservation("exec-1", meta(45, now.Add(20*time.Second)), 10)
+	smoothedBefore, ok := state.updateExecutorCPUCostObservation("exec-1", meta(45, now.Add(20*time.Second)), 10)
 	require.True(t, ok)
 
-	// Invalid metadata wipes both the raw sample and the smoothed state.
-	_, ok = state.updateExecutorCPUCostObservation("exec-1", map[string]string{}, 10)
-	require.False(t, ok)
-
-	// Next valid sample starts a fresh sequence.
-	_, ok = state.updateExecutorCPUCostObservation("exec-1", meta(60, now.Add(30*time.Second)), 10)
-	require.False(t, ok)
-
-	// Second sample in the new sequence returns raw cost again (no smoothing history).
-	cost, ok := state.updateExecutorCPUCostObservation("exec-1", meta(75, now.Add(40*time.Second)), 10)
+	cost, ok := state.updateExecutorCPUCostObservation("exec-1", map[string]string{}, 10)
 	require.True(t, ok)
-	require.InDelta(t, 0.15, cost, 1e-9)
+	require.InDelta(t, smoothedBefore, cost, 1e-9)
+
+	cost, ok = state.updateExecutorCPUCostObservation("exec-1", meta(60, now.Add(30*time.Second)), 10)
+	require.True(t, ok)
+	require.Greater(t, cost, 0.15)
+	require.Less(t, cost, smoothedBefore)
+
+	cost, ok = state.updateExecutorCPUCostObservation("exec-1", meta(80, now.Add(40*time.Second)), 10)
+	require.True(t, ok)
+	require.Greater(t, cost, 0.15)
+	require.Less(t, cost, 0.2)
 }
 
-func TestUpdateExecutorCPUCostObservations_CleansUpSmoothedForRemovedExecutors(t *testing.T) {
+func TestUpdateExecutorCPUCostObservations_PreservesSmoothedForTransientlyMissingExecutors(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	state := NewCPUObservationState()
 	state.SetSmoothingTau(300 * time.Second)
@@ -145,35 +138,99 @@ func TestUpdateExecutorCPUCostObservations_CleansUpSmoothedForRemovedExecutors(t
 		},
 	}
 
-	// First call stores the sample.
 	state.updateExecutorCPUCostObservations(namespaceState, map[string]float64{"exec-1": 10})
-	// Second call creates the smoothed entry.
 	namespaceState.Executors["exec-1"] = store.HeartbeatState{Metadata: meta(25, now.Add(10*time.Second))}
 	state.updateExecutorCPUCostObservations(namespaceState, map[string]float64{"exec-1": 10})
 	require.Contains(t, state.smoothedCosts, "exec-1")
+	require.Contains(t, state.samples, "exec-1")
 
-	// After the executor disappears, the smoothed entry should be cleaned up.
 	delete(namespaceState.Executors, "exec-1")
 	state.updateExecutorCPUCostObservations(namespaceState, map[string]float64{"exec-1": 10})
-	require.NotContains(t, state.smoothedCosts, "exec-1")
+	require.Contains(t, state.smoothedCosts, "exec-1")
+	require.Contains(t, state.samples, "exec-1")
+
+	namespaceState.Executors["exec-1"] = store.HeartbeatState{Metadata: meta(40, now.Add(20*time.Second))}
+	costs := state.updateExecutorCPUCostObservations(namespaceState, map[string]float64{"exec-1": 10})
+	require.Contains(t, costs, "exec-1")
+	require.InDelta(t, 0.15, costs["exec-1"], 1e-9)
+
+	namespaceState.Executors["exec-1"] = store.HeartbeatState{Metadata: meta(60, now.Add(30*time.Second))}
+	costs = state.updateExecutorCPUCostObservations(namespaceState, map[string]float64{"exec-1": 10})
+	require.Contains(t, costs, "exec-1")
+	require.Greater(t, costs["exec-1"], 0.15)
+	require.Less(t, costs["exec-1"], 0.2)
+}
+
+func TestUpdateExecutorCPUCostObservation_InvalidDeltaPreservesSmoothing(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	state := NewCPUObservationState()
+	state.SetSmoothingTau(300 * time.Second)
+
+	state.updateExecutorCPUCostObservation("exec-1", meta(10, now), 10)
+	state.updateExecutorCPUCostObservation("exec-1", meta(25, now.Add(10*time.Second)), 10)
+	smoothedBefore, ok := state.updateExecutorCPUCostObservation("exec-1", meta(45, now.Add(20*time.Second)), 10)
+	require.True(t, ok)
+
+	cost, ok := state.updateExecutorCPUCostObservation("exec-1", meta(5, now.Add(30*time.Second)), 10)
+	require.True(t, ok)
+	require.InDelta(t, smoothedBefore, cost, 1e-9)
+
+	cost, ok = state.updateExecutorCPUCostObservation("exec-1", meta(20, now.Add(40*time.Second)), 10)
+	require.True(t, ok)
+	require.Greater(t, cost, 0.15)
+	require.Less(t, cost, 0.2)
+}
+
+func TestUpdateExecutorCPUCostObservation_ZeroLoadPreservesSmoothedCost(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	state := NewCPUObservationState()
+	state.SetSmoothingTau(300 * time.Second)
+
+	state.updateExecutorCPUCostObservation("exec-1", meta(10, now), 10)
+	state.updateExecutorCPUCostObservation("exec-1", meta(25, now.Add(10*time.Second)), 10)
+	smoothedBefore, ok := state.updateExecutorCPUCostObservation("exec-1", meta(45, now.Add(20*time.Second)), 10)
+	require.True(t, ok)
+
+	cost, ok := state.updateExecutorCPUCostObservation("exec-1", meta(60, now.Add(30*time.Second)), 0)
+	require.True(t, ok)
+	require.InDelta(t, smoothedBefore, cost, 1e-9)
+	require.InDelta(t, smoothedBefore, state.smoothedCosts["exec-1"].cost, 1e-9)
+}
+
+func TestUpdateExecutorCPUCostObservation_ContinuesSmoothingAfterZeroLoad(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	state := NewCPUObservationState()
+	state.SetSmoothingTau(300 * time.Second)
+
+	state.updateExecutorCPUCostObservation("exec-1", meta(10, now), 10)
+	state.updateExecutorCPUCostObservation("exec-1", meta(25, now.Add(10*time.Second)), 10)
+	costBeforeGap, ok := state.updateExecutorCPUCostObservation("exec-1", meta(45, now.Add(20*time.Second)), 10)
+	require.True(t, ok)
+
+	cost, ok := state.updateExecutorCPUCostObservation("exec-1", meta(55, now.Add(30*time.Second)), 0)
+	require.True(t, ok)
+	require.InDelta(t, costBeforeGap, cost, 1e-9)
+
+	cost, ok = state.updateExecutorCPUCostObservation("exec-1", meta(70, now.Add(40*time.Second)), 10)
+	require.True(t, ok)
+	require.Less(t, cost, costBeforeGap)
+	require.GreaterOrEqual(t, cost, 0.15)
+	require.InDelta(t, state.smoothedCosts["exec-1"].cost, cost, 1e-9)
 }
 
 func TestUpdateExecutorCPUCostObservation_RawWhenTauIsZero(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	state := NewCPUObservationState()
-	// smoothingTau defaults to 0, which means raw mode.
 
 	state.updateExecutorCPUCostObservation("exec-1", meta(10, now), 10)
 	cost, ok := state.updateExecutorCPUCostObservation("exec-1", meta(25, now.Add(10*time.Second)), 10)
 	require.True(t, ok)
 	require.InDelta(t, 0.15, cost, 1e-9)
 
-	// Even when the rate changes, raw mode returns the exact new rate.
 	cost, ok = state.updateExecutorCPUCostObservation("exec-1", meta(50, now.Add(20*time.Second)), 10)
 	require.True(t, ok)
 	require.InDelta(t, 0.25, cost, 1e-9)
 
-	// No smoothed state should be accumulated in raw mode.
 	require.NotContains(t, state.smoothedCosts, "exec-1")
 }
 
@@ -182,15 +239,12 @@ func TestUpdateExecutorCPUCostObservation_DuplicateSamplePreservesSmoothedCost(t
 	state := NewCPUObservationState()
 	state.SetSmoothingTau(300 * time.Second)
 
-	// First two samples build up a smoothed value.
 	state.updateExecutorCPUCostObservation("exec-1", meta(10, now), 10)
 	state.updateExecutorCPUCostObservation("exec-1", meta(25, now.Add(10*time.Second)), 10)
 	state.updateExecutorCPUCostObservation("exec-1", meta(45, now.Add(20*time.Second)), 10)
 
 	smoothedBefore := state.smoothedCosts["exec-1"].cost
 
-	// Same sample again (rebalance ran before next heartbeat). A different
-	// current load must not change the returned cost for a stale CPU sample.
 	cost, ok := state.updateExecutorCPUCostObservation("exec-1", meta(45, now.Add(20*time.Second)), 100)
 	require.True(t, ok)
 	require.InDelta(t, smoothedBefore, cost, 1e-9)
