@@ -84,11 +84,7 @@ spec:
             - name: cadence-config
               mountPath: /etc/cadence/config/dynamicconfig/kind-lab.yaml
               subPath: kind-lab-dynamic.yaml
-            - name: cpu-capacity-debug
-              mountPath: /var/log/cadence-cpu-debug
       volumes:
         - name: cadence-config
           configMap:
             name: cadence-kind-lab-config
-        - name: cpu-capacity-debug
-          emptyDir: {}

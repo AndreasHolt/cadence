@@ -354,9 +354,6 @@ func (e *executorImpl[SP]) sendHeartbeat(ctx context.Context, status types.Execu
 	if e.processCPUSampler != nil {
 		processCPUSeconds, hasProcessCPU = e.processCPUSampler.Sample()
 	}
-	if hasProcessCPU {
-		capacity.LogExecutorCPURaw(e.executorID, processCPUSeconds, sampleTime)
-	}
 
 	// Create the request
 	request := &types.ExecutorHeartbeatRequest{

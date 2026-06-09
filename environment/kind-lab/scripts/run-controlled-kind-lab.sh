@@ -11,12 +11,9 @@ GREEDY_HETEROGENEITY_MODE="${GREEDY_HETEROGENEITY_MODE:-latency}"
 GREEDY_MOVE_SCORING_MODE="${GREEDY_MOVE_SCORING_MODE:-benefit}"
 GREEDY_MOVE_PENALTY_COEFFICIENT="${GREEDY_MOVE_PENALTY_COEFFICIENT:-0.2}"
 GREEDY_CPU_SECONDS_SMOOTHING_TAU="${GREEDY_CPU_SECONDS_SMOOTHING_TAU:-3m}"
-GREEDY_ENABLE_SWAP="${GREEDY_ENABLE_SWAP:-false}"
-GREEDY_ENABLE_MULTI_MOVE="${GREEDY_ENABLE_MULTI_MOVE:-false}"
 MATCHING_ENABLE_ADAPTIVE_SCALER="${MATCHING_ENABLE_ADAPTIVE_SCALER:-false}"
 MATCHING_NUM_TASKLIST_READ_PARTITIONS="${MATCHING_NUM_TASKLIST_READ_PARTITIONS:-1}"
 MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="${MATCHING_NUM_TASKLIST_WRITE_PARTITIONS:-1}"
-MATCHING_EXECUTOR_COUNT="${MATCHING_EXECUTOR_COUNT:-1}"
 SAMPLE_INTERVAL_SECONDS="30"
 DURATION_SECONDS="3600"
 SETTLE_SECONDS="120"
@@ -37,7 +34,6 @@ Usage:
 Prepares a clean kind-lab run, deploys the cluster, then runs:
   - sample-utilization.sh in the background
   - run-load.sh in the foreground (matching-lab workload)
-  - optional CPU debug log collection (cpu_seconds mode only)
 
 Options:
   --run NAME                    Result stem, e.g. latency-1hr-2500-final
@@ -47,12 +43,9 @@ Options:
   --move-scoring-mode MODE      GREEDY_MOVE_SCORING_MODE: benefit|cost_aware (default: benefit)
   --penalty VALUE               GREEDY_MOVE_PENALTY_COEFFICIENT (default: 0.2)
   --cpu-tau DURATION            GREEDY_CPU_SECONDS_SMOOTHING_TAU (default: 3m)
-  --enable-swap BOOL            GREEDY_ENABLE_SWAP: true|false (default: false)
-  --enable-multi-move BOOL      GREEDY_ENABLE_MULTI_MOVE: true|false (default: false)
   --adaptive-scaler BOOL        MATCHING_ENABLE_ADAPTIVE_SCALER: true|false (default: false)
   --read-partitions N           MATCHING_NUM_TASKLIST_READ_PARTITIONS (default: 1)
   --write-partitions N          MATCHING_NUM_TASKLIST_WRITE_PARTITIONS (default: 1)
-  --executors N                 MATCHING_EXECUTOR_COUNT: 1|2|3 (default: 1)
   --sample-interval SECONDS     Utilization sample interval (default: 30)
   --duration SECONDS            Run/sampling duration (default: 3600)
   --settle-seconds SECONDS      Wait after deploy before starting run (default: 120)
@@ -144,10 +137,6 @@ while [[ $# -gt 0 ]]; do
       MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="$2"
       shift 2
       ;;
-    --executors)
-      MATCHING_EXECUTOR_COUNT="$2"
-      shift 2
-      ;;
     --sample-interval)
       SAMPLE_INTERVAL_SECONDS="$2"
       shift 2
@@ -218,14 +207,6 @@ case "$MATCHING_HETEROGENEITY_PROFILE" in
   equal_burn|equal_cores|mixed) ;;
   *) echo "--profile must be one of: equal_burn, equal_cores, mixed" >&2; exit 2 ;;
 esac
-case "$GREEDY_ENABLE_SWAP" in
-  true|false) ;;
-  *) echo "--enable-swap must be true or false" >&2; exit 2 ;;
-esac
-case "$GREEDY_ENABLE_MULTI_MOVE" in
-  true|false) ;;
-  *) echo "--enable-multi-move must be true or false" >&2; exit 2 ;;
-esac
 case "$MATCHING_ENABLE_ADAPTIVE_SCALER" in
   true|false) ;;
   *) echo "--adaptive-scaler must be true or false" >&2; exit 2 ;;
@@ -238,10 +219,6 @@ if ! [[ "$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" =~ ^[1-9][0-9]*$ ]]; then
   echo "--write-partitions must be a positive integer" >&2
   exit 2
 fi
-if ! [[ "$MATCHING_EXECUTOR_COUNT" =~ ^[1-3]$ ]]; then
-  echo "--executors must be 1, 2, or 3" >&2
-  exit 2
-fi
 if ! [[ "$READINESS_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   echo "--readiness-timeout must be a positive integer" >&2
   exit 2
@@ -251,10 +228,9 @@ RESULT_DIR="$ROOT/environment/kind-lab/results"
 RUN_DIR="$RESULT_DIR/$RUN_NAME"
 CSV_PATH="$RESULT_DIR/$RUN_NAME.csv"
 LOG_PATH="$RESULT_DIR/$RUN_NAME.log"
-CPU_DEBUG_DIR="$RESULT_DIR/$RUN_NAME-cpu-debug"
 SAMPLE_LOG="$RUN_DIR/sample.log"
 PIDS_FILE="$RUN_DIR/run.pids"
-mkdir -p "$RESULT_DIR" "$RUN_DIR" "$CPU_DEBUG_DIR"
+mkdir -p "$RESULT_DIR" "$RUN_DIR"
 stop_previous_run "$PIDS_FILE"
 
 if [[ "$BUILD_IMAGE" == "true" ]]; then
@@ -279,7 +255,6 @@ GREEDY_CPU_SECONDS_SMOOTHING_TAU="$GREEDY_CPU_SECONDS_SMOOTHING_TAU" \
 MATCHING_ENABLE_ADAPTIVE_SCALER="$MATCHING_ENABLE_ADAPTIVE_SCALER" \
 MATCHING_NUM_TASKLIST_READ_PARTITIONS="$MATCHING_NUM_TASKLIST_READ_PARTITIONS" \
 MATCHING_NUM_TASKLIST_WRITE_PARTITIONS="$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS" \
-MATCHING_EXECUTOR_COUNT="$MATCHING_EXECUTOR_COUNT" \
   "$ROOT/environment/kind-lab/scripts/deploy.sh" heterogeneous
 
 "$ROOT/environment/kind-lab/scripts/deploy-observability.sh"
@@ -319,8 +294,8 @@ wait_for_shard_assignments() {
 
     executor_status_count="${executor_status_count:-0}"
     assigned_count="${assigned_count:-0}"
-    if [[ "$executor_status_count" -ge "$MATCHING_EXECUTOR_COUNT" && "$assigned_count" -ge "$MATCHING_EXECUTOR_COUNT" ]]; then
-      echo "shard-distributor assignments ready: executors=$executor_status_count assigned_state=$assigned_count (expected=$MATCHING_EXECUTOR_COUNT)"
+    if [[ "$executor_status_count" -ge 3 && "$assigned_count" -ge 3 ]]; then
+      echo "shard-distributor assignments ready: executors=$executor_status_count assigned_state=$assigned_count"
       return 0
     fi
 
@@ -350,11 +325,9 @@ Move penalty:          $GREEDY_MOVE_PENALTY_COEFFICIENT
 CPU smoothing tau:     $GREEDY_CPU_SECONDS_SMOOTHING_TAU
 Adaptive scaler:       $MATCHING_ENABLE_ADAPTIVE_SCALER
 Tasklist partitions:   read=$MATCHING_NUM_TASKLIST_READ_PARTITIONS write=$MATCHING_NUM_TASKLIST_WRITE_PARTITIONS
-Executor count:        $MATCHING_EXECUTOR_COUNT
 Utilization CSV:       $CSV_PATH
 Sample log:            $SAMPLE_LOG
 Matching log:          $LOG_PATH
-CPU debug logs:        $CPU_DEBUG_DIR
 Background PIDs file:  $PIDS_FILE
 
 Grafana:  http://localhost:${GRAFANA_REMOTE_PORT}/d/cadence-kind-lab-experiments
@@ -368,16 +341,6 @@ EOF
 ) >"$SAMPLE_LOG" 2>&1 &
 track_pid "$!" "$PIDS_FILE"
 echo "sample-utilization pid: ${RUN_PIDS[-1]} (log: $SAMPLE_LOG)"
-
-if [[ "$GREEDY_HETEROGENEITY_MODE" == "cpu_seconds" ]]; then
-  (
-    cd "$ROOT"
-    ./environment/kind-lab/scripts/collect-cpu-debug.sh \
-      "$CPU_DEBUG_DIR" "$SAMPLE_INTERVAL_SECONDS" "$DURATION_SECONDS"
-  ) >"$CPU_DEBUG_DIR/collector.log" 2>&1 &
-  track_pid "$!" "$PIDS_FILE"
-  echo "cpu debug collector pid: ${RUN_PIDS[-1]} (log: $CPU_DEBUG_DIR/collector.log)"
-fi
 
 if [[ "$PORT_FORWARD" == "true" ]]; then
   kubectl -n "$NAMESPACE" port-forward svc/grafana "${GRAFANA_REMOTE_PORT}:3000" \
@@ -415,6 +378,3 @@ echo "run complete: $RUN_NAME"
 echo "results:"
 echo "  utilization: $CSV_PATH"
 echo "  workload:    $LOG_PATH"
-if [[ "$GREEDY_HETEROGENEITY_MODE" == "cpu_seconds" ]]; then
-  echo "  cpu debug:   $CPU_DEBUG_DIR"
-fi

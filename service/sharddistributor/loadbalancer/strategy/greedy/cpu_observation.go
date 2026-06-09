@@ -104,12 +104,7 @@ func (s *CPUObservationState) updateExecutorCPUCostObservation(executorID string
 		return s.lastSmoothedCost(executorID)
 	}
 
-	logObservation := func(smoothedCost float64) {
-		capacity.LogCPUObservation(executorID, busyCores, cost, smoothedCost, load, currentSample.sampleTime)
-	}
-
 	if s.smoothingTau <= 0 {
-		logObservation(cost)
 		return cost, true
 	}
 
@@ -119,7 +114,6 @@ func (s *CPUObservationState) updateExecutorCPUCostObservation(executorID string
 			cost:       cost,
 			lastUpdate: currentSample.sampleTime,
 		}
-		logObservation(cost)
 		return cost, true
 	}
 
@@ -132,7 +126,6 @@ func (s *CPUObservationState) updateExecutorCPUCostObservation(executorID string
 		cost:       newSmoothed,
 		lastUpdate: currentSample.sampleTime,
 	}
-	logObservation(newSmoothed)
 	return newSmoothed, true
 }
 

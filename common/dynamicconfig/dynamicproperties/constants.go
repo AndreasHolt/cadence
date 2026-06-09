@@ -3360,7 +3360,7 @@ const (
 	// and returns raw per-interval busy-cores rates.
 	// KeyName: shardDistributor.loadBalancingGreedy.cpuSecondsSmoothingTau
 	// Value type: Duration
-	// Default value: 5 minutes
+	// Default value: 3 minutes
 	// Allowed filters: namespace
 	ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau
 
