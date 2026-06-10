@@ -150,7 +150,7 @@ func TestComputeExecutorCapacityWeightsCPUSecondsMode(t *testing.T) {
 	require.InDelta(t, 3.0, weights["slow"], 1e-9)
 }
 
-func TestComputeExecutorCapacityWeightsCPUSecondsModeScalesUnboundedRelativeCost(t *testing.T) {
+func TestComputeExecutorCapacityWeightsCPUSecondsModeUsesRawRelativeCost(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	currentAssignments := map[string][]string{
 		"fast-1": {"shard-1"},

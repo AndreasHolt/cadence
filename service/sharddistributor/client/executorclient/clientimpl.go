@@ -350,7 +350,6 @@ func (e *executorImpl[SP]) sendHeartbeat(ctx context.Context, status types.Execu
 	e.hostMetrics.Gauge(metricsconstants.ShardDistributorExecutorOwnedShards).Update(float64(len(shardStatusReports)))
 
 	processCPUSeconds, hasProcessCPU := 0.0, false
-	sampleTime := e.timeSource.Now()
 	if e.processCPUSampler != nil {
 		processCPUSeconds, hasProcessCPU = e.processCPUSampler.Sample()
 	}
@@ -365,7 +364,7 @@ func (e *executorImpl[SP]) sendHeartbeat(ctx context.Context, status types.Execu
 			GoMaxProcs:        runtime.GOMAXPROCS(0),
 			ProcessCPUSeconds: processCPUSeconds,
 			HasProcessCPU:     hasProcessCPU,
-			SampleTime:        sampleTime,
+			SampleTime:        e.timeSource.Now(),
 		}),
 	}
 
