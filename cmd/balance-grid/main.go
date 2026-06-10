@@ -252,7 +252,7 @@ func runGridSimulation(
 		HeterogeneityMode:      func(string) string { return config.GreedyHeterogeneityModeOff },
 		MoveScoringMode:        func(string) string { return cb.moveScoringMode },
 		MovePenaltyCoefficient: func(string) float64 { return cb.movePenaltyCoefficient },
-		CPUSecondsSmoothingTau: func(string) time.Duration { return 5 * time.Minute },
+		CPUSecondsSmoothingTau: func(string) time.Duration { return 3 * time.Minute },
 	}
 
 	assignments := make(map[string][]string)

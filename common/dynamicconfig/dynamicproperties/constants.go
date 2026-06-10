@@ -3360,7 +3360,7 @@ const (
 	// and returns raw per-interval busy-cores rates.
 	// KeyName: shardDistributor.loadBalancingGreedy.cpuSecondsSmoothingTau
 	// Value type: Duration
-	// Default value: 5 minutes
+	// Default value: 3 minutes
 	// Allowed filters: namespace
 	ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau
 
@@ -6049,7 +6049,7 @@ var DurationKeys = map[DurationKey]DynamicDuration{
 		KeyName:      "shardDistributor.loadBalancingGreedy.cpuSecondsSmoothingTau",
 		Filters:      []Filter{Namespace},
 		Description:  "ShardDistributorLoadBalancingGreedyCPUSecondsSmoothingTau is the EWMA time constant for smoothing CPU-seconds based capacity observations. 0 disables smoothing.",
-		DefaultValue: 5 * time.Minute,
+		DefaultValue: 3 * time.Minute,
 	},
 }
 

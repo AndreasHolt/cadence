@@ -138,7 +138,7 @@ func run() error {
 		HeterogeneityMode:      func(string) string { return config.GreedyHeterogeneityModeOff },
 		MoveScoringMode:        func(string) string { return moveScoringMode },
 		MovePenaltyCoefficient: func(string) float64 { return movePenaltyCoefficient },
-		CPUSecondsSmoothingTau: func(string) time.Duration { return 5 * time.Minute },
+		CPUSecondsSmoothingTau: func(string) time.Duration { return 3 * time.Minute },
 	}
 
 	// ── Initialise namespace state ────────────────────────────────────────────

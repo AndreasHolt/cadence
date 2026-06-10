@@ -46,7 +46,7 @@ func testGreedyConfig() config.LoadBalancingGreedyConfig {
 			return 0.001
 		},
 		CPUSecondsSmoothingTau: func(namespace string) time.Duration {
-			return 5 * time.Minute
+			return 3 * time.Minute
 		},
 	}
 }

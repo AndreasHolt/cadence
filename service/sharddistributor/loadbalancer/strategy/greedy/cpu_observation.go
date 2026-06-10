@@ -119,7 +119,7 @@ func (s *CPUObservationState) updateExecutorCPUCostObservation(executorID string
 
 	newSmoothed, err := statistics.CalculateSmoothedLoadWithTau(prevSmoothed.cost, cost, prevSmoothed.lastUpdate, currentSample.sampleTime, s.smoothingTau)
 	if err != nil {
-		return cost, true
+		return prevSmoothed.cost, true
 	}
 
 	s.smoothedCosts[executorID] = executorCPUCostSmoothed{
