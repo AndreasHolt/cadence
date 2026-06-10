@@ -192,6 +192,7 @@ kubectl create configmap cadence-kind-lab-config -n "$NAMESPACE" \
   --from-file=kind-lab-dynamic.yaml="$tmp_config_dir/kind-lab-dynamic.yaml" \
   --from-file=hotspot.yaml="$tmp_config_dir/hotspot.yaml" \
   --from-file=trace-21-12.yaml="$tmp_config_dir/trace-21-12.yaml" \
+  --from-file=trace-21-12-nonoverload.yaml="$tmp_config_dir/trace-21-12-nonoverload.yaml" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 DEPLOY_MODE="$MODE" SCENARIO_FILE="$tmp_config_dir/trace-21-12.yaml" \

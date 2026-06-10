@@ -30,22 +30,35 @@ from typing import Callable, Iterable
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 
+plt.rcParams.update(
+    {
+        "font.size": 15,
+        "axes.titlesize": 18,
+        "axes.labelsize": 17,
+        "xtick.labelsize": 14,
+        "ytick.labelsize": 14,
+        "legend.fontsize": 14,
+        "figure.titlesize": 20,
+    }
+)
 
-METHOD_ORDER = ["off", "latency", "cpuseconds"]
+METHOD_ORDER = ["off", "latency", "latencycostaware", "cpuseconds"]
 METHOD_LABELS = {
     "off": "Greedy baseline",
     "latency": "Latency-aware greedy",
-    "cpuseconds": "CPU utilization aware greedy",
+    "latencycostaware": "Latency + cost-aware greedy",
+    "cpuseconds": "CPU-time aware greedy",
 }
 METHOD_COLORS = {
     "off": "#4c78a8",
     "latency": "#54a24b",
+    "latencycostaware": "#f58518",
     "cpuseconds": "#e45756",
 }
 POD_LABELS = {
-    "cadence-matching-a-0": "Matching A",
-    "cadence-matching-b-0": "Matching B",
-    "cadence-matching-c-0": "Matching C",
+    "cadence-matching-a-0": "Matching A (5M)",
+    "cadence-matching-b-0": "Matching B (10M)",
+    "cadence-matching-c-0": "Matching C (15M)",
 }
 POD_COLORS = {
     "cadence-matching-a-0": "#4c78a8",
@@ -57,6 +70,11 @@ IMBALANCE_COLORS = {
     "smoothed": "#e45756",
 }
 PROMETHEUS_STEP_SECONDS = 15.0
+THROTTLING_WINDOW_SECONDS = 60.0
+THROTTLING_OUTPUT_STEP_SECONDS = 60.0
+DEFAULT_CFS_PERIOD_SECONDS = 0.1
+UTILIZATION_WINDOW_SECONDS = 60.0
+UTILIZATION_OUTPUT_STEP_SECONDS = 60.0
 
 
 @dataclass
@@ -79,6 +97,8 @@ def normalize(value: str) -> str:
 def infer_method(path: Path) -> str | None:
     parts = [normalize(part) for part in path.parts]
     for part in reversed(parts):
+        if "latencycostaware" in part or ("costaware" in part and "latency" in part):
+            return "latencycostaware"
         if "latency" in part:
             return "latency"
         if "cpusecond" in part or part == "cpu" or part.startswith("cpu"):
@@ -324,6 +344,162 @@ def cpu_pod_series(run: Run, pod: str, *, step: float) -> dict[float, float]:
     return out
 
 
+def rolling_cpu_total_series(run: Run) -> dict[float, float]:
+    if not run.cpu_rows:
+        return {}
+    start = utilization_start(run)
+    if start is None:
+        return {}
+    per_sample: dict[float, float] = defaultdict(float)
+    for row in run.cpu_rows:
+        elapsed = (row["timestamp"] - start).total_seconds()
+        if elapsed < 0:
+            continue
+        per_sample[round(elapsed, 6)] += float(row["cpu_cores"])
+    samples = sorted(per_sample.items())
+    if not samples:
+        return {}
+    max_t = samples[-1][0]
+    half_window = UTILIZATION_WINDOW_SECONDS / 2.0
+    out: dict[float, float] = {}
+    t = 0.0
+    while t <= max_t:
+        low = t - half_window
+        high = t + half_window
+        values = [value for sample_t, value in samples if low <= sample_t <= high]
+        if values:
+            out[round(t, 6)] = statistics.fmean(values)
+        t += UTILIZATION_OUTPUT_STEP_SECONDS
+    return out
+
+
+def rolling_cpu_pod_series(run: Run, pod: str) -> dict[float, float]:
+    return rolling_utilization_series(run, "cpu_cores", pod)
+
+
+def rolling_utilization_series(run: Run, metric: str, pod: str | None = None) -> dict[float, float]:
+    if not run.cpu_rows:
+        return {}
+    start = utilization_start(run)
+    if start is None:
+        return {}
+    samples: list[tuple[float, float]] = []
+    for row in run.cpu_rows:
+        if pod is not None and row["pod"] != pod:
+            continue
+        elapsed = (row["timestamp"] - start).total_seconds()
+        if elapsed < 0:
+            continue
+        samples.append((elapsed, float(row[metric])))
+    if not samples:
+        return {}
+    samples.sort()
+    max_t = samples[-1][0]
+    half_window = UTILIZATION_WINDOW_SECONDS / 2.0
+    out: dict[float, float] = {}
+    t = 0.0
+    while t <= max_t:
+        low = t - half_window
+        high = t + half_window
+        values = [value for sample_t, value in samples if low <= sample_t <= high]
+        if values:
+            out[round(t, 6)] = statistics.fmean(values)
+        t += UTILIZATION_OUTPUT_STEP_SECONDS
+    return out
+
+
+def throttling_events_total_series(run: Run, *, step: float) -> dict[float, float]:
+    if not run.cpu_rows:
+        return {}
+    start = utilization_start(run)
+    if start is None:
+        return {}
+    per_sample: dict[float, float] = defaultdict(float)
+    for row in run.cpu_rows:
+        t = round((row["timestamp"] - start).total_seconds(), 6)
+        per_sample[t] += float(row["throttled_events"])
+    return dict(per_sample)
+
+
+def rolling_throttling_events_rate_series(run: Run, pod: str | None = None) -> dict[float, float]:
+    if not run.cpu_rows:
+        return {}
+    start = utilization_start(run)
+    if start is None:
+        return {}
+    samples: list[tuple[float, float]] = []
+    for row in run.cpu_rows:
+        if pod is not None and row["pod"] != pod:
+            continue
+        elapsed = (row["timestamp"] - start).total_seconds()
+        if elapsed < 0:
+            continue
+        samples.append((elapsed, float(row["throttled_events"])))
+    if not samples:
+        return {}
+    samples.sort()
+    max_t = samples[-1][0]
+    half_window = THROTTLING_WINDOW_SECONDS / 2.0
+    out: dict[float, float] = {}
+    t = 0.0
+    while t <= max_t:
+        low = t - half_window
+        high = t + half_window
+        values = [value for sample_t, value in samples if low <= sample_t <= high]
+        if values:
+            out[round(t, 6)] = sum(values) / THROTTLING_WINDOW_SECONDS
+        t += THROTTLING_OUTPUT_STEP_SECONDS
+    return out
+
+
+def rolling_throttling_period_percent_series(run: Run, pod: str | None = None) -> dict[float, float]:
+    rate = rolling_throttling_events_rate_series(run, pod)
+    return {t: min(100.0, value * DEFAULT_CFS_PERIOD_SECONDS * 100.0) for t, value in rate.items()}
+
+
+def throttling_events_pod_series(run: Run, pod: str, *, step: float) -> dict[float, float]:
+    if not run.cpu_rows:
+        return {}
+    start = utilization_start(run)
+    if start is None:
+        return {}
+    out: dict[float, float] = {}
+    for row in run.cpu_rows:
+        if row["pod"] == pod:
+            out[round((row["timestamp"] - start).total_seconds(), 6)] = float(row["throttled_events"])
+    return out
+
+
+def cpu_imbalance_series(run: Run, kind: str) -> dict[float, float]:
+    if not run.cpu_rows:
+        return {}
+    start = utilization_start(run)
+    if start is None:
+        return {}
+
+    per_sample: dict[float, list[float]] = defaultdict(list)
+    for row in run.cpu_rows:
+        elapsed = (row["timestamp"] - start).total_seconds()
+        if elapsed < 0:
+            continue
+        per_sample[round(elapsed, 6)].append(float(row["cpu_cores"]))
+
+    out: dict[float, float] = {}
+    for t, values in sorted(per_sample.items()):
+        if not values:
+            continue
+        mean_value = statistics.fmean(values)
+        if mean_value <= 0:
+            continue
+        if kind == "cv":
+            out[t] = statistics.pstdev(values, mu=mean_value) / mean_value
+        elif kind == "max_over_mean":
+            out[t] = max(values) / mean_value
+        else:
+            raise ValueError(f"unknown cpu imbalance kind: {kind}")
+    return out
+
+
 def aggregate(series_list: list[dict[float, float]]) -> tuple[list[float], list[float], list[float], list[float]]:
     times = sorted(set().union(*(s.keys() for s in series_list))) if series_list else []
     xs: list[float] = []
@@ -441,7 +617,7 @@ def plot_completed_cumulative(output: Path, runs_by_method: dict[str, list[Run]]
     ax.set_title("Cumulative completed workflows")
     ax.set_xlabel("Time since start (min)")
     apply_common_axes(ax, "Completed workflows", x_max)
-    ax.legend(frameon=False, fontsize=8)
+    ax.legend(frameon=False, fontsize=12)
     fig.savefig(output, dpi=180)
     plt.close(fig)
 
@@ -465,7 +641,7 @@ def plot_throughput(output: Path, runs_by_method: dict[str, list[Run]], *, step:
     ax.set_title("Started and completed workflow rate")
     ax.set_xlabel("Time since start (min)")
     apply_common_axes(ax, "Workflows/s", x_max)
-    ax.legend(frameon=False, fontsize=9)
+    ax.legend(frameon=False, fontsize=14)
     fig.savefig(output, dpi=180)
     plt.close(fig)
 
@@ -566,22 +742,40 @@ def plot_cpu_by_method(
     for ax, method in zip(axes, methods):
         runs = runs_by_method[method]
         for pod in POD_LABELS:
-            series = [cpu_pod_series(r, pod, step=step) for r in runs if r.cpu_rows]
+            series = [rolling_cpu_pod_series(r, pod) for r in runs if r.cpu_rows]
             xs, lows, meds, highs = aggregate(series)
             if not xs:
                 continue
             color = POD_COLORS[pod]
             ax.plot(xs, meds, label=POD_LABELS[pod], color=color, linewidth=1.9)
-            if len(series) > 1:
-                ax.fill_between(xs, lows, highs, color=color, alpha=0.12, linewidth=0)
         ax.set_title(method_label(method))
         apply_common_axes(ax, None, x_max)
         ax.set_ylim(0, y_max if y_max is not None else 2.2)
-    fig.suptitle("Matching CPU usage by executor", fontsize=13, y=0.985)
+    fig.suptitle("Matching CPU usage by executor", fontsize=20, y=0.985)
     finish_shared_axes(fig, axes, xlabel="Time since start (min)", ylabel="CPU cores")
     add_shared_legend(fig, axes, ncol=3, y=0.965)
     fig.savefig(output, dpi=180)
     plt.close(fig)
+
+
+def plot_cpu_imbalance(output: Path, runs_by_method: dict[str, list[Run]], *, x_max: float | None, kind: str):
+    if kind == "cv":
+        title = "Matching CPU usage imbalance (CV)"
+        ylabel = "Coefficient of variation"
+    elif kind == "max_over_mean":
+        title = "Matching CPU usage imbalance (max / mean)"
+        ylabel = "Max / mean CPU usage"
+    else:
+        raise ValueError(f"unknown cpu imbalance kind: {kind}")
+
+    plot_aggregate_metric(
+        output,
+        title,
+        ylabel,
+        {m: [cpu_imbalance_series(r, kind) for r in rs] for m, rs in runs_by_method.items()},
+        x_max=x_max,
+        y_min=0,
+    )
 
 
 def plot_total_by_method(
@@ -617,7 +811,7 @@ def plot_total_by_method(
         ax.set_ylim(bottom=0)
         if y_max is not None:
             ax.set_ylim(0, y_max)
-    fig.suptitle(title, fontsize=13, y=0.985)
+    fig.suptitle(title, fontsize=20, y=0.985)
     finish_shared_axes(fig, axes, xlabel="Time since start (min)", ylabel=ylabel)
     add_shared_legend(fig, axes, ncol=2, y=0.965)
     fig.savefig(output, dpi=180)
@@ -651,7 +845,7 @@ def plot_throttling_by_method(output: Path, runs_by_method: dict[str, list[Run]]
         handles, labels = ax.get_legend_handles_labels()
         if not handles:
             ax.text(0.5, 0.5, "No compact Prometheus CSVs found", transform=ax.transAxes, ha="center", va="center", alpha=0.65)
-    fig.suptitle("Matching CPU throttling by executor", fontsize=13, y=0.985)
+    fig.suptitle("Matching CPU throttling by executor", fontsize=20, y=0.985)
     finish_shared_axes(fig, axes, xlabel="Time since start (min)", ylabel="Throttled CPU time (cores)")
     add_shared_legend(fig, axes, ncol=3, y=0.965)
     fig.savefig(output, dpi=180)
@@ -736,7 +930,7 @@ def plot_assignment_imbalance(output: Path, runs_by_method: dict[str, list[Run]]
         handles, labels = ax.get_legend_handles_labels()
         if not handles:
             ax.text(0.5, 0.5, "No compact Prometheus CSVs found", transform=ax.transAxes, ha="center", va="center", alpha=0.65)
-    fig.suptitle(title, fontsize=13, y=0.985)
+    fig.suptitle(title, fontsize=20, y=0.985)
     finish_shared_axes(fig, axes, xlabel="Time since start (min)", ylabel=ylabel)
     add_shared_legend(fig, axes, ncol=2, y=0.965)
     fig.savefig(output, dpi=180)
@@ -992,7 +1186,7 @@ def main() -> int:
         output_dir / "aggregate-cpu-total.png",
         "Total Matching CPU usage",
         "CPU cores",
-        {m: [cpu_total_series(r, step=args.utilization_step) for r in rs] for m, rs in runs_by_method.items()},
+        {m: [rolling_cpu_total_series(r) for r in rs] for m, rs in runs_by_method.items()},
         x_max=args.x_max,
         y_min=0,
         y_max=args.cpu_total_y_max,
@@ -1003,7 +1197,7 @@ def main() -> int:
         x_max=args.x_max,
         title="Total Matching CPU usage",
         ylabel="CPU cores",
-        series_builder=lambda run: cpu_total_series(run, step=args.utilization_step),
+        series_builder=rolling_cpu_total_series,
         y_max=args.cpu_total_y_max,
     )
     plot_cpu_by_method(
@@ -1012,6 +1206,18 @@ def main() -> int:
         step=args.utilization_step,
         x_max=args.x_max,
         y_max=args.cpu_pod_y_max,
+    )
+    plot_cpu_imbalance(
+        output_dir / "aggregate-cpu-imbalance-cv.png",
+        runs_by_method,
+        x_max=args.x_max,
+        kind="cv",
+    )
+    plot_cpu_imbalance(
+        output_dir / "aggregate-cpu-imbalance-max-over-mean.png",
+        runs_by_method,
+        x_max=args.x_max,
+        kind="max_over_mean",
     )
     plot_throttling_by_method(
         output_dir / "aggregate-throttling-by-method.png",

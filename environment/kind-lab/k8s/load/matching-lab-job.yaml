@@ -30,6 +30,9 @@ spec:
             - name: cadence-config
               mountPath: /etc/cadence/kind-lab/trace-21-12.yaml
               subPath: trace-21-12.yaml
+            - name: cadence-config
+              mountPath: /etc/cadence/kind-lab/trace-21-12-nonoverload.yaml
+              subPath: trace-21-12-nonoverload.yaml
       volumes:
         - name: cadence-config
           configMap:
