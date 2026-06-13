@@ -3270,6 +3270,18 @@ const (
 	ShardDistributorAssignmentSmoothedLoadMissingRatio
 	// ShardDistributorAssignmentSmoothedLoadStaleRatio measures the fraction of assigned shards with stale smoothed load
 	ShardDistributorAssignmentSmoothedLoadStaleRatio
+	// ShardDistributorExecutorLatencyEWMAMs reports the latency signal from executor heartbeat metadata
+	ShardDistributorExecutorLatencyEWMAMs
+	// ShardDistributorExecutorProcessCPUCores reports process CPU cores derived from executor heartbeat metadata
+	ShardDistributorExecutorProcessCPUCores
+	// ShardDistributorExecutorSmoothedProcessCPUCores reports the EWMA-smoothed process CPU cores signal
+	ShardDistributorExecutorSmoothedProcessCPUCores
+	// ShardDistributorExecutorCPUSecondsCostPerLoad reports process CPU cores per unit assigned load
+	ShardDistributorExecutorCPUSecondsCostPerLoad
+	// ShardDistributorExecutorEffectiveWeightLatency reports the passive latency-derived effective weight
+	ShardDistributorExecutorEffectiveWeightLatency
+	// ShardDistributorExecutorEffectiveWeightCPUSeconds reports the passive CPU-seconds-derived effective weight
+	ShardDistributorExecutorEffectiveWeightCPUSeconds
 	// ShardDistributorIsLeader reports whether this instance is currently the leader (1) or not (0) for a namespace
 	ShardDistributorIsLeader
 
@@ -4231,6 +4243,30 @@ var MetricDefs = map[ServiceIdx]map[MetricIdx]metricDefinition{
 		},
 		ShardDistributorAssignmentSmoothedLoadStaleRatio: {
 			metricName: "shard_distributor_assignment_smoothed_load_stale_ratio",
+			metricType: Gauge,
+		},
+		ShardDistributorExecutorLatencyEWMAMs: {
+			metricName: "shard_distributor_executor_latency_ewma_ms",
+			metricType: Gauge,
+		},
+		ShardDistributorExecutorProcessCPUCores: {
+			metricName: "shard_distributor_executor_process_cpu_cores",
+			metricType: Gauge,
+		},
+		ShardDistributorExecutorSmoothedProcessCPUCores: {
+			metricName: "shard_distributor_executor_smoothed_process_cpu_cores",
+			metricType: Gauge,
+		},
+		ShardDistributorExecutorCPUSecondsCostPerLoad: {
+			metricName: "shard_distributor_executor_cpu_seconds_cost_per_load",
+			metricType: Gauge,
+		},
+		ShardDistributorExecutorEffectiveWeightLatency: {
+			metricName: "shard_distributor_executor_effective_weight_latency",
+			metricType: Gauge,
+		},
+		ShardDistributorExecutorEffectiveWeightCPUSeconds: {
+			metricName: "shard_distributor_executor_effective_weight_cpu_seconds",
 			metricType: Gauge,
 		},
 		ShardDistributorIsLeader: {metricName: "shard_distributor_is_leader", metricType: Gauge},

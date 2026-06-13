@@ -45,6 +45,7 @@ func PlanRebalance(
 	}
 	if cpuState != nil {
 		cpuState.SetSmoothingTau(cfg.CPUSecondsSmoothingTau(namespace))
+		emitExecutorSignalDiagnostics(metricsScope, workingAssignments, namespaceState, loads, cpuState)
 	}
 	targetLoads := computeTargetLoads(loads, computeExecutorCapacityWeights(cfg.HeterogeneityMode(namespace), workingAssignments, namespaceState, loads, cpuState), totalLoad)
 	totalShards := 0
@@ -259,6 +260,70 @@ func computeCPUSecondsAdjustedWeights(
 	}
 
 	cpuCosts := cpuObservationState.updateExecutorCPUCostObservations(state, loads)
+	return computeCPUSecondsWeightsFromCosts(currentAssignments, state, cpuCosts, weights)
+}
+
+func emitExecutorSignalDiagnostics(
+	metricsScope metrics.Scope,
+	currentAssignments map[string][]string,
+	state *store.NamespaceState,
+	loads map[string]float64,
+	cpuObservationState *CPUObservationState,
+) {
+	if metricsScope == nil {
+		return
+	}
+
+	latencyWeights := computeLatencyAdjustedWeights(currentAssignments, state, make(map[string]float64, len(currentAssignments)))
+	cpuDiagnostics := cpuObservationState.updateExecutorCPUDiagnostics(state, loads)
+	cpuWeights := computeCPUSecondsWeightsFromDiagnostics(currentAssignments, state, cpuDiagnostics, make(map[string]float64, len(currentAssignments)))
+
+	for executorID := range currentAssignments {
+		executor, ok := state.Executors[executorID]
+		if !ok {
+			continue
+		}
+		executorScope := metricsScope.Tagged(metrics.ExecutorIDTag(executorID))
+		if latencyMs := capacity.LatencyEWmaMsFromMetadata(executor.Metadata); latencyMs > 0 {
+			executorScope.UpdateGauge(metrics.ShardDistributorExecutorLatencyEWMAMs, latencyMs)
+		}
+		if diagnostic, ok := cpuDiagnostics[executorID]; ok {
+			executorScope.UpdateGauge(metrics.ShardDistributorExecutorProcessCPUCores, diagnostic.busyCores)
+			executorScope.UpdateGauge(metrics.ShardDistributorExecutorSmoothedProcessCPUCores, diagnostic.smoothedBusyCores)
+			executorScope.UpdateGauge(metrics.ShardDistributorExecutorCPUSecondsCostPerLoad, diagnostic.cost)
+		}
+		if weight, ok := latencyWeights[executorID]; ok && weight > 0 {
+			executorScope.UpdateGauge(metrics.ShardDistributorExecutorEffectiveWeightLatency, weight)
+		}
+		if weight, ok := cpuWeights[executorID]; ok && weight > 0 {
+			executorScope.UpdateGauge(metrics.ShardDistributorExecutorEffectiveWeightCPUSeconds, weight)
+		}
+	}
+}
+
+func computeCPUSecondsWeightsFromDiagnostics(
+	currentAssignments map[string][]string,
+	state *store.NamespaceState,
+	cpuDiagnostics map[string]executorCPUDiagnostic,
+	weights map[string]float64,
+) map[string]float64 {
+	cpuCosts := make(map[string]float64, len(cpuDiagnostics))
+	for executorID, diagnostic := range cpuDiagnostics {
+		cpuCosts[executorID] = diagnostic.cost
+	}
+	return computeCPUSecondsWeightsFromCosts(currentAssignments, state, cpuCosts, weights)
+}
+
+func computeCPUSecondsWeightsFromCosts(
+	currentAssignments map[string][]string,
+	state *store.NamespaceState,
+	cpuCosts map[string]float64,
+	weights map[string]float64,
+) map[string]float64 {
+	for executorID := range currentAssignments {
+		weights[executorID] = capacity.WeightFromMetadata(state.Executors[executorID].Metadata)
+	}
+
 	totalCPUCost := 0.0
 	validCount := 0
 	for _, cost := range cpuCosts {

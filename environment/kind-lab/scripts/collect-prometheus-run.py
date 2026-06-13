@@ -44,6 +44,13 @@ ANALYSIS_QUERY_NAMES = {
     "sd_store_failures_total",
     "sd_store_requests_total",
     "sd_watch_events_received_total",
+    # Passive per-executor diagnostic signals.
+    "sd_executor_latency_ewma_ms",
+    "sd_executor_process_cpu_cores",
+    "sd_executor_smoothed_process_cpu_cores",
+    "sd_executor_cpu_seconds_cost_per_load",
+    "sd_executor_effective_weight_latency",
+    "sd_executor_effective_weight_cpu_seconds",
     # Matching Prometheus signals that complement matching-lab logs/utilization CSVs.
     "matching_cpu_usage_cores",
     "matching_cpu_throttled_cores",
@@ -125,6 +132,36 @@ DEFAULT_QUERIES = [
     QuerySpec(
         "sd_executor_owned_shards",
         "shard_distributor_executor_owned_shards",
+        "gauge",
+    ),
+    QuerySpec(
+        "sd_executor_latency_ewma_ms",
+        "shard_distributor_executor_latency_ewma_ms",
+        "gauge",
+    ),
+    QuerySpec(
+        "sd_executor_process_cpu_cores",
+        "shard_distributor_executor_process_cpu_cores",
+        "gauge",
+    ),
+    QuerySpec(
+        "sd_executor_smoothed_process_cpu_cores",
+        "shard_distributor_executor_smoothed_process_cpu_cores",
+        "gauge",
+    ),
+    QuerySpec(
+        "sd_executor_cpu_seconds_cost_per_load",
+        "shard_distributor_executor_cpu_seconds_cost_per_load",
+        "gauge",
+    ),
+    QuerySpec(
+        "sd_executor_effective_weight_latency",
+        "shard_distributor_executor_effective_weight_latency",
+        "gauge",
+    ),
+    QuerySpec(
+        "sd_executor_effective_weight_cpu_seconds",
+        "shard_distributor_executor_effective_weight_cpu_seconds",
         "gauge",
     ),
     QuerySpec(

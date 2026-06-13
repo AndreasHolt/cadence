@@ -370,6 +370,10 @@ func ExecutorStatusTag(status string) Tag {
 	return metricWithUnknown("executor_status", status)
 }
 
+func ExecutorIDTag(executorID string) Tag {
+	return metricWithUnknown("executor", executorID)
+}
+
 func ShardDistributorWatchTypeTag(watchType string) Tag {
 	return metricWithUnknown("watch_type", watchType)
 }

@@ -15,8 +15,16 @@ type executorCPUSample struct {
 }
 
 type executorCPUCostSmoothed struct {
-	cost       float64
-	lastUpdate time.Time
+	cost              float64
+	busyCores         float64
+	smoothedBusyCores float64
+	lastUpdate        time.Time
+}
+
+type executorCPUDiagnostic struct {
+	cost              float64
+	busyCores         float64
+	smoothedBusyCores float64
 }
 
 // CPUObservationState tracks previous executor CPU samples across rebalance cycles.
@@ -60,6 +68,20 @@ func (s *CPUObservationState) updateExecutorCPUCostObservations(state *store.Nam
 	}
 
 	return costs
+}
+
+func (s *CPUObservationState) updateExecutorCPUDiagnostics(state *store.NamespaceState, loads map[string]float64) map[string]executorCPUDiagnostic {
+	if s == nil {
+		return nil
+	}
+	diagnostics := make(map[string]executorCPUDiagnostic)
+	for executorID, executor := range state.Executors {
+		diagnostic, ok := s.updateExecutorCPUDiagnostic(executorID, executor.Metadata, loads[executorID])
+		if ok {
+			diagnostics[executorID] = diagnostic
+		}
+	}
+	return diagnostics
 }
 
 func (s *CPUObservationState) updateExecutorCPUCostObservation(executorID string, metadata map[string]string, load float64) (float64, bool) {
@@ -111,8 +133,10 @@ func (s *CPUObservationState) updateExecutorCPUCostObservation(executorID string
 	prevSmoothed, hasPrevSmoothed := s.smoothedCosts[executorID]
 	if !hasPrevSmoothed {
 		s.smoothedCosts[executorID] = executorCPUCostSmoothed{
-			cost:       cost,
-			lastUpdate: currentSample.sampleTime,
+			cost:              cost,
+			busyCores:         busyCores,
+			smoothedBusyCores: busyCores,
+			lastUpdate:        currentSample.sampleTime,
 		}
 		return cost, true
 	}
@@ -121,12 +145,86 @@ func (s *CPUObservationState) updateExecutorCPUCostObservation(executorID string
 	if err != nil {
 		return prevSmoothed.cost, true
 	}
+	newSmoothedBusyCores, err := statistics.CalculateSmoothedLoadWithTau(prevSmoothed.smoothedBusyCores, busyCores, prevSmoothed.lastUpdate, currentSample.sampleTime, s.smoothingTau)
+	if err != nil {
+		return prevSmoothed.cost, true
+	}
 
 	s.smoothedCosts[executorID] = executorCPUCostSmoothed{
-		cost:       newSmoothed,
-		lastUpdate: currentSample.sampleTime,
+		cost:              newSmoothed,
+		busyCores:         busyCores,
+		smoothedBusyCores: newSmoothedBusyCores,
+		lastUpdate:        currentSample.sampleTime,
 	}
 	return newSmoothed, true
+}
+
+func (s *CPUObservationState) updateExecutorCPUDiagnostic(executorID string, metadata map[string]string, load float64) (executorCPUDiagnostic, bool) {
+	if s.samples == nil {
+		s.samples = make(map[string]executorCPUSample)
+	}
+	if s.smoothedCosts == nil {
+		s.smoothedCosts = make(map[string]executorCPUCostSmoothed)
+	}
+
+	currentSample, ok := executorCPUSampleFromMetadata(metadata)
+	if !ok {
+		return s.lastSmoothedDiagnostic(executorID)
+	}
+
+	previousSample, hasPreviousSample := s.samples[executorID]
+	s.samples[executorID] = currentSample
+	if !hasPreviousSample {
+		return executorCPUDiagnostic{}, false
+	}
+
+	if currentSample.sampleTime.Equal(previousSample.sampleTime) {
+		return s.lastSmoothedDiagnostic(executorID)
+	}
+
+	busyCores, ok := computeExecutorCPUObservation(previousSample, currentSample)
+	if !ok {
+		return s.lastSmoothedDiagnostic(executorID)
+	}
+	if load <= 0 {
+		return s.lastSmoothedDiagnostic(executorID)
+	}
+	cost := busyCores / load
+	if math.IsNaN(cost) || math.IsInf(cost, 0) {
+		return s.lastSmoothedDiagnostic(executorID)
+	}
+
+	if s.smoothingTau <= 0 {
+		return executorCPUDiagnostic{cost: cost, busyCores: busyCores, smoothedBusyCores: busyCores}, true
+	}
+
+	prevSmoothed, hasPrevSmoothed := s.smoothedCosts[executorID]
+	if !hasPrevSmoothed {
+		s.smoothedCosts[executorID] = executorCPUCostSmoothed{
+			cost:              cost,
+			busyCores:         busyCores,
+			smoothedBusyCores: busyCores,
+			lastUpdate:        currentSample.sampleTime,
+		}
+		return executorCPUDiagnostic{cost: cost, busyCores: busyCores, smoothedBusyCores: busyCores}, true
+	}
+
+	newSmoothedCost, err := statistics.CalculateSmoothedLoadWithTau(prevSmoothed.cost, cost, prevSmoothed.lastUpdate, currentSample.sampleTime, s.smoothingTau)
+	if err != nil {
+		return s.lastSmoothedDiagnostic(executorID)
+	}
+	newSmoothedBusyCores, err := statistics.CalculateSmoothedLoadWithTau(prevSmoothed.smoothedBusyCores, busyCores, prevSmoothed.lastUpdate, currentSample.sampleTime, s.smoothingTau)
+	if err != nil {
+		return s.lastSmoothedDiagnostic(executorID)
+	}
+
+	s.smoothedCosts[executorID] = executorCPUCostSmoothed{
+		cost:              newSmoothedCost,
+		busyCores:         busyCores,
+		smoothedBusyCores: newSmoothedBusyCores,
+		lastUpdate:        currentSample.sampleTime,
+	}
+	return executorCPUDiagnostic{cost: newSmoothedCost, busyCores: busyCores, smoothedBusyCores: newSmoothedBusyCores}, true
 }
 
 func (s *CPUObservationState) lastSmoothedCost(executorID string) (float64, bool) {
@@ -138,6 +236,21 @@ func (s *CPUObservationState) lastSmoothedCost(executorID string) (float64, bool
 		return 0, false
 	}
 	return prevSmoothed.cost, true
+}
+
+func (s *CPUObservationState) lastSmoothedDiagnostic(executorID string) (executorCPUDiagnostic, bool) {
+	if s == nil || s.smoothedCosts == nil {
+		return executorCPUDiagnostic{}, false
+	}
+	prevSmoothed, ok := s.smoothedCosts[executorID]
+	if !ok {
+		return executorCPUDiagnostic{}, false
+	}
+	return executorCPUDiagnostic{
+		cost:              prevSmoothed.cost,
+		busyCores:         prevSmoothed.busyCores,
+		smoothedBusyCores: prevSmoothed.smoothedBusyCores,
+	}, true
 }
 
 func executorCPUSampleFromMetadata(metadata map[string]string) (executorCPUSample, bool) {
