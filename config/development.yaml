@@ -186,6 +186,11 @@ shardDistribution:
   process:
     period: 1s
     heartbeatTTL: 2s
+    loadBalance:
+      severeImbalanceRatio: 1.3
+      moveBudgetProportion: 0.01  
+      hysteresisUpperBand: 1.15
+      hysteresisLowerBand: 0.9
 
 shard-distributor-matching:
   namespaces:
