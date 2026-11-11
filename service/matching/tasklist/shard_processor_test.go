@@ -150,9 +150,7 @@ func TestShardProcessor_ShardByHashOwnsTaskListsByDomainAndName(t *testing.T) {
 	reportTTL := time.Second
 	shardCount := 100
 
-	// Two task lists share a name. By name alone both would hash to shard 14 and be onboarded at
-	// 50%. With the domain ID, one hashes to shard 8 and is onboarded, and the other to shard 88 and
-	// stays on the hash ring.
+	// By name alone both task lists would be in shard 14. With the domain ID only one is onboarded.
 	onboardedTaskListID := mustNewIdentifier("domain-b", "billing", persistence.TaskListTypeDecision)
 	require.Equal(t, "8", matching.TaskListToShard(onboardedTaskListID.GetDomainID(), onboardedTaskListID.GetName(), shardCount))
 	onboardedTaskListQPS := 2.0

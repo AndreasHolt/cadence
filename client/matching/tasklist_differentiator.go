@@ -61,8 +61,7 @@ func (d *TaskListDifferentiator) TaskListExcludedFromShardDistributor(domainID, 
 
 // ShardID returns the shard that holds the task list. When task lists are sharded by hash it is one
 // of shardCount shards, formatted the way the shard manager formats the shard IDs of a fixed
-// namespace. Otherwise each task list name has its own shard, named after it and shared by every
-// domain that uses the name.
+// namespace. Otherwise each task list has its own shard, named after it.
 func (d *TaskListDifferentiator) ShardID(domainID, taskListName string) string {
 	if d.shardTaskListsByHash() {
 		return TaskListToShard(domainID, taskListName, d.shardCount)
@@ -87,9 +86,7 @@ func TaskListToShard(domainID, taskListName string, shardCount int) string {
 	return strconv.FormatUint(shardIndex, 10)
 }
 
-// taskListShardIndex hashes the domain ID together with the task list name. Task lists that share a
-// name across many domains, such as the scheduler's, then spread over the shards instead of piling
-// into one. The domain ID is a UUID and never contains the separator, so the key is unambiguous.
+// The domain ID is hashed too, so task lists that share a name across domains spread over the shards.
 func taskListShardIndex(domainID, taskListName string, shardCount int) uint64 {
 	hash := farm.Fingerprint64([]byte(domainID + "/" + taskListName))
 	return hash % uint64(shardCount)

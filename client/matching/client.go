@@ -299,10 +299,7 @@ func (c *clientImpl) ListTaskListPartitions(
 	request *types.MatchingListTaskListPartitionsRequest,
 	opts ...yarpc.CallOption,
 ) (*types.ListTaskListPartitionsResponse, error) {
-	// The request only has the domain name, not the domain ID, so we can't compute the task list's
-	// shard here. We route it with an empty domain ID instead, which may reach a host that doesn't
-	// own the task list. That's fine, because the handler doesn't need to own it. It resolves the
-	// domain ID from the domain cache and looks up each partition's owner itself.
+	// The request has no domain ID. Any matching host can answer, so route without one.
 	peer, err := c.peerResolver.FromTaskList("", request.TaskList.GetName())
 	if err != nil {
 		return nil, err

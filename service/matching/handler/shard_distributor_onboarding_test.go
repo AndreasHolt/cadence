@@ -41,7 +41,6 @@ const (
 	// noHost means SD hasn't given the shard to any host.
 	noHost = ""
 
-	// onboardingDomainID is the domain of every task list in the test.
 	onboardingDomainID = "domain-id"
 
 	// routedBySD and routedByHashRing say which one the router asked for a task list's owner.

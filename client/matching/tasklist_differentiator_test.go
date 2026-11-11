@@ -10,8 +10,6 @@ import (
 	"github.com/uber/cadence/common/membership"
 )
 
-// Domain IDs are UUIDs, so the tests use UUIDs too. A task list is short-lived when its name has a
-// UUID, and the domain ID must not count.
 const (
 	testDomainID      = "22222222-2222-4222-8222-222222222222"
 	testOtherDomainID = "55555555-5555-4555-8555-555555555555"
@@ -121,8 +119,7 @@ func TestTaskListDifferentiator_TaskListExcludedFromShardDistributor(t *testing.
 			excludeShortLivedTaskLists: true,
 		},
 		{
-			// By name alone the shard would be 639, and the task list's own hash%100 is 34. Only the
-			// shard of the domain and name puts it below the percentage.
+			// By name alone the shard would be 639, so only the domain ID puts it below the percentage.
 			name:                 "sharded by hash - shard below percentage",
 			domainID:             testDomainID,
 			taskListName:         "orders", // farm.Fingerprint64([]byte(testDomainID+"/orders"))%1000 = 134
@@ -131,8 +128,7 @@ func TestTaskListDifferentiator_TaskListExcludedFromShardDistributor(t *testing.
 			shardTaskListsByHash: true,
 		},
 		{
-			// By name alone the shard would be 6, and the task list's own hash%100 is 68. Only the
-			// shard of the domain and name puts it above the percentage.
+			// By name alone the shard would be 6, so only the domain ID puts it above the percentage.
 			name:                 "sharded by hash - shard above percentage",
 			domainID:             testOtherDomainID,
 			taskListName:         "test-key", // farm.Fingerprint64([]byte(testOtherDomainID+"/test-key"))%1000 = 868
@@ -294,7 +290,6 @@ func TestTaskListToShard(t *testing.T) {
 
 	// farm.Fingerprint64([]byte(testDomainID+"/orders"))%1000 = 134
 	assert.Equal(t, "134", TaskListToShard(testDomainID, "orders", shardCount))
-	// The scheduler's task list has the same name in every domain, so the domain ID has to spread it.
 	assert.NotEqual(t,
 		TaskListToShard(testDomainID, "cadence-scheduler", shardCount),
 		TaskListToShard(testOtherDomainID, "cadence-scheduler", shardCount),
