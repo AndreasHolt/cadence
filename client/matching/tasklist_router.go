@@ -45,11 +45,8 @@ const (
 	routingPathShardDistributor = "shard_distributor"
 )
 
-// TaskListRouter finds the matching host that owns a task list. A task list is owned either by the
-// matching hash ring or by the shard distributor, and the router asks whichever one owns it.
+// TaskListRouter finds the matching host that owns a task list.
 type TaskListRouter interface {
-	// FromTaskList returns the host that owns the task list. Callers that don't know the domain ID
-	// pass an empty one, and the task list is then routed as if it had no domain.
 	FromTaskList(domainID, taskListName string) (membership.HostInfo, error)
 }
 
@@ -61,8 +58,6 @@ type taskListRouter struct {
 	metricsScope           metrics.Scope
 }
 
-// NewTaskListRouter creates a TaskListRouter. The spectator is nil when the shard distributor isn't
-// configured, and the router then looks up every task list on the hash ring.
 func NewTaskListRouter(
 	resolver membership.Resolver,
 	taskListDifferentiator *TaskListDifferentiator,
