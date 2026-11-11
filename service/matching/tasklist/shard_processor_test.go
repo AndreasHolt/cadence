@@ -141,3 +141,54 @@ func TestShardProcessor_ShardByHashSkipsTaskListsOwnedByHashRing(t *testing.T) {
 
 	shardProcessor.Stop()
 }
+
+func TestShardProcessor_ShardByHashOwnsTaskListsByDomainAndName(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	ctrl := gomock.NewController(t)
+	timeSource := clock.NewMockedTimeSource()
+	reportTTL := time.Second
+	shardCount := 100
+
+	// Two task lists share a name. By name alone both would hash to shard 14 and be onboarded at
+	// 50%. With the domain ID, one hashes to shard 8 and is onboarded, and the other to shard 88 and
+	// stays on the hash ring.
+	onboardedTaskListID := mustNewIdentifier("domain-b", "billing", persistence.TaskListTypeDecision)
+	require.Equal(t, "8", matching.TaskListToShard(onboardedTaskListID.GetDomainID(), onboardedTaskListID.GetName(), shardCount))
+	onboardedTaskListQPS := 2.0
+	onboardedTaskList := NewMockManager(ctrl)
+	onboardedTaskList.EXPECT().TaskListID().Return(onboardedTaskListID).AnyTimes()
+	onboardedTaskList.EXPECT().QueriesPerSecond().Return(onboardedTaskListQPS)
+	onboardedTaskList.EXPECT().Stop()
+
+	hashRingTaskListID := mustNewIdentifier("domain-id", "billing", persistence.TaskListTypeDecision)
+	require.Equal(t, "88", matching.TaskListToShard(hashRingTaskListID.GetDomainID(), hashRingTaskListID.GetName(), shardCount))
+	hashRingTaskList := NewMockManager(ctrl)
+	hashRingTaskList.EXPECT().TaskListID().Return(hashRingTaskListID).AnyTimes()
+
+	shardID := "8"
+	mockRegistry := NewMockTaskListRegistry(ctrl)
+	mockRegistry.EXPECT().ManagersByShard(shardID).Return([]Manager{onboardedTaskList, hashRingTaskList}).Times(2)
+
+	taskListDifferentiator := matching.NewTaskListDifferentiator(
+		dynamicproperties.GetBoolPropertyFn(false),
+		dynamicproperties.GetBoolPropertyFn(true),
+		membership.StaticPercentageOnboarded(50),
+		shardCount,
+	)
+
+	shardProcessor, err := NewShardProcessor(ShardProcessorParams{
+		ShardID:                shardID,
+		TaskListsRegistry:      mockRegistry,
+		ReportTTL:              reportTTL,
+		TimeSource:             timeSource,
+		TaskListDifferentiator: taskListDifferentiator,
+	})
+	require.NoError(t, err)
+
+	timeSource.Advance(reportTTL + time.Second)
+	shardReport := shardProcessor.GetShardReport()
+	require.Equal(t, onboardedTaskListQPS, shardReport.ShardLoad)
+
+	shardProcessor.Stop()
+}
