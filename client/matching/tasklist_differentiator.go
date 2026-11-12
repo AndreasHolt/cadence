@@ -64,7 +64,7 @@ func (d *TaskListDifferentiator) TaskListShard(domainID, taskListName string) Ta
 		// gets the same decision.
 		shardOnboarded := shardIndex*100 < percentageOnboarded*uint64(d.shardCount)
 		return TaskListShard{
-			ID:        strconv.FormatUint(shardIndex, 10),
+			ID:        formatShardID(shardIndex),
 			Onboarded: !shortLived && shardOnboarded,
 		}
 	}
@@ -90,13 +90,19 @@ func (d *TaskListDifferentiator) ShardCount() int {
 // shard manager formats the shard IDs of a fixed namespace.
 func TaskListToShard(domainID, taskListName string, shardCount int) string {
 	shardIndex := taskListShardIndex(domainID, taskListName, shardCount)
-	return strconv.FormatUint(shardIndex, 10)
+	return formatShardID(shardIndex)
 }
 
 // The domain ID is hashed too, so task lists that share a name across domains spread over the shards.
 func taskListShardIndex(domainID, taskListName string, shardCount int) uint64 {
 	hash := farm.Fingerprint64([]byte(domainID + "/" + taskListName))
 	return hash % uint64(shardCount)
+}
+
+// formatShardID formats a shard index the way the shard manager formats the shard IDs of a fixed
+// namespace. The registry and the routing decision must agree on it.
+func formatShardID(shardIndex uint64) string {
+	return strconv.FormatUint(shardIndex, 10)
 }
 
 func isbelowPercentage(hash uint64, percentageOnboarded uint64) bool {
