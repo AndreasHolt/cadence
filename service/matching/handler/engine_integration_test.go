@@ -183,7 +183,7 @@ func (s *matchingEngineSuite) newMatchingEngine(
 ) *matchingEngineImpl {
 	pct := membership.NewMockPercentageOnboarded(s.controller)
 	pct.EXPECT().Value().Return(0).AnyTimes()
-	taskListDifferentiator := membership.NewTaskListDifferentiator(
+	taskListDifferentiator := matching.NewTaskListDifferentiator(
 		config.ExcludeShortLivedTaskListsFromShardManager,
 		dynamicproperties.GetBoolPropertyFn(false),
 		pct,

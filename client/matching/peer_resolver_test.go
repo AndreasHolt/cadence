@@ -69,7 +69,7 @@ func TestPeerResolver(t *testing.T) {
 		host1,
 		nil,
 	).AnyTimes()
-	r := NewPeerResolver(serviceResolver, membership.PortGRPC)
+	r := NewPeerResolver(serviceResolver, newRingOnlyTaskListRouter(serviceResolver), membership.PortGRPC)
 
 	peer, err := r.FromTaskList("taskListA")
 	assert.NoError(t, err)
@@ -128,7 +128,7 @@ func TestPeerResolverFromSemaphoreBucket(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			serviceResolver := membership.NewMockResolver(gomock.NewController(t))
 			serviceResolver.EXPECT().Lookup(service.Matching, ringKey).Return(tt.lookupHost, tt.lookupErr)
-			r := NewPeerResolver(serviceResolver, membership.PortGRPC)
+			r := NewPeerResolver(serviceResolver, newRingOnlyTaskListRouter(serviceResolver), membership.PortGRPC)
 
 			got, err := r.FromSemaphoreBucket(domainID, semaphoreName, bucket)
 			if tt.wantErr {

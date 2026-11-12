@@ -21,6 +21,7 @@ import (
 	"go.uber.org/cadence/compatibility"
 	"go.uber.org/zap"
 
+	matchingClient "github.com/uber/cadence/client/matching"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/archiver"
 	"github.com/uber/cadence/common/archiver/provider"
@@ -156,12 +157,6 @@ func (s *server) startService() common.Daemon {
 		params.MetricsClient,
 		s.operationalDynamicConfig.GetIntProperty(dynamicproperties.MatchingPercentageOnboardedToShardManager),
 	)
-	params.TaskListDifferentiator = membership.NewTaskListDifferentiator(
-		s.operationalDynamicConfig.GetBoolProperty(dynamicproperties.MatchingExcludeShortLivedTaskListsFromShardManager),
-		s.operationalDynamicConfig.GetBoolProperty(dynamicproperties.MatchingShardTaskListsByHashForShardManager),
-		params.PercentageOnboarded,
-		s.cfg.NumMatchingShards,
-	)
 
 	params.RPCFactory = s.rpcFactory
 
@@ -197,26 +192,32 @@ func (s *server) startService() common.Daemon {
 		params.Spectator = spectator
 	} else {
 		s.logger.Warn("Shard distributor client not configured, spectator will not be started")
+		// Without a spectator no task list can be looked up in the shard distributor.
+		params.PercentageOnboarded = membership.StaticPercentageOnboarded(0)
 	}
+	params.TaskListDifferentiator = matchingClient.NewTaskListDifferentiator(
+		s.operationalDynamicConfig.GetBoolProperty(dynamicproperties.MatchingExcludeShortLivedTaskListsFromShardManager),
+		s.operationalDynamicConfig.GetBoolProperty(dynamicproperties.MatchingShardTaskListsByHashForShardManager),
+		params.PercentageOnboarded,
+		s.cfg.NumMatchingShards,
+	)
 
 	params.HashRings = make(map[string]membership.SingleProvider)
 	for _, s := range service.ListWithRing {
 		params.HashRings[s] = membership.NewHashring(s, peerProvider, clock.NewRealTimeSource(), params.Logger, params.MetricsClient.Scope(metrics.HashringScope))
 	}
 
-	wrappedRings := s.wrapHashRingsWithShardDistributor(
-		params.HashRings,
+	params.HashRings[membership.MatchingShards] = membership.NewShardDistributorResolver(
 		spectator,
-		params.TaskListDifferentiator,
+		params.HashRings[service.Matching],
 		params.Logger,
-		params.MetricsClient.Scope(metrics.ShardDistributorResolverScope),
 	)
 
 	params.MembershipResolver, err = membership.NewResolver(
 		peerProvider,
 		params.MetricsClient,
 		params.Logger,
-		wrappedRings,
+		params.HashRings,
 	)
 
 	if err != nil {
@@ -305,25 +306,6 @@ func (s *server) startService() common.Daemon {
 	go execute(daemon, s.doneC)
 
 	return daemon
-}
-
-func (*server) wrapHashRingsWithShardDistributor(
-	hashRings map[string]membership.SingleProvider,
-	spectator spectatorclient.Spectator,
-	taskListDifferentiator *membership.TaskListDifferentiator,
-	logger log.Logger,
-	metricsScope metrics.Scope,
-) map[string]membership.SingleProvider {
-	if _, ok := hashRings[service.Matching]; ok {
-		hashRings[service.Matching] = membership.NewShardDistributorResolver(
-			spectator,
-			taskListDifferentiator,
-			hashRings[service.Matching],
-			logger,
-			metricsScope,
-		)
-	}
-	return hashRings
 }
 
 func (*server) createShardDistributorClient(

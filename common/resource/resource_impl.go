@@ -22,6 +22,8 @@ package resource
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"math/rand"
 	"sync/atomic"
 	"time"
@@ -164,6 +166,13 @@ func New(
 	serviceConfig *service.Config,
 ) (impl *Impl, retError error) {
 
+	if params.TaskListDifferentiator == nil {
+		return nil, errors.New("creating resource: resource.Params.TaskListDifferentiator must be set")
+	}
+	if shardCount := params.TaskListDifferentiator.ShardCount(); shardCount <= 0 {
+		return nil, fmt.Errorf("creating resource: numMatchingShards must be positive, got %d", shardCount)
+	}
+
 	hostname := params.HostName
 
 	logger := params.Logger
@@ -180,6 +189,7 @@ func New(
 		client.NewRPCClientFactory(
 			params.RPCFactory,
 			membershipResolver,
+			params.TaskListDifferentiator,
 			params.MetricsClient,
 			dynamicCollection,
 			numShards,
