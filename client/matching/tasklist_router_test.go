@@ -29,9 +29,9 @@ func TestTaskListRouter_FromTaskList(t *testing.T) {
 			wantShardID:          "test-key",
 		},
 		{
-			name:                 "shard by hash uses the hashed shard",
+			name:                 "shard by hash uses the shard of the domain and name",
 			shardTaskListsByHash: true,
-			wantShardID:          "7126", // farm.Fingerprint64([]byte("test-key"))%8192
+			wantShardID:          "966", // farm.Fingerprint64([]byte(testDomainID+"/test-key"))%8192
 		},
 	}
 	for _, tt := range tests {
@@ -54,7 +54,7 @@ func TestTaskListRouter_FromTaskList(t *testing.T) {
 					},
 				}, nil)
 
-			host, err := router.FromTaskList("test-key")
+			host, err := router.FromTaskList(testDomainID, "test-key")
 			require.NoError(t, err)
 			assert.Equal(t, "127.0.0.1:7933", host.GetAddress())
 		})
@@ -73,7 +73,7 @@ func TestTaskListRouter_FromTaskList_ExcludedFallsBackToHashRing(t *testing.T) {
 
 	resolver.EXPECT().Lookup(service.Matching, "test-key").Return(membership.NewHostInfo("test-addr"), nil)
 
-	host, err := router.FromTaskList("test-key")
+	host, err := router.FromTaskList(testDomainID, "test-key")
 	assert.NoError(t, err)
 	assert.Equal(t, "test-addr", host.GetAddress())
 }
@@ -101,7 +101,7 @@ func TestTaskListRouter_FromTaskList_NilSpectatorFallsBackToHashRing(t *testing.
 
 	resolver.EXPECT().Lookup(service.Matching, "test-key").Return(membership.NewHostInfo("hash-ring-addr"), nil)
 
-	host, err := router.FromTaskList("test-key")
+	host, err := router.FromTaskList(testDomainID, "test-key")
 	assert.NoError(t, err)
 	assert.Equal(t, "hash-ring-addr", host.GetAddress())
 }
@@ -174,7 +174,7 @@ func TestTaskListRouter_FromTaskList_RecordsRoutingPath(t *testing.T) {
 				metricsClient.Scope(metrics.ShardDistributorResolverScope),
 			)
 
-			_, err := router.FromTaskList("test-key")
+			_, err := router.FromTaskList(testDomainID, "test-key")
 			assert.NoError(t, err)
 
 			counters := testScope.Snapshot().Counters()
