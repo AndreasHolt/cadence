@@ -15,14 +15,14 @@ const (
 	testOtherDomainID = "55555555-5555-4555-8555-555555555555"
 )
 
-func TestTaskListDifferentiator_TaskListExcludedFromShardDistributor(t *testing.T) {
+func TestTaskListDifferentiator_TaskListShard_Onboarded(t *testing.T) {
 	shardCount := 1000
 
 	tests := []struct {
 		name                       string
 		domainID                   string
 		taskListName               string
-		want                       bool
+		wantOnboarded              bool
 		percentageOnboarded        int
 		excludeShortLivedTaskLists bool
 		shardTaskListsByHash       bool
@@ -30,91 +30,91 @@ func TestTaskListDifferentiator_TaskListExcludedFromShardDistributor(t *testing.
 		{
 			name:                       "task list with UUID - exclude enabled",
 			taskListName:               "tasklist-550e8400-e29b-41d4-a716-446655440000",
-			want:                       true,
+			wantOnboarded:              false,
 			percentageOnboarded:        100,
 			excludeShortLivedTaskLists: true,
 		},
 		{
 			name:                       "task list with UUID - exclude disabled",
 			taskListName:               "tasklist-550e8400-e29b-41d4-a716-446655440000",
-			want:                       false,
+			wantOnboarded:              true,
 			percentageOnboarded:        100,
 			excludeShortLivedTaskLists: false,
 		},
 		{
 			name:                       "task list with uppercase UUID - exclude enabled",
 			taskListName:               "tasklist-550E8400-E29B-41D4-A716-446655440000",
-			want:                       true,
+			wantOnboarded:              false,
 			percentageOnboarded:        100,
 			excludeShortLivedTaskLists: true,
 		},
 		{
 			name:                       "task list name is UUID only - exclude enabled",
 			taskListName:               "550e8400-e29b-41d4-a716-446655440000",
-			want:                       true,
+			wantOnboarded:              false,
 			percentageOnboarded:        100,
 			excludeShortLivedTaskLists: true,
 		},
 		{
 			name:                       "task list without UUID",
 			taskListName:               "my-task-list",
-			want:                       false,
+			wantOnboarded:              true,
 			percentageOnboarded:        100,
 			excludeShortLivedTaskLists: true,
 		},
 		{
 			name:                       "empty task list name",
 			taskListName:               "",
-			want:                       false,
+			wantOnboarded:              true,
 			percentageOnboarded:        100,
 			excludeShortLivedTaskLists: true,
 		},
 		{
 			name:                       "task list with partial UUID-like string",
 			taskListName:               "tasklist-550e8400-e29b",
-			want:                       false,
+			wantOnboarded:              true,
 			percentageOnboarded:        100,
 			excludeShortLivedTaskLists: true,
 		},
 		{
 			name:                       "task list with UUID prefix",
 			taskListName:               "550e8400-e29b-41d4-a716-446655440000-suffix",
-			want:                       true,
+			wantOnboarded:              false,
 			percentageOnboarded:        100,
 			excludeShortLivedTaskLists: true,
 		},
 		{
 			name:                       "task list below percentage",
 			taskListName:               "my-task-list", // farm.Fingerprint64([]byte("my-task-list"))%100 = 58
-			want:                       false,
+			wantOnboarded:              true,
 			percentageOnboarded:        60,
 			excludeShortLivedTaskLists: true,
 		},
 		{
 			name:                       "task list above percentage",
 			taskListName:               "my-task-list", // farm.Fingerprint64([]byte("my-task-list"))%100 = 58
-			want:                       true,
+			wantOnboarded:              false,
 			percentageOnboarded:        50,
 			excludeShortLivedTaskLists: true,
 		},
 		{
 			name:                       "task list below percentage - but UUID - exclude enabled",
 			taskListName:               "my-task-list-550e8400-e29b-41d4-a716-446655440003", // farm.Fingerprint64([]byte("my-task-list-550e8400-e29b-41d4-a716-446655440003"))%100 = 69
-			want:                       true,
+			wantOnboarded:              false,
 			percentageOnboarded:        70,
 			excludeShortLivedTaskLists: true,
 		},
 		{
 			name:                       "task list below percentage - UUID - exclude disabled",
 			taskListName:               "my-task-list-550e8400-e29b-41d4-a716-446655440003", // farm.Fingerprint64([]byte("my-task-list-550e8400-e29b-41d4-a716-446655440003"))%100 = 69
-			want:                       false,
+			wantOnboarded:              true,
 			percentageOnboarded:        70,
 			excludeShortLivedTaskLists: false,
 		},
 		{
 			name:                       "task list above percentage - but UUID",
 			taskListName:               "my-task-list-550e8400-e29b-41d4-a716-446655440003", // farm.Fingerprint64([]byte("my-task-list-550e8400-e29b-41d4-a716-446655440003"))%100 = 69
-			want:                       true,
+			wantOnboarded:              false,
 			percentageOnboarded:        60,
 			excludeShortLivedTaskLists: true,
 		},
@@ -123,7 +123,7 @@ func TestTaskListDifferentiator_TaskListExcludedFromShardDistributor(t *testing.
 			name:                 "sharded by hash - shard below percentage",
 			domainID:             testDomainID,
 			taskListName:         "orders", // farm.Fingerprint64([]byte(testDomainID+"/orders"))%1000 = 134
-			want:                 false,
+			wantOnboarded:        true,
 			percentageOnboarded:  14,
 			shardTaskListsByHash: true,
 		},
@@ -132,7 +132,7 @@ func TestTaskListDifferentiator_TaskListExcludedFromShardDistributor(t *testing.
 			name:                 "sharded by hash - shard above percentage",
 			domainID:             testOtherDomainID,
 			taskListName:         "test-key", // farm.Fingerprint64([]byte(testOtherDomainID+"/test-key"))%1000 = 868
-			want:                 true,
+			wantOnboarded:        false,
 			percentageOnboarded:  70,
 			shardTaskListsByHash: true,
 		},
@@ -140,7 +140,7 @@ func TestTaskListDifferentiator_TaskListExcludedFromShardDistributor(t *testing.
 			name:                       "sharded by hash - UUID in the domain ID only - exclude enabled",
 			domainID:                   testDomainID,
 			taskListName:               "orders",
-			want:                       false,
+			wantOnboarded:              true,
 			percentageOnboarded:        100,
 			excludeShortLivedTaskLists: true,
 			shardTaskListsByHash:       true,
@@ -149,14 +149,14 @@ func TestTaskListDifferentiator_TaskListExcludedFromShardDistributor(t *testing.
 			name:                       "UUID in the domain ID only - exclude enabled",
 			domainID:                   testDomainID,
 			taskListName:               "my-task-list", // farm.Fingerprint64([]byte("my-task-list"))%100 = 58
-			want:                       false,
+			wantOnboarded:              true,
 			percentageOnboarded:        60,
 			excludeShortLivedTaskLists: true,
 		},
 		{
 			name:                       "sharded by hash - UUID - exclude enabled",
 			taskListName:               "tasklist-550e8400-e29b-41d4-a716-446655440000",
-			want:                       true,
+			wantOnboarded:              false,
 			percentageOnboarded:        100,
 			excludeShortLivedTaskLists: true,
 			shardTaskListsByHash:       true,
@@ -171,8 +171,8 @@ func TestTaskListDifferentiator_TaskListExcludedFromShardDistributor(t *testing.
 				shardCount,
 			)
 
-			got := differentiator.TaskListExcludedFromShardDistributor(tt.domainID, tt.taskListName)
-			assert.Equal(t, tt.want, got)
+			shard := differentiator.TaskListShard(tt.domainID, tt.taskListName)
+			assert.Equal(t, tt.wantOnboarded, shard.Onboarded)
 		})
 	}
 }
@@ -224,7 +224,7 @@ func TestIsbelowPercentage(t *testing.T) {
 	}
 }
 
-func TestTaskListDifferentiator_ShardID(t *testing.T) {
+func TestTaskListDifferentiator_TaskListShard_ID(t *testing.T) {
 	shardCount := 1000
 
 	tests := []struct {
@@ -279,8 +279,8 @@ func TestTaskListDifferentiator_ShardID(t *testing.T) {
 				shardCount,
 			)
 
-			got := differentiator.ShardID(tt.domainID, tt.taskListName)
-			assert.Equal(t, tt.want, got)
+			shard := differentiator.TaskListShard(tt.domainID, tt.taskListName)
+			assert.Equal(t, tt.want, shard.ID)
 		})
 	}
 }
@@ -326,13 +326,39 @@ func TestTaskListDifferentiator_ReadsDynamicConfigOnEveryCall(t *testing.T) {
 	)
 
 	assert.False(t, differentiator.ShardsByHash())
-	assert.Equal(t, taskListName, differentiator.ShardID(testDomainID, taskListName))
-	assert.True(t, differentiator.TaskListExcludedFromShardDistributor(testDomainID, taskListName))
+	assert.Equal(t, TaskListShard{ID: taskListName, Onboarded: false}, differentiator.TaskListShard(testDomainID, taskListName))
 
 	shardTaskListsByHash = true
 	percentageOnboarded = 100
 
 	assert.True(t, differentiator.ShardsByHash())
-	assert.Equal(t, hashedShardID, differentiator.ShardID(testDomainID, taskListName))
-	assert.False(t, differentiator.TaskListExcludedFromShardDistributor(testDomainID, taskListName))
+	assert.Equal(t, TaskListShard{ID: hashedShardID, Onboarded: true}, differentiator.TaskListShard(testDomainID, taskListName))
+}
+
+func TestTaskListDifferentiator_TaskListShard_ReadsEachConfigOnce(t *testing.T) {
+	shardCount := 1000
+	taskListName := "orders"
+
+	excludeShortLivedReads := 0
+	shardTaskListsByHashReads := 0
+	pct := membership.NewMockPercentageOnboarded(gomock.NewController(t))
+	pct.EXPECT().Value().Return(100).Times(1)
+
+	differentiator := NewTaskListDifferentiator(
+		func(...dynamicproperties.FilterOption) bool {
+			excludeShortLivedReads++
+			return true
+		},
+		func(...dynamicproperties.FilterOption) bool {
+			shardTaskListsByHashReads++
+			return true
+		},
+		pct,
+		shardCount,
+	)
+
+	differentiator.TaskListShard(testDomainID, taskListName)
+
+	assert.Equal(t, 1, excludeShortLivedReads, "the short-lived flag should be read once")
+	assert.Equal(t, 1, shardTaskListsByHashReads, "the shard by hash flag should be read once")
 }
