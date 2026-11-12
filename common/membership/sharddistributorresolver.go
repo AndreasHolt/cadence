@@ -24,6 +24,7 @@ package membership
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -33,20 +34,15 @@ import (
 
 	"github.com/uber/cadence/common/log"
 	"github.com/uber/cadence/common/log/tag"
-	"github.com/uber/cadence/common/metrics"
 )
 
-const (
-	routingPathHashRing         = "hash_ring"
-	routingPathShardDistributor = "shard_distributor"
-)
+// MatchingShards is the Resolver key for looking up which matching host owns a shard distributor shard.
+const MatchingShards = "cadence-matching-shards"
 
 type shardDistributorResolver struct {
-	taskListDifferentiator *TaskListDifferentiator
-	spectator              spectatorclient.Spectator
-	ring                   SingleProvider
-	logger                 log.Logger
-	metricsScope           metrics.Scope
+	spectator spectatorclient.Spectator
+	ring      SingleProvider
+	logger    log.Logger
 }
 
 func (s shardDistributorResolver) AddressToHost(owner string) (HostInfo, error) {
@@ -55,17 +51,13 @@ func (s shardDistributorResolver) AddressToHost(owner string) (HostInfo, error) 
 
 func NewShardDistributorResolver(
 	spectator spectatorclient.Spectator,
-	taskListDifferentiator *TaskListDifferentiator,
 	ring SingleProvider,
 	logger log.Logger,
-	metricsScope metrics.Scope,
 ) SingleProvider {
 	return &shardDistributorResolver{
-		spectator:              spectator,
-		taskListDifferentiator: taskListDifferentiator,
-		ring:                   ring,
-		logger:                 logger,
-		metricsScope:           metricsScope,
+		spectator: spectator,
+		ring:      ring,
+		logger:    logger,
 	}
 }
 
@@ -79,21 +71,10 @@ func (s shardDistributorResolver) Stop() {
 	s.ring.Stop()
 }
 
-func (s shardDistributorResolver) Lookup(key string) (HostInfo, error) {
-	if s.taskListDifferentiator.TaskListExcludedFromShardDistributor(key) {
-		s.emitRoutingPathMetric(routingPathHashRing)
-		return s.ring.Lookup(key)
-	}
-
+func (s shardDistributorResolver) Lookup(shardID string) (HostInfo, error) {
 	if s.spectator == nil {
-		s.logger.Warn("No shard distributor client, defaulting to hash ring")
-		s.emitRoutingPathMetric(routingPathHashRing)
-		return s.ring.Lookup(key)
+		return HostInfo{}, errors.New("no shard distributor client")
 	}
-
-	s.emitRoutingPathMetric(routingPathShardDistributor)
-
-	shardID := s.taskListDifferentiator.ShardID(key)
 	return s.lookUpInShardDistributor(shardID)
 }
 
@@ -163,8 +144,4 @@ func (s shardDistributorResolver) lookUpInShardDistributor(key string) (HostInfo
 
 	hostInfo := NewDetailedHostInfo(address, owner.ExecutorID, portMap)
 	return hostInfo, nil
-}
-
-func (s shardDistributorResolver) emitRoutingPathMetric(path string) {
-	s.metricsScope.Tagged(metrics.RoutingPathTag(path)).IncCounter(metrics.ShardDistributorResolverLookups)
 }

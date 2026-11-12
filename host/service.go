@@ -29,6 +29,7 @@ import (
 	"go.uber.org/yarpc"
 
 	"github.com/uber/cadence/client"
+	"github.com/uber/cadence/client/matching"
 	"github.com/uber/cadence/common"
 	"github.com/uber/cadence/common/archiver"
 	"github.com/uber/cadence/common/archiver/provider"
@@ -76,6 +77,7 @@ type (
 		hostInfo              membership.HostInfo
 		dispatcher            *yarpc.Dispatcher
 		membershipResolver    membership.Resolver
+		differentiator        *matching.TaskListDifferentiator
 		rpcFactory            rpc.Factory
 		pprofInitializer      common.PProfInitializer
 		clientBean            client.Bean
@@ -111,6 +113,7 @@ func NewService(params *resource.Params) Service {
 		throttledLogger:       params.ThrottledLogger,
 		rpcFactory:            params.RPCFactory,
 		membershipResolver:    params.MembershipResolver,
+		differentiator:        params.TaskListDifferentiator,
 		pprofInitializer:      params.PProfInitializer,
 		timeSource:            clock.NewRealTimeSource(),
 		metricsScope:          params.MetricScope,
@@ -167,7 +170,7 @@ func (h *serviceImpl) Start() {
 	h.hostInfo = hostInfo
 
 	h.clientBean, err = client.NewClientBean(
-		client.NewRPCClientFactory(h.rpcFactory, h.membershipResolver, h.metricsClient, h.dynamicCollection, h.numberOfHistoryShards, h.allIsolationGroups, h.logger),
+		client.NewRPCClientFactory(h.rpcFactory, h.membershipResolver, h.differentiator, h.metricsClient, h.dynamicCollection, h.numberOfHistoryShards, h.allIsolationGroups, h.logger),
 		h.rpcFactory.GetDispatcher(),
 		h.clusterMetadata,
 	)

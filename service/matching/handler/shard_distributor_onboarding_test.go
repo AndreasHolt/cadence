@@ -60,10 +60,11 @@ type onboardingTestData struct {
 	// routedBy is whichever of SD and the hash ring the resolver asked last.
 	routedBy string
 
-	// taskListDifferentiator and shardDistributorResolver are shared by both hosts.
-	taskListDifferentiator   *membership.TaskListDifferentiator
-	shardDistributorResolver membership.SingleProvider
-	hosts                    []*onboardingHost
+	// taskListDifferentiator, matchingRings and taskListRouter are shared by both hosts.
+	taskListDifferentiator *matching.TaskListDifferentiator
+	matchingRings          map[string]membership.SingleProvider
+	taskListRouter         *matching.TaskListRouter
+	hosts                  []*onboardingHost
 }
 
 // onboardingTaskList is one task list in the test.
@@ -205,7 +206,7 @@ func newOnboardingTestData(
 		func(...dynamicproperties.FilterOption) int { return td.percentageOnboarded },
 	)
 	shardTaskListsByHash := true
-	td.taskListDifferentiator = membership.NewTaskListDifferentiator(
+	td.taskListDifferentiator = matching.NewTaskListDifferentiator(
 		dynamicproperties.GetBoolPropertyFn(true), // short-lived task lists stay on the hash ring
 		dynamicproperties.GetBoolPropertyFn(shardTaskListsByHash),
 		percentageOnboarded,
@@ -218,18 +219,20 @@ func newOnboardingTestData(
 	}
 
 	hostNames := []string{host1, host2}
-	td.shardDistributorResolver = td.newShardDistributorResolver(len(hostNames))
+	td.matchingRings = td.newMatchingRings(len(hostNames))
+	resolver, err := membership.NewResolver(nil, metrics.NewNoopMetricsClient(), log.NewNoop(), td.matchingRings)
+	require.NoError(t, err)
+	td.taskListRouter = matching.NewTaskListRouter(resolver, td.taskListDifferentiator, metrics.NewNoopMetricsClient())
 	for _, hostName := range hostNames {
 		td.hosts = append(td.hosts, td.newHost(t, hostName, percentageOnboarded))
 	}
 	return td
 }
 
-// newShardDistributorResolver builds the resolver matching routes task lists with. It asks SD
-// about onboarded task lists and the hash ring about the rest. SD answers with the host holding
-// the shard, and the hash ring with the task list's ringOwner. Both note that the resolver asked
-// them.
-func (td *onboardingTestData) newShardDistributorResolver(hostCount int) membership.SingleProvider {
+// newMatchingRings builds what matching looks task list owners up in: SD for onboarded task lists
+// and the hash ring for the rest. SD answers with the host holding the shard, and the hash ring
+// with the task list's ringOwner. Both note that they were asked.
+func (td *onboardingTestData) newMatchingRings(hostCount int) map[string]membership.SingleProvider {
 	spectator := spectatorclient.NewMockSpectator(td.ctrl)
 	spectator.EXPECT().GetShardOwner(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, shardID string) (*spectatorclient.ShardOwner, error) {
@@ -259,14 +262,10 @@ func (td *onboardingTestData) newShardDistributorResolver(hostCount int) members
 	// Each host's engine starts a membership loop that subscribes to matching's ring once.
 	hashRing.EXPECT().Subscribe("matching-engine", gomock.Any()).Return(nil).Times(hostCount)
 
-	shardDistributorResolver := membership.NewShardDistributorResolver(
-		spectator,
-		td.taskListDifferentiator,
-		hashRing,
-		log.NewNoop(),
-		metrics.NoopScope,
-	)
-	return shardDistributorResolver
+	return map[string]membership.SingleProvider{
+		service.Matching:          hashRing,
+		membership.MatchingShards: membership.NewShardDistributorResolver(spectator, hashRing, log.NewNoop()),
+	}
 }
 
 // newHost starts a matching engine that knows itself as hostName and routes task lists with the
@@ -276,8 +275,7 @@ func (td *onboardingTestData) newHost(t *testing.T, hostName string, percentageO
 	self := membership.NewDetailedHostInfo("", hostName, nil)
 	peerProvider.EXPECT().WhoAmI().Return(self, nil).AnyTimes()
 
-	rings := map[string]membership.SingleProvider{service.Matching: td.shardDistributorResolver}
-	resolver, err := membership.NewResolver(peerProvider, metrics.NewNoopMetricsClient(), log.NewNoop(), rings)
+	resolver, err := membership.NewResolver(peerProvider, metrics.NewNoopMetricsClient(), log.NewNoop(), td.matchingRings)
 	require.NoError(t, err)
 
 	// The test never reaches persistence, history or the domain cache, so their mocks have no
@@ -461,7 +459,7 @@ func (td *onboardingTestData) startTaskListsHostsNowOwn(t *testing.T) {
 func (td *onboardingTestData) routeOf(t *testing.T, taskListName string) route {
 	t.Helper()
 	td.routedBy = ""
-	owner, err := td.shardDistributorResolver.Lookup(taskListName)
+	owner, err := td.taskListRouter.FromTaskList(taskListName)
 	require.NoError(t, err, "routing task list %q", taskListName)
 	return route{routedBy: td.routedBy, owner: owner.Identity()}
 }
