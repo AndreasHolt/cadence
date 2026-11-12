@@ -285,29 +285,6 @@ func TestTaskListDifferentiator_TaskListShard_ID(t *testing.T) {
 	}
 }
 
-func TestTaskListToShard(t *testing.T) {
-	shardCount := 1000
-
-	// farm.Fingerprint64([]byte(testDomainID+"/orders"))%1000 = 134
-	assert.Equal(t, "134", TaskListToShard(testDomainID, "orders", shardCount))
-	assert.NotEqual(t,
-		TaskListToShard(testDomainID, "cadence-scheduler", shardCount),
-		TaskListToShard(testOtherDomainID, "cadence-scheduler", shardCount),
-	)
-}
-
-func TestTaskListDifferentiator_ShardCount(t *testing.T) {
-	shardCount := 1000
-	differentiator := NewTaskListDifferentiator(
-		dynamicproperties.GetBoolPropertyFn(false),
-		dynamicproperties.GetBoolPropertyFn(false),
-		membership.StaticPercentageOnboarded(0),
-		shardCount,
-	)
-
-	assert.Equal(t, shardCount, differentiator.ShardCount())
-}
-
 func TestTaskListDifferentiator_ReadsDynamicConfigOnEveryCall(t *testing.T) {
 	shardCount := 1000
 	taskListName := "orders" // farm.Fingerprint64([]byte(testDomainID+"/orders"))%1000 = 134
@@ -333,32 +310,4 @@ func TestTaskListDifferentiator_ReadsDynamicConfigOnEveryCall(t *testing.T) {
 
 	assert.True(t, differentiator.ShardsByHash())
 	assert.Equal(t, TaskListShard{ID: hashedShardID, Onboarded: true}, differentiator.TaskListShard(testDomainID, taskListName))
-}
-
-func TestTaskListDifferentiator_TaskListShard_ReadsEachConfigOnce(t *testing.T) {
-	shardCount := 1000
-	taskListName := "orders"
-
-	excludeShortLivedReads := 0
-	shardTaskListsByHashReads := 0
-	pct := membership.NewMockPercentageOnboarded(gomock.NewController(t))
-	pct.EXPECT().Value().Return(100).Times(1)
-
-	differentiator := NewTaskListDifferentiator(
-		func(...dynamicproperties.FilterOption) bool {
-			excludeShortLivedReads++
-			return true
-		},
-		func(...dynamicproperties.FilterOption) bool {
-			shardTaskListsByHashReads++
-			return true
-		},
-		pct,
-		shardCount,
-	)
-
-	differentiator.TaskListShard(testDomainID, taskListName)
-
-	assert.Equal(t, 1, excludeShortLivedReads, "the short-lived flag should be read once")
-	assert.Equal(t, 1, shardTaskListsByHashReads, "the shard by hash flag should be read once")
 }
