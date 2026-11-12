@@ -30,14 +30,14 @@ func NewTaskListRouter(
 	}
 }
 
-func (r *TaskListRouter) FromTaskList(taskListName string) (membership.HostInfo, error) {
-	if r.taskListDifferentiator.TaskListExcludedFromShardDistributor(taskListName) {
+func (r *TaskListRouter) FromTaskList(domainID, taskListName string) (membership.HostInfo, error) {
+	if r.taskListDifferentiator.TaskListExcludedFromShardDistributor(domainID, taskListName) {
 		r.emitRoutingPathMetric(routingPathHashRing)
 		return r.resolver.Lookup(service.Matching, taskListName)
 	}
 
 	r.emitRoutingPathMetric(routingPathShardDistributor)
-	return r.resolver.Lookup(membership.MatchingShards, r.taskListDifferentiator.ShardID(taskListName))
+	return r.resolver.Lookup(membership.MatchingShards, r.taskListDifferentiator.ShardID(domainID, taskListName))
 }
 
 func (r *TaskListRouter) emitRoutingPathMetric(path string) {

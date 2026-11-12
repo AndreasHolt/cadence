@@ -48,7 +48,7 @@ func TestTaskListRouter_FromTaskList(t *testing.T) {
 			shardTaskListsByHash: true,
 			percentageOnboarded:  100,
 			wantLookupService:    membership.MatchingShards,
-			wantLookupKey:        "7126", // farm.Fingerprint64([]byte("test-key"))%8192
+			wantLookupKey:        "966", // farm.Fingerprint64([]byte(testDomainID+"/test-key"))%8192
 			wantRoutingPath:      routingPathShardDistributor,
 		},
 		{
@@ -87,7 +87,7 @@ func TestTaskListRouter_FromTaskList(t *testing.T) {
 				metrics.NewClient(testScope, metrics.Matching, metrics.MigrationConfig{}),
 			)
 
-			host, err := router.FromTaskList(tt.taskListName)
+			host, err := router.FromTaskList(testDomainID, tt.taskListName)
 			require.NoError(t, err)
 			assert.Equal(t, "owner-addr", host.GetAddress())
 
@@ -106,7 +106,7 @@ func TestTaskListRouter_FromTaskList_LookupFails(t *testing.T) {
 	resolver := membership.NewMockResolver(gomock.NewController(t))
 	resolver.EXPECT().Lookup(service.Matching, "test-key").Return(membership.HostInfo{}, assert.AnError)
 
-	_, err := newRingOnlyTaskListRouter(resolver).FromTaskList("test-key")
+	_, err := newRingOnlyTaskListRouter(resolver).FromTaskList(testDomainID, "test-key")
 	assert.ErrorIs(t, err, assert.AnError)
 }
 

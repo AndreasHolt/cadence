@@ -40,7 +40,7 @@ func NewTaskListDifferentiator(
 
 // TaskListExcludedFromShardDistributor reports whether the hash ring owns the task list instead of
 // the shard distributor.
-func (d *TaskListDifferentiator) TaskListExcludedFromShardDistributor(taskListName string) bool {
+func (d *TaskListDifferentiator) TaskListExcludedFromShardDistributor(domainID, taskListName string) bool {
 	// This regex checks if the task list name has a UUID, if it does we
 	// consider it a short lived tasklist that will not be managed by the shard distributor.
 	if d.excludeShortLivedTaskLists() && uuidRegexp.MatchString(taskListName) {
@@ -51,7 +51,7 @@ func (d *TaskListDifferentiator) TaskListExcludedFromShardDistributor(taskListNa
 	if d.shardTaskListsByHash() {
 		// Onboard the first percentageOnboarded percent of shards, so every task list in a shard
 		// gets the same decision.
-		shardIndex := taskListShardIndex(taskListName, d.shardCount)
+		shardIndex := taskListShardIndex(domainID, taskListName, d.shardCount)
 		return shardIndex*100 >= percentageOnboarded*uint64(d.shardCount)
 	}
 
@@ -62,9 +62,9 @@ func (d *TaskListDifferentiator) TaskListExcludedFromShardDistributor(taskListNa
 // ShardID returns the shard that holds the task list. When task lists are sharded by hash it is one
 // of shardCount shards, formatted the way the shard manager formats the shard IDs of a fixed
 // namespace. Otherwise each task list has its own shard, named after it.
-func (d *TaskListDifferentiator) ShardID(taskListName string) string {
+func (d *TaskListDifferentiator) ShardID(domainID, taskListName string) string {
 	if d.shardTaskListsByHash() {
-		return TaskListNameToShard(taskListName, d.shardCount)
+		return TaskListToShard(domainID, taskListName, d.shardCount)
 	}
 	return taskListName
 }
@@ -74,20 +74,21 @@ func (d *TaskListDifferentiator) ShardsByHash() bool {
 	return d.shardTaskListsByHash()
 }
 
-// ShardCount returns how many shards task list names hash into.
+// ShardCount returns how many shards task lists hash into.
 func (d *TaskListDifferentiator) ShardCount() int {
 	return d.shardCount
 }
 
-// TaskListNameToShard returns which of shardCount shards a task list name hashes to, formatted the
-// way the shard manager formats the shard IDs of a fixed namespace.
-func TaskListNameToShard(taskListName string, shardCount int) string {
-	shardIndex := taskListShardIndex(taskListName, shardCount)
+// TaskListToShard returns which of shardCount shards a task list hashes to, formatted the way the
+// shard manager formats the shard IDs of a fixed namespace.
+func TaskListToShard(domainID, taskListName string, shardCount int) string {
+	shardIndex := taskListShardIndex(domainID, taskListName, shardCount)
 	return strconv.FormatUint(shardIndex, 10)
 }
 
-func taskListShardIndex(taskListName string, shardCount int) uint64 {
-	hash := farm.Fingerprint64([]byte(taskListName))
+// The domain ID is hashed too, so task lists that share a name across domains spread over the shards.
+func taskListShardIndex(domainID, taskListName string, shardCount int) uint64 {
+	hash := farm.Fingerprint64([]byte(domainID + "/" + taskListName))
 	return hash % uint64(shardCount)
 }
 
