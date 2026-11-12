@@ -71,11 +71,11 @@ func TestPeerResolver(t *testing.T) {
 	).AnyTimes()
 	r := NewPeerResolver(serviceResolver, newRingOnlyTaskListRouter(serviceResolver), membership.PortGRPC)
 
-	peer, err := r.FromTaskList("taskListA")
+	peer, err := r.FromTaskList("domainA", "taskListA")
 	assert.NoError(t, err)
 	assert.Equal(t, "tasklistHost:1244", peer)
 
-	_, err = r.FromTaskList("invalid")
+	_, err = r.FromTaskList("domainA", "invalid")
 	assert.Error(t, err)
 
 	_, err = r.FromHostAddress("invalid address")

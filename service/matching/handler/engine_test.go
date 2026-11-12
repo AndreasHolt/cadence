@@ -283,14 +283,14 @@ func TestListTaskListPartitions(t *testing.T) {
 			mockSetup: func(mockDomainCache *cache.MockDomainCache, mockResolver *membership.MockResolver) {
 				// activity tasklist
 				mockDomainCache.EXPECT().GetDomainID("test-domain").Return("test-domain-id", nil)
-				mockResolver.EXPECT().Lookup(gomock.Any(), "test-tasklist").Return(membership.NewHostInfo("addr2"), nil)
-				mockResolver.EXPECT().Lookup(gomock.Any(), "/__cadence_sys/test-tasklist/1").Return(membership.HostInfo{}, errors.New("some error"))
-				mockResolver.EXPECT().Lookup(gomock.Any(), "/__cadence_sys/test-tasklist/2").Return(membership.NewHostInfo("addr3"), nil)
+				mockResolver.EXPECT().Lookup(membership.MatchingShards, testTaskListShard("test-domain-id", "test-tasklist")).Return(membership.NewHostInfo("addr2"), nil)
+				mockResolver.EXPECT().Lookup(membership.MatchingShards, testTaskListShard("test-domain-id", "/__cadence_sys/test-tasklist/1")).Return(membership.HostInfo{}, errors.New("some error"))
+				mockResolver.EXPECT().Lookup(membership.MatchingShards, testTaskListShard("test-domain-id", "/__cadence_sys/test-tasklist/2")).Return(membership.NewHostInfo("addr3"), nil)
 				// decision tasklist
 				mockDomainCache.EXPECT().GetDomainID("test-domain").Return("test-domain-id", nil)
-				mockResolver.EXPECT().Lookup(gomock.Any(), "test-tasklist").Return(membership.NewHostInfo("addr0"), nil)
-				mockResolver.EXPECT().Lookup(gomock.Any(), "/__cadence_sys/test-tasklist/1").Return(membership.HostInfo{}, errors.New("some error"))
-				mockResolver.EXPECT().Lookup(gomock.Any(), "/__cadence_sys/test-tasklist/2").Return(membership.NewHostInfo("addr1"), nil)
+				mockResolver.EXPECT().Lookup(membership.MatchingShards, testTaskListShard("test-domain-id", "test-tasklist")).Return(membership.NewHostInfo("addr0"), nil)
+				mockResolver.EXPECT().Lookup(membership.MatchingShards, testTaskListShard("test-domain-id", "/__cadence_sys/test-tasklist/1")).Return(membership.HostInfo{}, errors.New("some error"))
+				mockResolver.EXPECT().Lookup(membership.MatchingShards, testTaskListShard("test-domain-id", "/__cadence_sys/test-tasklist/2")).Return(membership.NewHostInfo("addr1"), nil)
 			},
 			wantErr: false,
 			want: &types.ListTaskListPartitionsResponse{
@@ -336,7 +336,7 @@ func TestListTaskListPartitions(t *testing.T) {
 			engine := &matchingEngineImpl{
 				domainCache:        mockDomainCache,
 				membershipResolver: mockResolver,
-				taskListRouter:     newTestTaskListRouter(mockResolver),
+				taskListRouter:     newTestFixedShardTaskListRouter(mockResolver),
 				config: &config.Config{
 					NumTasklistWritePartitions: dynamicproperties.GetIntPropertyFilteredByTaskListInfo(3),
 				},
@@ -501,7 +501,7 @@ func TestErrIfShardOwnershipLost(t *testing.T) {
 			{
 				name:                 "shard by hash",
 				shardTaskListsByHash: true,
-				wantShardID:          "5936", // farm.Fingerprint64([]byte("test-tasklist"))%8192
+				wantShardID:          "4347", // farm.Fingerprint64([]byte("test-domain-id/test-tasklist"))%8192
 			},
 		}
 		for _, tt := range tests {
@@ -917,22 +917,22 @@ func TestGetTasklistsNotOwned(t *testing.T) {
 
 	resolver.EXPECT().WhoAmI().Return(membership.NewDetailedHostInfo("self", "host123", nil), nil)
 
-	tl1 := mustNewIdentifier(t, "", "tl1", 0)
-	tl2 := mustNewIdentifier(t, "", "tl2", 0)
-	tl3 := mustNewIdentifier(t, "", "tl3", 0)
+	tl1 := mustNewIdentifier(t, "domain-1", "tl1", 0)
+	tl2 := mustNewIdentifier(t, "domain-2", "tl2", 0)
+	tl3 := mustNewIdentifier(t, "domain-3", "tl3", 0)
 
 	tl1m := newMockManagerWithTaskListID(ctrl, tl1)
 	tl2m := newMockManagerWithTaskListID(ctrl, tl2)
 	tl3m := newMockManagerWithTaskListID(ctrl, tl3)
 
-	resolver.EXPECT().Lookup(service.Matching, tl1.GetName()).Return(membership.NewDetailedHostInfo("", "host123", nil), nil)
-	resolver.EXPECT().Lookup(service.Matching, tl2.GetName()).Return(membership.NewDetailedHostInfo("", "host456", nil), nil)
-	resolver.EXPECT().Lookup(service.Matching, tl3.GetName()).Return(membership.NewDetailedHostInfo("", "host123", nil), nil)
+	resolver.EXPECT().Lookup(membership.MatchingShards, testTaskListShard(tl1.GetDomainID(), tl1.GetName())).Return(membership.NewDetailedHostInfo("", "host123", nil), nil)
+	resolver.EXPECT().Lookup(membership.MatchingShards, testTaskListShard(tl2.GetDomainID(), tl2.GetName())).Return(membership.NewDetailedHostInfo("", "host456", nil), nil)
+	resolver.EXPECT().Lookup(membership.MatchingShards, testTaskListShard(tl3.GetDomainID(), tl3.GetName())).Return(membership.NewDetailedHostInfo("", "host123", nil), nil)
 
 	e := matchingEngineImpl{
 		shutdown:           make(chan struct{}),
 		membershipResolver: resolver,
-		taskListRouter:     newTestTaskListRouter(resolver),
+		taskListRouter:     newTestFixedShardTaskListRouter(resolver),
 		taskListRegistry:   tasklist.NewTaskListRegistry(metrics.NewNoopMetricsClient(), commonConfig.DefaultNumMatchingShards),
 		config:             &config.Config{},
 		logger:             log.NewNoop(),
@@ -2440,4 +2440,19 @@ func newTestTaskListRouter(resolver membership.Resolver) *matching.TaskListRoute
 		commonConfig.DefaultNumMatchingShards,
 	)
 	return matching.NewTaskListRouter(resolver, taskListDifferentiator, metrics.NewNoopMetricsClient())
+}
+
+// newTestFixedShardTaskListRouter returns a router that looks up every task list by its fixed shard.
+func newTestFixedShardTaskListRouter(resolver membership.Resolver) *matching.TaskListRouter {
+	taskListDifferentiator := matching.NewTaskListDifferentiator(
+		dynamicproperties.GetBoolPropertyFn(false),
+		dynamicproperties.GetBoolPropertyFn(true),
+		membership.StaticPercentageOnboarded(100),
+		commonConfig.DefaultNumMatchingShards,
+	)
+	return matching.NewTaskListRouter(resolver, taskListDifferentiator, metrics.NewNoopMetricsClient())
+}
+
+func testTaskListShard(domainID, taskListName string) string {
+	return matching.TaskListToShard(domainID, taskListName, commonConfig.DefaultNumMatchingShards)
 }
