@@ -132,6 +132,8 @@ func (e *matchingEngineImpl) getNonOwnedTasklistsLocked() ([]tasklist.Manager, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to lookup self im membership: %w", err)
 	}
+	// The shard distributor names this host by its executor ID, not by its hash ring identity.
+	selfExecutorID := e.executor.GetExecutorID()
 
 	for _, tl := range taskLists {
 		taskListOwner, err := e.taskListRouter.FromTaskList(tl.TaskListID().GetDomainID(), tl.TaskListID().GetName())
@@ -139,7 +141,8 @@ func (e *matchingEngineImpl) getNonOwnedTasklistsLocked() ([]tasklist.Manager, e
 			return nil, fmt.Errorf("failed to lookup task list owner: %w", err)
 		}
 
-		if taskListOwner.Identity() != self.Identity() {
+		ownedBySelf := taskListOwner.Identity() == self.Identity() || taskListOwner.Identity() == selfExecutorID
+		if !ownedBySelf {
 			toShutDown = append(toShutDown, tl)
 		}
 	}

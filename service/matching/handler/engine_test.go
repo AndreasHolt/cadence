@@ -907,42 +907,59 @@ func TestIsShuttingDown(t *testing.T) {
 	assert.True(t, e.isShuttingDown())
 }
 
+// The hash ring names a host by its ring identity and the shard distributor by its executor ID, so a
+// host keeps a task list the router sends to either of its names.
 func TestGetTasklistsNotOwned(t *testing.T) {
-
 	ctrl := gomock.NewController(t)
-	resolver := membership.NewMockResolver(ctrl)
-
-	resolver.EXPECT().WhoAmI().Return(membership.NewDetailedHostInfo("self", "host123", nil), nil)
 	router := matching.NewMockTaskListRouter(ctrl)
 
-	tl1 := mustNewIdentifier(t, "domain-id-1", "tl1", 0)
-	tl2 := mustNewIdentifier(t, "domain-id-2", "tl2", 0)
-	tl3 := mustNewIdentifier(t, "domain-id-3", "tl3", 0)
+	selfRingIdentity := "host123"
+	resolver := membership.NewMockResolver(ctrl)
+	resolver.EXPECT().WhoAmI().Return(membership.NewDetailedHostInfo("self", selfRingIdentity, nil), nil)
 
-	tl1m := newMockManagerWithTaskListID(ctrl, tl1)
-	tl2m := newMockManagerWithTaskListID(ctrl, tl2)
-	tl3m := newMockManagerWithTaskListID(ctrl, tl3)
+	selfExecutorID := "host123@executor-id"
+	executor := executorclient.NewMockExecutor[tasklist.ShardProcessor](ctrl)
+	executor.EXPECT().GetExecutorID().Return(selfExecutorID)
 
-	router.EXPECT().FromTaskList(tl1.GetDomainID(), tl1.GetName()).Return(membership.NewDetailedHostInfo("", "host123", nil), nil)
-	router.EXPECT().FromTaskList(tl2.GetDomainID(), tl2.GetName()).Return(membership.NewDetailedHostInfo("", "host456", nil), nil)
-	router.EXPECT().FromTaskList(tl3.GetDomainID(), tl3.GetName()).Return(membership.NewDetailedHostInfo("", "host123", nil), nil)
+	ringOwnedTaskList := mustNewIdentifier(t, "domain-id-1", "ring-owned", 0)
+	ringOwnedManager := newMockManagerWithTaskListID(ctrl, ringOwnedTaskList)
+	router.EXPECT().FromTaskList(ringOwnedTaskList.GetDomainID(), ringOwnedTaskList.GetName()).
+		Return(membership.NewDetailedHostInfo("", selfRingIdentity, nil), nil)
+
+	ringMovedTaskList := mustNewIdentifier(t, "domain-id-2", "ring-moved", 0)
+	ringMovedManager := newMockManagerWithTaskListID(ctrl, ringMovedTaskList)
+	router.EXPECT().FromTaskList(ringMovedTaskList.GetDomainID(), ringMovedTaskList.GetName()).
+		Return(membership.NewDetailedHostInfo("", "host456", nil), nil)
+
+	sdOwnedTaskList := mustNewIdentifier(t, "domain-id-3", "sd-owned", 0)
+	sdOwnedManager := newMockManagerWithTaskListID(ctrl, sdOwnedTaskList)
+	router.EXPECT().FromTaskList(sdOwnedTaskList.GetDomainID(), sdOwnedTaskList.GetName()).
+		Return(membership.NewDetailedHostInfo("", selfExecutorID, nil), nil)
+
+	sdMovedTaskList := mustNewIdentifier(t, "domain-id-4", "sd-moved", 0)
+	sdMovedManager := newMockManagerWithTaskListID(ctrl, sdMovedTaskList)
+	router.EXPECT().FromTaskList(sdMovedTaskList.GetDomainID(), sdMovedTaskList.GetName()).
+		Return(membership.NewDetailedHostInfo("", "host456@executor-id", nil), nil)
 
 	e := matchingEngineImpl{
 		shutdown:           make(chan struct{}),
 		membershipResolver: resolver,
+		executor:           executor,
 		taskListRouter:     router,
 		taskListRegistry:   tasklist.NewTaskListRegistry(metrics.NewNoopMetricsClient(), commonConfig.DefaultNumMatchingShards),
 		config:             &config.Config{},
 		logger:             log.NewNoop(),
 	}
-	e.taskListRegistry.Register(*tl1, tl1m)
-	e.taskListRegistry.Register(*tl2, tl2m)
-	e.taskListRegistry.Register(*tl3, tl3m)
+	e.taskListRegistry.Register(*ringOwnedTaskList, ringOwnedManager)
+	e.taskListRegistry.Register(*ringMovedTaskList, ringMovedManager)
+	e.taskListRegistry.Register(*sdOwnedTaskList, sdOwnedManager)
+	e.taskListRegistry.Register(*sdMovedTaskList, sdMovedManager)
 
 	tls, err := e.getNonOwnedTasklistsLocked()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.Equal(t, []tasklist.Manager{tl2m}, tls)
+	assert.ElementsMatch(t, []tasklist.Manager{ringMovedManager, sdMovedManager}, tls,
+		"only the task lists routed to another host should stop")
 }
 
 func TestShutDownTasklistsNotOwned(t *testing.T) {
@@ -964,9 +981,13 @@ func TestShutDownTasklistsNotOwned(t *testing.T) {
 	resolver.EXPECT().Lookup(service.Matching, tl2.GetName()).Return(membership.NewDetailedHostInfo("", "host456", nil), nil)
 	resolver.EXPECT().Lookup(service.Matching, tl3.GetName()).Return(membership.NewDetailedHostInfo("", "host123", nil), nil)
 
+	executor := executorclient.NewMockExecutor[tasklist.ShardProcessor](ctrl)
+	executor.EXPECT().GetExecutorID().Return("host123@executor-id")
+
 	e := matchingEngineImpl{
 		shutdown:           make(chan struct{}),
 		membershipResolver: resolver,
+		executor:           executor,
 		taskListRouter:     newTestTaskListRouter(resolver),
 		taskListRegistry:   tasklist.NewTaskListRegistry(metrics.NewNoopMetricsClient(), commonConfig.DefaultNumMatchingShards),
 		config:             &config.Config{},

@@ -80,8 +80,12 @@ type onboardingTaskList struct {
 
 // onboardingHost is one matching host running the real matching engine.
 type onboardingHost struct {
-	name   string
-	engine *matchingEngineImpl
+	// name is also the host's identity on the hash ring.
+	name string
+	// executorID is how SD names the host. As in production, it differs from the host's identity
+	// on the hash ring.
+	executorID string
+	engine     *matchingEngineImpl
 	// joinedSD is set once matching lets the host's executor heartbeat to SD.
 	joinedSD bool
 	// shardProcessors holds the processors of the shards SD has given the host.
@@ -241,7 +245,7 @@ func (td *onboardingTestData) newTaskListRouter(t *testing.T, hostCount int) mat
 				return nil, fmt.Errorf("SD has given shard %q to no host", shardID)
 			}
 			shardOwner := &spectatorclient.ShardOwner{
-				ExecutorID: host.name,
+				ExecutorID: host.executorID,
 				Metadata:   map[string]string{"hostIP": "127.0.0.1", "tchannel": "7933", "grpc": "7833"},
 			}
 			return shardOwner, nil
@@ -322,6 +326,7 @@ func (td *onboardingTestData) newHost(t *testing.T, hostName string) *onboarding
 
 	host := &onboardingHost{
 		name:            hostName,
+		executorID:      hostName + "@executor",
 		engine:          engine,
 		shardProcessors: make(map[string]tasklist.ShardProcessor),
 		managers:        make(map[string]*tasklist.MockManager, len(td.taskLists)),
@@ -336,6 +341,7 @@ func (td *onboardingTestData) newHost(t *testing.T, hostName string) *onboarding
 // newExecutor returns an executor that holds the processors of the shards SD has given the host.
 func (td *onboardingTestData) newExecutor(host *onboardingHost) executorclient.Executor[tasklist.ShardProcessor] {
 	executor := executorclient.NewMockExecutor[tasklist.ShardProcessor](td.ctrl)
+	executor.EXPECT().GetExecutorID().Return(host.executorID).AnyTimes()
 	executor.EXPECT().GetShardProcess(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, shardID string) (tasklist.ShardProcessor, error) {
 			shardProcessor, ok := host.shardProcessors[shardID]
@@ -442,7 +448,7 @@ func (td *onboardingTestData) joinSDOnceOnboarded(t *testing.T) {
 }
 
 // stopTaskListsHostsNoLongerOwn runs, on every host, the check matching runs when the hash ring's
-// membership changes. It stops every task list the router no longer routes to the host.
+// membership changes. It stops every task list the host no longer owns.
 func (td *onboardingTestData) stopTaskListsHostsNoLongerOwn(t *testing.T) {
 	for _, host := range td.hosts {
 		err := host.engine.shutDownNonOwnedTasklists()
@@ -471,7 +477,20 @@ func (td *onboardingTestData) routeOf(t *testing.T, taskListName string) route {
 	td.routedBy = ""
 	owner, err := td.taskListRouter.FromTaskList(onboardingDomainID, taskListName)
 	require.NoError(t, err, "routing task list %q", taskListName)
-	return route{routedBy: td.routedBy, owner: owner.Identity()}
+	return route{routedBy: td.routedBy, owner: td.hostNameOf(t, owner)}
+}
+
+// hostNameOf returns the name of the host the router returned. The hash ring names a host by its
+// name, and SD by its executor ID.
+func (td *onboardingTestData) hostNameOf(t *testing.T, owner membership.HostInfo) string {
+	t.Helper()
+	for _, host := range td.hosts {
+		if owner.Identity() == host.name || owner.Identity() == host.executorID {
+			return host.name
+		}
+	}
+	require.Failf(t, "unknown owner", "the router returned %q, which names no host in the test", owner.Identity())
+	return ""
 }
 
 // requireRunsOnlyOn requires that the task list runs on owner and on no other host, and that it
